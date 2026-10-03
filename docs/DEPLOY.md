@@ -265,9 +265,9 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 
 验证：`GET /healthz` 里 `assetsCdn` 会显示当前地址；浏览器网络面板里素材请求应指向 CDN。
 
-### 3.3 离线资源预载（可选，客户端开关）
+### 3.3 资源预载（可选，客户端开关）
 
-玩家在游戏里「设置 ▸ 离线资源」打开后，客户端会把对局素材存进浏览器缓存（Service Worker + Cache Storage，见 [docs/ASSETS.md](docs/ASSETS.md)「Preload」），之后断网或 CDN 变慢也不影响已经缓存的对局。默认关闭，服务端无需任何配置（清单 `GET /data/resource-manifest.json` 由服务端从 `data/assets.json` 自动生成）。部署上只需注意两件事：
+玩家在游戏里「首页右下角」或「设置 ▸ 预载资源」打开后，客户端会把对局素材存进浏览器缓存（Service Worker + Cache Storage，见 [docs/ASSETS.md](docs/ASSETS.md)「Preload」），之后进战斗不再等待下载：素材由 Service Worker 直接从本机缓存读取。默认关闭，服务端无需任何配置（清单 `GET /data/resource-manifest.json` 由服务端从 `data/assets.json` 自动生成）。部署上只需注意两件事：
 
 - **`/resource-sw.js` 必须由游戏服务器提供，且不要被边缘缓存。** Service Worker 脚本要能立即更新：本项目对 `public/` 下的 `.js` 已经是 `no-cache`，但如果把整个 `public/` 交给 CDN / Cloudflare，请把 `resource-sw.js` 排除（Cloudflare → Caching → Cache Rules：`http.request.uri.path eq "/resource-sw.js"` → **Bypass**）。Nginx 例：
 

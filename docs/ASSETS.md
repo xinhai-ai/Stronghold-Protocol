@@ -25,11 +25,11 @@ client fetches Spine `.skel` / `.atlas` files with `fetch` and loads images with
 so a long `Cache-Control` is safe only if you invalidate on update — the server itself uses `max-age=86400` for
 `/assets/`.
 
-## Preload (optional offline resources)
+## Preload (optional asset preloading)
 
 A player can have the client download the art ahead of time into the browser's Cache Storage, so entering a battle never
-waits on the network and a running match keeps its art while the CDN is slow or unreachable. It is **off by default** and
-there is a way in without leaving the home screen: the title screen shows a compact 「离线资源」 pill in its bottom-right
+waits on a download: the files are served from the browser cache instead of being fetched again. It is **off by default** and
+there is a way in without leaving the home screen: the title screen shows a compact 「预载资源」 pill in its bottom-right
 corner (one click starts the preload, then it shows progress with 暂停 / 清理缓存 / 关闭预载), and the same switch is in the
 in-match 设置 modal (`ui/resourcePanel.js` renders both faces from the same state). Nothing is downloaded until one of them
 is used.
@@ -51,7 +51,7 @@ is used.
   API, WebSocket) straight to the network. It needs HTTPS (or localhost); on plain HTTP the switch says why it cannot be
   used instead of failing silently.
 - 「清理缓存」 deletes every cache the app owns; turning the switch off stops the downloads and keeps what is cached
-  (still served offline), and the worker is removed once there is nothing left to serve. A completed new version drops
+  (still served from the cache by the worker), and the worker is removed once there is nothing left to serve. A completed new version drops
   the previous cache. The host therefore has to serve `/resource-sw.js` and never cache it at the edge.
 
 ## Running

@@ -1,7 +1,7 @@
-// server/resources.js — the optional offline-resource manifest (docs/ASSETS.md「Preload」).
+// server/resources.js — the optional preload manifest (docs/ASSETS.md「Preload」).
 //
 // The client can preload every file a match may need into Cache Storage (Service Worker, public/js/resources/*), so
-// entering a battle never waits on the network and the art of a running match survives a slow or unreachable CDN.
+// entering a battle never waits on a download: the art comes from the browser cache.
 // That list needs no extra build step: it is derived from the asset manifests this server already serves, and it is
 // rewritten exactly like /data/assets.json (SP_ASSETS_CDN, docs/ASSETS.md「CDN」) — so the client preloads from the
 // CDN. Local file sizes are added when this install has the files on disk (a CDN-only install simply omits them).

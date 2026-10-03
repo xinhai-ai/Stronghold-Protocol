@@ -25,7 +25,7 @@
 //     changes, and an unreachable Redis only logs a warning (server/redis.js, server/persist.js).
 //   * Assets CDN (docs/DEPLOY.md §3.2): SP_ASSETS_CDN rewrites the /assets/… URLs of the manifests served under
 //     /data/ (data/assets.json, data/local-assets.json) to the CDN directory — the client needs no change.
-//   * Offline resources (docs/ASSETS.md「Preload」): GET /data/resource-manifest.json lists every asset file the client
+//   * Asset preload (docs/ASSETS.md「Preload」): GET /data/resource-manifest.json lists every asset file the client
 //     may preload into Cache Storage (tier 1 essential → tier 2 the rest), derived from those same manifests and
 //     rewritten the same way, so an optional client-side preload works without a CDN-less install (server/resources.js).
 //   * Per-network limits for internet clients (see net.js clientAddress; local/LAN peers are exempt): open sockets

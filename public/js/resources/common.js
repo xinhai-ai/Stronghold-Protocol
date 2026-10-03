@@ -1,4 +1,4 @@
-// public/js/resources/common.js — shared pieces of the optional offline-resource preload (docs/ASSETS.md「Preload」).
+// public/js/resources/common.js — shared pieces of the optional asset preload (docs/ASSETS.md「Preload」).
 //
 // No DOM and no Preact: the page (store.js / index.js), the Service Worker (service.js) and the Node tests all import
 // this module. It owns the manifest shape, the URL/MIME rules and byte formatting — the same rules the server applies

@@ -1,5 +1,5 @@
 // public/js/ui/resourcePanel.js — the two faces of the optional preload (docs/ASSETS.md「Preload」):
-//   * ResourceRow      — the 「离线资源」 row of the settings modal;
+//   * ResourceRow      — the 「预载资源」 row of the settings modal;
 //   * ResourceLauncher — the compact pill the title screen shows in its bottom-right corner (the settings modal is only
 //                        reachable inside a match, so the home screen needs its own way in).
 // Both drive public/js/resources/index.js and render its state; nothing here runs while the switch is off.
@@ -62,7 +62,7 @@ export function ResourceRow({ enabled, onChange }) {
 
   return html`<div class="set-res">
     <div class="set-row">
-      <span class="set-row__label">离线资源<${MicroLabel}>OFFLINE ASSETS<//></span>
+      <span class="set-row__label">预载资源<${MicroLabel}>PRELOAD<//></span>
       <button type="button" class=${`set-toggle${enabled ? ' is-on' : ''}`} role="switch" aria-checked=${enabled ? 'true' : 'false'}
         disabled=${!enabled && !st.supported ? 'disabled' : null} onClick=${() => onChange(!enabled)}><i></i><span>${enabled ? '开启' : '关闭'}</span></button>
     </div>
@@ -77,7 +77,7 @@ export function ResourceRow({ enabled, onChange }) {
           ${st.worker ? html`<p class="set-hint set-res__warn">${st.worker}</p>` : null}
           ${st.failed ? html`<p class="set-hint set-res__warn">${st.failed} 个文件未完成（下次继续时重试）</p>` : null}
         </div>`
-      : html`<p class="set-hint">开启后会把对局需要的素材（字体、界面、立绘、小人、音效）保存到本机，进入战斗不再等待网络；关闭时一切照旧按需加载。需要 HTTPS。</p>`}
+      : html`<p class="set-hint">开启后会把对局需要的素材（字体、界面、立绘、小人、音效）保存到本机缓存，进入战斗不再等待下载；关闭时一切照旧按需加载。需要 HTTPS。</p>`}
   </div>`;
 }
 
@@ -100,17 +100,17 @@ export function ResourceLauncher({ enabled, onChange }) {
 
   return html`<div class=${`res-pill${enabled ? ' is-on' : ''}`}>
     <button type="button" class="res-pill__head" disabled=${enabled ? 'disabled' : null}
-      title=${enabled ? st.message || '离线资源已开启，可用下方按钮暂停或清理' : '把对局素材存到本机，进入战斗不再等待下载'}
+      title=${enabled ? st.message || '预载资源已开启，可用下方按钮暂停或清理' : '把对局素材存到本机，进入战斗不再等待下载'}
       onClick=${() => { if (!enabled) onChange(true); }}>
-      <span class="res-pill__label">离线资源<${MicroLabel}>OFFLINE ASSETS<//></span>
+      <span class="res-pill__label">预载资源<${MicroLabel}>PRELOAD<//></span>
       <span class="res-pill__state">${state}</span>
     </button>
     ${enabled
       ? html`<div class="res-pill__body">
           ${st.supported ? html`<${ProgressBar} size="sm" value=${percent(st)} max=${100} tone=${st.error ? 'amber' : 'mint'} />` : null}
-          <p class="res-pill__text">${st.message || detail || st.worker || '正在准备…'}</p>
+          <p class="res-pill__text">${st.message || detail || '正在准备…'}</p>
           ${st.message && detail ? html`<p class="res-pill__text is-dim">${detail}</p>` : null}
-          ${st.worker && st.message ? html`<p class="res-pill__text is-warn">${st.worker}</p>` : null}
+          ${st.worker ? html`<p class="res-pill__text is-warn">${st.worker}</p>` : null}
           ${st.supported
             ? html`<${ResourceActions} st=${st} onClose=${() => onChange(false)} />`
             : html`<div class="res-actions"><button type="button" class="res-link" onClick=${() => onChange(false)}>关闭预载</button></div>`}

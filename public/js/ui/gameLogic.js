@@ -1273,7 +1273,7 @@ export function sanitizeSettings(raw) {
     muted: typeof r.muted === 'boolean' ? r.muted : DEFAULT_SETTINGS.muted,
     damageNumbers: typeof r.damageNumbers === 'boolean' ? r.damageNumbers : DEFAULT_SETTINGS.damageNumbers,
     quality: QUALITIES.includes(r.quality) ? r.quality : DEFAULT_SETTINGS.quality,
-    // optional offline-resource preload (docs/ASSETS.md「Preload」): off unless the player turned it on
+    // optional asset preload (docs/ASSETS.md「Preload」): off unless the player turned it on
     preload: typeof r.preload === 'boolean' ? r.preload : DEFAULT_SETTINGS.preload,
   };
 }

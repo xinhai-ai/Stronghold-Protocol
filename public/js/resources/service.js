@@ -1,5 +1,5 @@
-// public/js/resources/service.js — the Service Worker side of the offline-resource preload: answer a request from Cache
-// Storage, or say "not mine" so the worker falls back to the network (docs/ASSETS.md「Preload」).
+// public/js/resources/service.js — the Service Worker side of the asset preload: answer a request from Cache Storage, or
+// say "not mine" so the worker falls back to the network (docs/ASSETS.md「Preload」).
 //
 // Only /assets/** and /fonts/** (site paths or CDN URLs) are ever answered, and only from caches this app wrote
 // (`X-SP-Resource`): code, data, API responses, manifests and WebSocket traffic never pass through this module.

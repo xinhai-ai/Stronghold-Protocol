@@ -103,7 +103,8 @@ test('the preload controller: off by default, downloads in two passes, serves of
   assert.equal(st.complete, true);
   assert.deepEqual([st.done, st.total, st.bytes, st.totalBytes], [4, 4, 22, 22]);
   assert.deepEqual([st.tier1Done, st.tier1Total, st.tier2Done, st.tier2Total], [2, 2, 2, 2]);
-  assert.match(st.message, /全部资源已保存/);
+  assert.match(st.message, /资源已全部预载完成/, 'the copy never promises offline play');
+  assert.equal(/离线/.test(JSON.stringify(states)), false, 'no state text says 离线');
   assert.equal(st.error, false);
   assert.ok(states.some((s) => s.phase === 'download'), 'progress states were published');
   // the panel renders numeric counters: an undefined one used to show as "undefined/3966" mid-download

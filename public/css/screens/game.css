@@ -494,7 +494,7 @@
 .set-seg button:last-child { border-right: 0; }
 .set-seg button.is-on { background: var(--mint-500); color: var(--text-on-mint); font-weight: 700; }
 .set-hint { margin-top: .06rem; font-size: .14rem; color: var(--text-dim); line-height: 1.8; }
-/* 离线资源 (docs/ASSETS.md「Preload」): progress of the optional Cache Storage preload */
+/* 预载资源 (docs/ASSETS.md「Preload」): progress of the optional Cache Storage preload */
 .set-res { display: flex; flex-direction: column; gap: .1rem; }
 .set-res > .set-row { min-height: .44rem; }
 .set-res__body { display: flex; flex-direction: column; gap: .1rem; padding-bottom: .06rem; }

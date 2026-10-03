@@ -1,6 +1,6 @@
-// public/js/resources/index.js — the page side of the optional offline-resource preload (docs/ASSETS.md「Preload」).
+// public/js/resources/index.js — the page side of the optional asset preload (docs/ASSETS.md「Preload」).
 //
-// Off by default (设置 ▸ 离线资源). When the player turns it on, this module fetches /data/resource-manifest.json,
+// Off by default (设置 ▸ 预载资源). When the player turns it on, this module fetches /data/resource-manifest.json,
 // registers the Service Worker (public/resource-sw.js, so the cached files are also served with no network) and fills
 // Cache Storage in two passes: the essential tier first, then the rest in the background. Turning it off stops the
 // downloads; 「清理缓存」 deletes them. Nothing here touches the match: a player who never enables it never downloads
@@ -85,7 +85,7 @@ const counters = (s) => ({
 
 /** Why this browser cannot keep the resources (empty ⇒ it can). */
 export function unsupportedReason() {
-  if (!globalThis.isSecureContext) return '需要 HTTPS（或 localhost）才能把资源保存在本地';
+  if (!globalThis.isSecureContext) return '需要 HTTPS（或 localhost）才能预载资源';
   if (!globalThis.caches) return '当前浏览器不支持 Cache Storage';
   if (!globalThis.navigator?.serviceWorker) return '当前浏览器不支持 Service Worker';
   return '';
@@ -151,7 +151,7 @@ export async function syncResources(enabled) {
   set({ enabled, error: false, message: '' });
   if (!enabled) {
     controller?.abort();
-    set({ phase: state.complete ? 'ready' : 'paused', message: state.complete ? '已保存的资源仍可离线使用；「清理缓存」可删除。' : '已停止预载。' });
+    set({ phase: state.complete ? 'ready' : 'paused', message: state.complete ? '预载已停止；已保存的资源保留，可继续下载或清理缓存。' : '已停止预载。' });
     return;
   }
   return start();
@@ -174,10 +174,14 @@ async function start() {
   }
   const store = ctx.store;
   set({ supported: true, version: store.manifest.version });
-  // registering an already-registered worker is a cheap no-op, so every start can retry a failed one
-  ensureWorker().catch((err) => set({ worker: `离线服务未启用（${err?.message || err}），资源仍会保存，只是断网时无法读取。` }));
+  // registering an already-registered worker is a cheap no-op, so every start can retry a failed one. A failure here
+  // does NOT stop the download (the page fills Cache Storage itself) — it only means nothing can be served offline.
+  ensureWorker().catch((err) => {
+    console.warn('[resources] service worker not registered — the cached assets cannot be served without the network', err);
+    set({ worker: `预载服务未启用（${err?.message || err}），资源仍会下载，但不会从本机缓存读取。` });
+  });
   const before = await store.status();
-  set({ ...counters(before), phase: before.complete ? 'ready' : 'download', message: before.complete ? '全部资源已保存，可离线进入对局。' : '' });
+  set({ ...counters(before), phase: before.complete ? 'ready' : 'download', message: before.complete ? '资源已全部预载完成。' : '' });
   if (before.complete) { void store.pruneOld(); return; }
   controller = new AbortController();
   const signal = controller.signal;
@@ -192,7 +196,7 @@ async function start() {
       phase: 'ready',
       error: false,
       message: after.complete
-        ? `全部资源已保存（${formatBytes(after.bytes)}），可离线进入对局。`
+        ? `资源已全部预载完成（${formatBytes(after.bytes)}）。`
         : `已保存 ${after.count}/${after.total} 个文件；未完成的会在下次开启时重试。`,
     });
     if (after.complete) void store.pruneOld();
@@ -237,6 +241,6 @@ export async function clearResources() {
   set({
     done: 0, tier1Done: 0, tier2Done: 0, bytes: 0, failed: 0, complete: false, error: false,
     phase: current ? 'paused' : 'off',
-    message: '已清理离线资源缓存。',
+    message: '已清理预载资源缓存。',
   });
 }

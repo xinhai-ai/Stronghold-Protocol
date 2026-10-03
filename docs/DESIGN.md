@@ -104,7 +104,7 @@ public/
     data.js                fetches /data/*.json, same indexes as server/data.js
     audio.js               BGM/SFX manager (Web Audio), volume settings
     assets.js              asset URLs, image cache, Spine loader with LRU + fallback
-    resources/             optional offline preload (docs/ASSETS.md「Preload」): common.js (manifest/URL/Range rules),
+    resources/             optional asset preload (docs/ASSETS.md「Preload」): common.js (manifest/URL/Range rules),
                            store.js (Cache Storage download), service.js (worker handler), index.js (settings ↔ worker)
     screens/               title.js, lobby.js, room.js, briefing.js, bandDraft.js, game.js, result.js
     ui/                    hud.js, bondStrip.js, bondPopup.js, shopBar.js, teamPanel.js, detailPanel.js,

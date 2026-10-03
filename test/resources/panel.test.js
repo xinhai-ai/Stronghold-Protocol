@@ -74,6 +74,16 @@ describe('where the preload is reachable', () => {
     assert.match(panel, /if \(!enabled && !st\.supported\) return null;/, 'no clutter on a plain-HTTP LAN');
     assert.match(panel, /disabled=\$\{!enabled && !st\.supported \? 'disabled' : null\}/, 'a browser that cannot cache can still turn it back off');
     assert.match(panel, /onChange\(false\)\}>关闭预载<\/button>/, 'and the pill can always be closed');
+    // a failed registration must always be visible: the download still works without the worker, so a hidden warning
+    // would look exactly like "the Service Worker never intercepts anything" (see the pill's worker line)
+    assert.equal(panel.match(/\$\{st\.worker \? html/g).length, 2, 'both faces show it');
+    assert.equal((panel.match(/\$\{st\.worker && st\.message/g) || []).length, 0, 'never hidden behind a message');
+    // the copy never promises offline play: the preload only means "served from the local cache"
+    const index = read('public/js/resources/index.js');
+    for (const [name, src] of [['resourcePanel.js', panel], ['resources/index.js', index]]) {
+      assert.equal(/离线/.test(src), false, `${name}: no 离线 wording`);
+      assert.equal(/可离线进入对局|断网[^。]*可用/.test(src), false, `${name}: no offline-play promise`);
+    }
     assert.match(panel, /startResources\(\)/, 'continue');
     assert.match(panel, /pauseResources\(\)/, 'pause');
     assert.match(panel, /clearResources\(\)/, 'clear');

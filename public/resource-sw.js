@@ -1,6 +1,6 @@
-// public/resource-sw.js — the optional offline-resource Service Worker (docs/ASSETS.md「Preload」).
+// public/resource-sw.js — the optional asset-preload Service Worker (docs/ASSETS.md「Preload」).
 //
-// Registered with `type: 'module'` by public/js/resources/index.js when the player turns the preload on (设置 ▸ 离线资源)
+// Registered with `type: 'module'` by public/js/resources/index.js when the player turns the preload on (设置 ▸ 预载资源)
 // and unregistered when they turn it off. Its scope is "/", but it only ever touches GET requests for `/assets/**` and
 // `/fonts/**` (site paths or CDN URLs): code, game data, API calls and WebSocket upgrades pass straight through to the
 // network, so a stale worker can never serve a stale game.

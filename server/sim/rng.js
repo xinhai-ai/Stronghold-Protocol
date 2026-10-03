@@ -41,6 +41,18 @@ export function createRng(seed = 1) {
   };
   /** current internal state (for debugging / hashing) */
   rng.state = () => s;
+  /** restore the internal state (match checkpoints, server/match/snapshot.js) */
+  rng.setState = (v) => { s = (Number(v) >>> 0) || 0; };
+  return rng;
+}
+
+/**
+ * Re-create a PRNG at an exact internal state (the counterpart of rng.state(), used by match checkpoints).
+ * @param {number} state uint32 (0 is a legal state here, unlike the seed path)
+ */
+export function createRngFromState(state) {
+  const rng = createRng(1);
+  rng.setState(state);
   return rng;
 }
 

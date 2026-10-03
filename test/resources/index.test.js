@@ -106,6 +106,13 @@ test('the preload controller: off by default, downloads in two passes, serves of
   assert.match(st.message, /全部资源已保存/);
   assert.equal(st.error, false);
   assert.ok(states.some((s) => s.phase === 'download'), 'progress states were published');
+  // the panel renders numeric counters: an undefined one used to show as "undefined/3966" mid-download
+  for (const s of states) {
+    for (const k of ['done', 'total', 'wanted', 'bytes', 'skipped', 'sized', 'sizedTotal', 'tier1Done', 'tier1Total', 'tier2Done', 'tier2Total']) {
+      assert.equal(typeof s[k], 'number', `state.${k} while ${s.phase} (${JSON.stringify(s[k])})`);
+    }
+  }
+  assert.ok(states.some((s) => s.phase === 'download' && s.done >= 1 && s.done < 4), 'a mid-download update carried the partial count');
   assert.equal(await (await env.caches.open(cacheName('testversion'))).match(`${ORIGIN}/assets/ui/panel.png`) !== undefined, true);
 
   // a second sync with the same value is a no-op (the settings store fires for volume changes too)

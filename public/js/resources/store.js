@@ -122,16 +122,19 @@ export class ResourceStore {
     const work = this.files.filter((f) => wanted.has(f.tier) && this.eligible(f) && !start.present.has(this.keyOf(f.url)));
     let done = start.count;
     let bytes = start.bytes;
+    let sized = start.sized;
     let failed = 0;
     let tier1Done = start.tier1Present;
     let tier2Done = start.tier2Present;
     /** @type {{ url: string, message: string }[]} */
     const failures = [];
     let lastEmit = 0;
+    // Exactly the counters of status(): the UI maps one shape for both, so a field can never be missing mid-run.
     const progress = (current = null) => ({
-      phase: 'download', done, total: start.total, wanted: start.wanted, bytes, totalBytes: start.totalBytes,
-      skipped: start.skipped, failed, failures: failures.slice(), current, complete: false,
-      tier1Done, tier1Total: start.tier1, tier2Done, tier2Total: start.tier2,
+      phase: 'download', count: done, total: start.total, wanted: start.wanted, skipped: start.skipped,
+      bytes, totalBytes: start.totalBytes, sized, sizedTotal: start.sizedTotal,
+      tier1: start.tier1, tier1Present: tier1Done, tier2: start.tier2, tier2Present: tier2Done,
+      complete: false, failed, failures: failures.slice(), current,
     });
     const emit = (current = null, force = false) => {
       if (!onProgress) return;
@@ -157,7 +160,7 @@ export class ResourceStore {
           await cache.put(key, this.storable(res));
           done++;
           if (file.tier === TIER_ESSENTIAL) tier1Done++; else tier2Done++;
-          if (Number.isSafeInteger(file.size)) bytes += file.size;
+          if (Number.isSafeInteger(file.size)) { bytes += file.size; sized++; }
         } catch (err) {
           checkAbort(signal); // an abort wins over a per-file error: the run is being stopped
           if (isQuotaError(err)) {
@@ -182,11 +185,7 @@ export class ResourceStore {
     }
     checkAbort(signal);
     const after = await this.status();
-    const result = {
-      phase: 'ready', done: after.count, total: after.total, wanted: after.wanted, bytes: after.bytes,
-      totalBytes: after.totalBytes, skipped: after.skipped, failed, failures: failures.slice(), complete: after.complete,
-      tier1Done: after.tier1Present, tier1Total: after.tier1, tier2Done: after.tier2Present, tier2Total: after.tier2,
-    };
+    const result = { ...after, phase: 'ready', failed, failures: failures.slice() };
     onProgress?.(result);
     return result;
   }

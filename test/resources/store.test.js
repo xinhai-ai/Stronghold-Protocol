@@ -79,9 +79,17 @@ describe('ResourceStore', () => {
     const res = await s.download({ onProgress: (p) => seen.push(p) });
     assert.deepEqual(calls, [`${ORIGIN}/assets/ui/a.png`, `${ORIGIN}/assets/spine/c.skel`, `${ORIGIN}/assets/spine/d.png`], 'cached file skipped, essential first');
     assert.equal(res.complete, true);
-    assert.deepEqual([res.done, res.total, res.bytes, res.totalBytes, res.failed], [4, 4, 32, 32, 0]);
+    assert.deepEqual([res.count, res.total, res.bytes, res.totalBytes, res.failed], [4, 4, 32, 32, 0]);
     assert.equal(seen.at(-1).complete, true);
-    assert.equal(seen.at(-1).done, 4);
+    assert.equal(seen.at(-1).count, 4);
+    // every progress payload carries the same counters as status(): the panel must never read an undefined field
+    for (const p of seen) {
+      for (const k of ['count', 'total', 'wanted', 'bytes', 'skipped', 'sized', 'sizedTotal', 'tier1', 'tier1Present', 'tier2', 'tier2Present']) {
+        assert.equal(typeof p[k], 'number', `progress.${k} while ${p.phase} (${JSON.stringify(p[k])})`);
+      }
+    }
+    assert.equal(seen.at(-1).sizedTotal, 4, 'the manifest sized every file');
+    assert.equal(seen.at(-1).count, 4);
     const cached = await (await caches.open(cacheName('v1'))).match(`${ORIGIN}/assets/spine/c.skel`);
     assert.equal(await cached.text(), 'x'.repeat(8));
     assert.equal(cached.headers.get('x-sp-resource'), '1', 'entries are marked as ours');
@@ -106,7 +114,7 @@ describe('ResourceStore', () => {
     const s = store(m, { fetch });
     const res = await s.download();
     assert.equal(res.failed, 2);
-    assert.equal(res.done, 1);
+    assert.equal(res.count, 1);
     assert.equal(res.complete, false);
     assert.deepEqual(res.failures.map((f) => f.url), ['/assets/a.png', '/assets/b.png'], 'the manifest keeps the original URL');
     assert.match(res.failures[0].message, /404/);
@@ -153,10 +161,11 @@ describe('ResourceStore', () => {
     const seen = [];
     const res = await s.download({ onProgress: (p) => seen.push(p) });
     assert.ok(seen.length < files.length, `throttled (${seen.length} updates for ${files.length} files)`);
-    assert.equal(res.done, 30);
-    assert.equal(seen[0].done, 0);
-    assert.deepEqual(seen.at(-1), res, 'the last update is the result');
-    assert.ok(seen.every((p, i) => i === 0 || p.done >= seen[i - 1].done), 'monotonic');
+    assert.equal(res.count, 30);
+    assert.equal(seen[0].count, 0);
+    assert.equal(seen.at(-1).phase, 'ready');
+    assert.equal(seen.at(-1).count, res.count);
+    assert.ok(seen.every((p, i) => i === 0 || p.count >= seen[i - 1].count), 'monotonic');
   });
 
   test('clear deletes every version, pruneOld only the stale ones', async () => {
@@ -183,8 +192,9 @@ describe('ResourceStore', () => {
     const b = s.download();
     assert.equal(a, b);
     release();
-    await a;
+    const res = await a;
     assert.equal(calls.length, 1);
+    assert.equal(res.count, 1);
   });
 });
 

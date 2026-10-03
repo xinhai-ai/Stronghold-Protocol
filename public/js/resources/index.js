@@ -27,6 +27,8 @@ const state = {
   tier2Total: 0,
   bytes: 0,
   totalBytes: null,
+  sized: 0,
+  sizedTotal: 0,
   skipped: 0,
   failed: 0,
   complete: false,
@@ -61,6 +63,10 @@ function set(patch) {
   }
 }
 
+/**
+ * The counters of one store payload (status / progress / result — store.js emits the same fields for all three), in the
+ * names the panel renders. One shape for all three is what keeps a progress update from leaving a field undefined.
+ */
 const counters = (s) => ({
   done: s.count,
   total: s.total,
@@ -71,6 +77,8 @@ const counters = (s) => ({
   tier2Total: s.tier2,
   bytes: s.bytes,
   totalBytes: s.totalBytes,
+  sized: s.sized,
+  sizedTotal: s.sizedTotal,
   skipped: s.skipped,
   complete: s.complete,
 });

@@ -17,7 +17,7 @@ import * as dataModule from '../server/data.js';
 import { CODE_ALPHABET, BOT_NAMES, LOBBY_DEFAULTS } from '../server/lobby.js';
 import { sanitizeName, TokenBucket, SessionRegistry, clientAddress, normalizeIp, isLocalIp, limitKeyOf } from '../server/net.js';
 import { StubMatch as Match } from '../server/match/StubMatch.js';
-import { Match as RealMatch } from '../server/match/Match.js';
+import { Match as RealMatch, parseBotRehearsal, parseCombat } from '../server/match/Match.js';
 import { TestClient } from './helpers/wsClient.js';
 import { ERR, MAX_SEATS, PHASE } from '../shared/constants.js';
 
@@ -1543,7 +1543,7 @@ describe('per-network limits', () => {
 // Limit overrides (docs/DEPLOY.md §3.4): SP_MAX_* environment variables, the boot line and /healthz
 // ---------------------------------------------------------------------------------------------------
 
-const LIMIT_ENVS = ['SP_MAX_ROOMS', 'SP_MAX_ROOMS_PER_ADDR', 'SP_MAX_MATCHES_PER_ADDR', 'SP_MAX_CONNECTIONS', 'SP_MAX_CONNECTIONS_PER_ADDR'];
+const LIMIT_ENVS = ['SP_MAX_ROOMS', 'SP_MAX_ROOMS_PER_ADDR', 'SP_MAX_MATCHES_PER_ADDR', 'SP_MAX_CONNECTIONS', 'SP_MAX_CONNECTIONS_PER_ADDR', 'SP_BOT_REHEARSAL'];
 
 describe('limit overrides', () => {
   const saved = Object.fromEntries(LIMIT_ENVS.map((k) => [k, process.env[k]]));
@@ -1625,6 +1625,68 @@ describe('limit overrides', () => {
       assert.ok(warns.some((w) => /SP_MAX_ROOMS=lots ignored/.test(w)), warns.join(' | '));
       assert.ok(warns.some((w) => /SP_MAX_ROOMS_PER_ADDR=-2 ignored/.test(w)), warns.join(' | '));
     } finally { await close(); }
+  });
+
+  test('/healthz reports aggregate usage per network, and never a client address', async () => {
+    process.env.SP_MAX_ROOMS_PER_ADDR = '2';
+    process.env.SP_MAX_MATCHES_PER_ADDR = '1';
+    process.env.SP_MAX_CONNECTIONS_PER_ADDR = '2';
+    const { player, healthz, close } = await boot();
+    try {
+      const A = '203.0.113.240';
+      const B = '198.51.100.10';
+      const a1 = await player('a1', A);
+      await expectOk(a1, { t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
+      await expectOk(a1, { t: 'room.addBot' });
+      await expectOk(a1, { t: 'room.start' });
+      const a2 = await player('a2', A);
+      await expectOk(a2, { t: 'room.create', mode: 'solo', difficulty: 'FUNNY' });
+      const b1 = await player('b1', B);
+      await expectOk(b1, { t: 'room.create', mode: 'solo', difficulty: 'FUNNY' });
+
+      const h = await healthz();
+      assert.deepEqual(h.usage, {
+        rooms: 3,
+        matches: 1,
+        networks: 2,
+        worstRooms: 2,
+        worstMatches: 1,
+        overRooms: 1,
+        overMatches: 1,
+        socketNetworks: 2,
+        worstSockets: 2,
+        overSockets: 1,
+      });
+      assert.equal(/203\.0\.113|198\.51\.100/.test(JSON.stringify(h)), false, 'no client address on a public endpoint');
+    } finally { await close(); }
+  });
+
+  test('SP_BOT_REHEARSAL reaches the running match, and /healthz reports the tuning', async () => {
+    process.env.SP_BOT_REHEARSAL = '0';
+    const { srv, player, healthz, close } = await boot({ MatchClass: RealMatch });
+    try {
+      assert.deepEqual((await healthz()).tuning, { combat: 'client', verify: 'off', botRehearsal: 0 });
+      const c = await player('tuner');
+      await expectOk(c, { t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
+      const st = await c.waitFor('room.state', (x) => !!x.code);
+      await expectOk(c, { t: 'room.addBot' });
+      await expectOk(c, { t: 'room.start' });
+      assert.equal(srv.lobby.rooms.get(st.code).match.botRehearsal, 0, 'the running match honours the environment');
+    } finally { await close(); }
+  });
+
+  test('parseBotRehearsal: 0..8, anything unusable keeps the engine default', () => {
+    assert.equal(parseBotRehearsal(undefined), 3);
+    assert.equal(parseBotRehearsal(''), 3);
+    assert.equal(parseBotRehearsal('0'), 0);
+    assert.equal(parseBotRehearsal(' 2 '), 2);
+    assert.equal(parseBotRehearsal('99'), 8, 'clamped to the engine maximum');
+    assert.equal(parseBotRehearsal('-1'), 3);
+    assert.equal(parseBotRehearsal('many'), 3);
+    assert.equal(parseBotRehearsal('lots', 5), 5);
+    assert.equal(parseCombat('SERVER'), 'server');
+    assert.equal(parseCombat('off'), 'client');
+    assert.equal(parseCombat(undefined), 'client');
   });
 
   test('SP_MAX_ROOMS refuses the next room (the global cap now logs instead of failing silently)', async () => {

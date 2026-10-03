@@ -51,6 +51,7 @@ import { WebSocketServer } from 'ws';
 import { Network, SessionRegistry, NET_DEFAULTS } from './net.js';
 import { Lobby, LOBBY_DEFAULTS } from './lobby.js';
 import { getData, loadData } from './data.js';
+import { parseBotRehearsal, parseCombat, parseVerify } from './match/Match.js';
 import { openStoreFromEnv } from './redis.js';
 import { Persister, restoreServer, SAVE_MS } from './persist.js';
 import { createResourceIndex, RESOURCE_MANIFEST_FILE } from './resources.js';
@@ -689,6 +690,7 @@ export async function startServer(opts = {}) {
     if (target[key] == null) target[key] = parseEnvLimit(process.env[env], fallback, env, log);
   }
   log.info(`[http] limits: rooms ${lobbyOptions.maxRooms} (${perNetwork(lobbyOptions.maxRoomsPerAddr)}/network), matches ${perNetwork(lobbyOptions.maxMatchesPerAddr)}/network, sockets ${netOptions.maxConnections} (${perNetwork(netOptions.maxConnectionsPerAddr)}/network)`);
+  log.info(`[match] tuning: combat ${parseCombat(process.env.SP_COMBAT)}, verify ${parseVerify(process.env.SP_VERIFY)}, bot rehearsal ${parseBotRehearsal(process.env.SP_BOT_REHEARSAL)} (docs/DEPLOY.md §3.4)`);
   const registry = new SessionRegistry({ reconnectWindowMs: netOptions.reconnectWindowMs ?? NET_DEFAULTS.reconnectWindowMs });
   const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions });
   // Resume the last state before listening: every reconnecting client is recognized by its token right away.
@@ -730,6 +732,7 @@ export async function startServer(opts = {}) {
       return;
     }
     if (parts.rawPath === '/healthz') {
+      const socketUsage = network.usage();
       sendJson(req, res, 200, {
         ok: true, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
@@ -741,6 +744,21 @@ export async function startServer(opts = {}) {
           maxMatchesPerAddr: lobby.opts.maxMatchesPerAddr,
           maxConnections: network.opts.maxConnections,
           maxConnectionsPerAddr: network.opts.maxConnectionsPerAddr,
+        },
+        // The engine-side knobs that decide how much CPU a match costs (docs/DEPLOY.md §3.4): env-level truth, i.e.
+        // what a match adopts when startServer/the lobby do not pass an explicit option.
+        tuning: {
+          combat: parseCombat(process.env.SP_COMBAT),
+          verify: parseVerify(process.env.SP_VERIFY),
+          botRehearsal: parseBotRehearsal(process.env.SP_BOT_REHEARSAL),
+        },
+        // How close the busiest client network is to a cap (docs/DEPLOY.md §3.4). No addresses: /healthz is public and
+        // the refusal logs (`room limit (16) reached for <ip>`) already name the network when it matters.
+        usage: {
+          ...lobby.usage(),
+          socketNetworks: socketUsage.networks,
+          worstSockets: socketUsage.worstSockets,
+          overSockets: socketUsage.overSockets,
         },
       });
       return;

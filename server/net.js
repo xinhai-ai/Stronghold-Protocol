@@ -552,6 +552,22 @@ export class Network {
   get connectionCount() { return this.conns.size; }
 
   /**
+   * Aggregate per-network socket usage for /healthz (docs/DEPLOY.md §3.4). Deliberately no addresses: /healthz is a
+   * public endpoint, so it answers "is any network at the cap?" while the refusal logs keep the identifiable detail.
+   * @returns {{ networks: number, worstSockets: number, overSockets: number }}
+   */
+  usage() {
+    const cap = this.opts.maxConnectionsPerAddr;
+    let worstSockets = 0;
+    let overSockets = 0;
+    for (const n of this.connsPerKey.values()) {
+      if (n > worstSockets) worstSockets = n;
+      if (cap > 0 && n >= cap) overSockets++;
+    }
+    return { networks: this.connsPerKey.size, worstSockets, overSockets };
+  }
+
+  /**
    * Upgrade-time admission check (server/index.js): null to accept, otherwise the reason to refuse.
    * @param {import('node:http').IncomingMessage} req
    * @returns {null | 'shutdown' | 'full' | 'per-address'}

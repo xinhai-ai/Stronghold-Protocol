@@ -122,6 +122,7 @@ npm start          # 启动服务器：http://localhost:3000
 | `SP_MAX_MATCHES_PER_ADDR` | `8` | 单个客户端网络同时进行的对局数；`0` = 不限制 |
 | `SP_MAX_CONNECTIONS` | `2000` | 全局 WebSocket 连接数上限 |
 | `SP_MAX_CONNECTIONS_PER_ADDR` | `64` | 单个客户端网络同时的连接数；`0` = 不限制 |
+| `SP_BOT_REHEARSAL` | `3` | AI 席位在休整期用真实战斗模拟预演几个候选摆位（`0`–`8`，`0` = 只用启发式摆位）。这是**最省 CPU 的旋钮**：预演约占一局服务器 CPU 的 70%，调到 `0` 大约把对局 CPU 降到三分之一（代价是 AI 摆位差一些） |
 | `DEBUG` | 空 | 设为任意值输出详细日志 |
 | `SP_NO_BROWSER` | 空 | 设为 `1` 时启动脚本不自动打开浏览器 |
 

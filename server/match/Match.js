@@ -98,7 +98,9 @@
 //   opts.timerScale    multiplier on every real-time phase timer (default 1)
 //   opts.combatSpeed   game seconds per real second while battles run in real time (default 2, the forced 2×)
 //   opts.botRehearsal  candidate layouts a bot simulates per prep before placing (default 3, 0 = heuristic only;
-//                      a whole battle per candidate: ~20–300 ms of CPU each, see server/match/bot.js createRehearsal)
+//                      a whole battle per candidate: ~20–300 ms of CPU each, see server/match/bot.js createRehearsal).
+//                      Env SP_BOT_REHEARSAL (0..8) when no option is given: the operator's biggest CPU knob — bot
+//                      rehearsal is ~70 % of one co-op match's server CPU (docs/DEPLOY.md §3.4)
 //   opts.botSliceMs    wall-clock ms of rehearsal per scheduler callback (default 8 with a real scheduler, unbounded
 //                      with a virtual one); the rest runs in later callbacks (scheduleBotPrep)
 //   opts.headlessSliceMs  wall-clock ms per callback of a server-run normal / 联防 field (client-side combat: bots,
@@ -144,13 +146,26 @@ import { CreditPool } from './finalAssault.js';
 import { buildResult } from './results.js';
 import { botPrepBeginSteps, botPrepEndSteps, botPickBand, botPickCard } from './bot.js';
 
-const BOT_REHEARSAL_DEFAULT = 3;
+/** Layouts a bot rehearses per prep with the real simulation (the engine default; 0 = heuristic placement only). */
+export const BOT_REHEARSAL_DEFAULT = 3;
 /** Wall-clock ms of bot layout rehearsal per scheduler callback (real time; virtual time runs it in one go). */
 const BOT_SLICE_MS = 8;
 const GAME_TYPES = new Set(Object.keys(C2S).filter((t) => Object.hasOwn(C2S, t) && (t.startsWith('g.') || t.startsWith('b.'))));
 const env = (k) => (typeof process !== 'undefined' && process.env ? process.env[k] : undefined);
+/**
+ * SP_BOT_REHEARSAL → 0..8 (the engine default 3 when unset or unusable). Operators' single biggest CPU knob: bot prep
+ * rehearses each candidate layout with the real simulation, ~70 % of one co-op match's CPU (docs/DEPLOY.md §3.4).
+ */
+export function parseBotRehearsal(v, fallback = BOT_REHEARSAL_DEFAULT) {
+  const s = String(v ?? '').trim();
+  if (!s) return fallback;
+  const n = Number(s);
+  return Number.isInteger(n) && n >= 0 ? Math.min(n, 8) : fallback;
+}
 /** Default combat mode: client-side unless SP_COMBAT=server. */
-const envClientCombat = () => String(env('SP_COMBAT') || '').toLowerCase() !== 'server';
+export function parseCombat(v) {
+  return String(v ?? '').trim().toLowerCase() === 'server' ? 'server' : 'client';
+}
 /** SP_VERIFY → 'off' | 'sample' | 'all'. */
 export function parseVerify(v) {
   const s = String(v ?? '').trim().toLowerCase();
@@ -240,12 +255,14 @@ export class Match {
     this.timerScale = Number.isFinite(opts.timerScale) && opts.timerScale >= 0 ? opts.timerScale : 1;
     this.gameSpeed = Number.isFinite(opts.combatSpeed) && opts.combatSpeed > 0 ? Math.min(opts.combatSpeed, 200) : GAME_SPEED;
     /** layouts a bot rehearses per prep with the real simulation (bot.js; 0 = heuristic placement only) */
-    this.botRehearsal = Number.isInteger(opts.botRehearsal) && opts.botRehearsal >= 0 ? Math.min(opts.botRehearsal, 8) : BOT_REHEARSAL_DEFAULT;
+    this.botRehearsal = Number.isInteger(opts.botRehearsal) && opts.botRehearsal >= 0
+      ? Math.min(opts.botRehearsal, 8)
+      : parseBotRehearsal(env('SP_BOT_REHEARSAL'));
     /** wall-clock budget of one rehearsal slice (scheduleBotPrep) */
     this.botSliceMs = Number.isFinite(opts.botSliceMs) && opts.botSliceMs > 0 ? opts.botSliceMs : this.sched.virtual ? Infinity : BOT_SLICE_MS;
     this.ds = dataSourceFor(this.data);
     /** client-side combat (DESIGN §14) — see the header */
-    this.clientCombat = opts.clientCombat != null ? !!opts.clientCombat : envClientCombat();
+    this.clientCombat = opts.clientCombat != null ? !!opts.clientCombat : parseCombat(env('SP_COMBAT')) === 'client';
     this.verifyMode = parseVerify(opts.verify ?? env('SP_VERIFY'));
     /** wall-clock ms per slice of a server-run normal / 联防 field (virtual time: at once) */
     this.headlessSliceMs = Number.isFinite(opts.headlessSliceMs) && opts.headlessSliceMs > 0 ? opts.headlessSliceMs : this.sched.virtual ? Infinity : HEADLESS_SLICE_MS;

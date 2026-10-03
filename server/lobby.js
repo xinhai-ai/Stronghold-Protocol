@@ -209,6 +209,38 @@ export class Lobby {
     return { rooms: this.rooms.size, matches, humans, bots };
   }
 
+  /**
+   * Aggregate per-network room/match usage for /healthz (docs/DEPLOY.md §3.4): how many client networks are already at
+   * one of the caps and how close the worst one is. No addresses here — /healthz is public, the refusal logs name the
+   * network (`room limit (16) reached for 203.0.113.7`).
+   * @returns {{ rooms: number, matches: number, networks: number, worstRooms: number, worstMatches: number,
+   *             overRooms: number, overMatches: number }}
+   */
+  usage() {
+    /** @type {Map<string, { rooms: number, matches: number }>} */
+    const per = new Map();
+    let matches = 0;
+    for (const r of this.rooms.values()) {
+      if (r.match) matches++;
+      if (!r.ownerKey) continue;
+      const e = per.get(r.ownerKey) || { rooms: 0, matches: 0 };
+      e.rooms++;
+      if (r.match) e.matches++;
+      per.set(r.ownerKey, e);
+    }
+    let worstRooms = 0;
+    let worstMatches = 0;
+    let overRooms = 0;
+    let overMatches = 0;
+    for (const e of per.values()) {
+      if (e.rooms > worstRooms) worstRooms = e.rooms;
+      if (e.matches > worstMatches) worstMatches = e.matches;
+      if (this.opts.maxRoomsPerAddr > 0 && e.rooms >= this.opts.maxRoomsPerAddr) overRooms++;
+      if (this.opts.maxMatchesPerAddr > 0 && e.matches >= this.opts.maxMatchesPerAddr) overMatches++;
+    }
+    return { rooms: this.rooms.size, matches, networks: per.size, worstRooms, worstMatches, overRooms, overMatches };
+  }
+
   // ---------------------------------------------------------------------------------------------------
   // net.js handler interface
   // ---------------------------------------------------------------------------------------------------

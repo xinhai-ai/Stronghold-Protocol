@@ -319,6 +319,23 @@ describe('ResourceStore', () => {
     assert.equal(await (await (await caches.open(CACHE_NAME)).match(`${ORIGIN}/assets/a.png`)).text(), fresh);
   });
 
+  test('a download is verified: bytes a stale Service Worker would hand back are re-asked for', async () => {
+    const fresh = 'fresh-bytes';
+    const hash = await digest(fresh);
+    const m = manifest([{ url: '/assets/a.png', tier: 1, size: fresh.length, hash }]);
+    const caches = new MemoryCaches();
+    // the first answer is what an older worker's cache would return; the retry carries a query no entry matches
+    const { fetch, calls } = fetcherFor({ bodies: { [`${ORIGIN}/assets/a.png`]: 'stale-bytes', [`${ORIGIN}/assets/a.png?sp=${hash}`]: fresh } });
+    const s = store(m, { caches, fetch });
+    const res = await s.download();
+    assert.equal(calls.length, 2, `asked twice (${calls.join(' , ')})`);
+    assert.match(calls[1], /\?sp=/);
+    assert.equal(res.failed, 0);
+    assert.equal(res.adopted, 0);
+    assert.equal(res.downloaded, 1);
+    assert.equal(await (await (await caches.open(CACHE_NAME)).match(`${ORIGIN}/assets/a.png`)).text(), fresh, 'the canonical key holds the verified bytes');
+  });
+
   test('a synthetic hash is never verified against cached bytes (there is nothing to compare)', async () => {
     const m = manifest([{ url: '/assets/a.png', tier: 1, size: 8, hash: 'syn-07572a8a157e' }]);
     const caches = new MemoryCaches();

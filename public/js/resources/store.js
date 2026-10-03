@@ -140,6 +140,14 @@ export class ResourceStore {
     return names.filter((n) => n.startsWith(CACHE_PREFIX) && n !== this.cacheName);
   }
 
+  /** Fetch a file and hand back a storable response (an opaque or empty or failed answer throws). */
+  async #fetchStorable(url, signal) {
+    const res = await this.fetcher(url, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal });
+    if (res.type === 'opaque' || !res.body) throw new Error('响应不可读取（缺少 CORS 头或空响应）');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res;
+  }
+
   /**
    * Rescue a file from a cache of the previous layout instead of downloading it again: hash the stored bytes and, when
    * they are exactly the revision this manifest wants, move the entry into the current cache. A mismatching entry is
@@ -264,9 +272,18 @@ export class ResourceStore {
         try {
           if (await this.#adopt(file, cache, older)) adopted++;
           else {
-            const res = await this.fetcher(key, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal });
-            if (res.type === 'opaque' || !res.body) throw new Error('响应不可读取（缺少 CORS 头或空响应）');
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            let res = await this.#fetchStorable(key, signal);
+            // `cache: 'no-store'` bypasses the HTTP cache, not Cache Storage: a Service Worker of an older build may
+            // answer this fetch out of its own cache (and a stale one at that). Verify the bytes against the manifest
+            // hash and, when they disagree, ask again on a URL no cache entry can match — the worker matches full URLs.
+            // If the second answer still disagrees the asset hashes are stale (tools/asset-hashes.mjs --check catches
+            // that before a deploy): keep the bytes rather than failing the file, and record the manifest's hash.
+            if (file.hash && CONTENT_HASH_RE.test(file.hash)) {
+              const seen = await digestOf(res);
+              if (seen && seen !== file.hash) {
+                res = await this.#fetchStorable(`${key}${key.includes('?') ? '&' : '?'}sp=${file.hash}`, signal);
+              }
+            }
             await cache.put(key, this.storable(res));
             downloaded++;
           }

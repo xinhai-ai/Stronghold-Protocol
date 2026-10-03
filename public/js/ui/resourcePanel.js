@@ -39,6 +39,8 @@ export function percent(st) {
 }
 
 const busy = (st) => st.phase === 'download' || st.phase === 'checking';
+/** Another tab of this browser owns the download (Web Locks): pause/continue would be meaningless here. */
+const otherTab = (st) => st.phase === 'foreign';
 
 /** 暂停 / 继续下载 / 清理缓存 (+ 关闭预载 where the caller can turn the setting off). */
 function ResourceActions({ st, onClose }) {
@@ -47,7 +49,7 @@ function ResourceActions({ st, onClose }) {
       ? html`<${Button} variant="secondary" size="sm" icon="hourglass" onClick=${() => pauseResources()}>暂停<//>`
       : st.complete
         ? html`<${Button} variant="secondary" size="sm" icon="check" onClick=${() => { void clearResources(); }}>清理缓存<//>`
-        : html`<${Button} variant="secondary" size="sm" icon="play" onClick=${() => startResources()}>继续下载<//>`}
+        : html`<${Button} variant="secondary" size="sm" icon="play" onClick=${() => startResources()}>${otherTab(st) ? '再检查一次' : '继续下载'}<//>`}
     ${busy(st) || st.complete ? null : html`<button type="button" class="res-link" onClick=${() => { void clearResources(); }}>清理缓存</button>`}
     ${onClose ? html`<button type="button" class="res-link" onClick=${onClose}>关闭预载</button>` : null}
   </div>`;
@@ -94,9 +96,10 @@ export function ResourceLauncher({ enabled, onChange }) {
   if (!enabled && !st.supported) return null;
   const detail = detailText(st);
   const state = !enabled ? '预载'
-    : busy(st) ? `预载中 ${percent(st)}%`
-      : st.complete ? '已保存'
-        : st.error ? '未完成' : '已暂停';
+    : otherTab(st) ? '另一标签页预载中'
+      : busy(st) ? `预载中 ${percent(st)}%`
+        : st.complete ? '已保存'
+          : st.error ? '未完成' : '已暂停';
 
   return html`<div class=${`res-pill${enabled ? ' is-on' : ''}`}>
     <button type="button" class="res-pill__head" disabled=${enabled ? 'disabled' : null}

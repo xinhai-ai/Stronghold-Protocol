@@ -43,7 +43,9 @@ is used.
   for the files this install has on disk; a CDN-only install omits them and the client reports progress in files
   instead of bytes.
 - The client (`public/js/resources/*`) downloads tier 1 first, then tier 2 in the background: four lanes for small files
-  and one for files above 4 MiB, skipping whatever is already cached. A single failure is collected and retried next
+  and one for files above 4 MiB, skipping whatever is already cached. Two tabs of the same browser never download the
+  same file twice: a Web Lock (`stronghold-resources-preload`, `ifAvailable`) makes one tab do the work while the others
+  report what is already cached and re-check when the player returns to them. A single failure is collected and retried next
   time, a quota failure stops the run and says so, and a file above 24 MiB is skipped instead of cached. Downloads run
   in the page (plain `fetch` + `cache.put`, `cache: 'no-store'` so nothing is stored twice).
 - `public/resource-sw.js` (a module Service Worker, registered with `updateViaCache: 'none'`) answers `/assets/**` and

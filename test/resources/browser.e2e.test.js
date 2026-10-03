@@ -57,13 +57,13 @@ function makeInstall() {
   import { render } from '/vendor/preact.module.js';
   import { html } from '/js/ui/components.js';
   import { ResourceLauncher } from '/js/ui/resourcePanel.js';
-  import { resourceState, syncResources, clearResources } from '/js/resources/index.js';
+  import { resourceState, syncResources, clearResources, startResources } from '/js/resources/index.js';
   // the fixture drives the real launcher, exactly as the title screen does
   let enabled = false;
   const paint = () => render(html\`<\${ResourceLauncher} enabled=\${enabled} onChange=\${(v) => set(v)} />\`, document.getElementById('app'));
   const set = (v) => { enabled = v; void syncResources(v); paint(); };
   window.__res = {
-    resourceState, syncResources, clearResources,
+    resourceState, syncResources, clearResources, startResources,
     state: () => ({ ...resourceState(), enabled }),
     click: () => document.querySelector('.res-pill__head').click(),
   };
@@ -189,6 +189,37 @@ describe('offline resources in headless Chrome', { skip }, () => {
     assert.equal(await page.evaluate(() => window.__res.state().enabled), false);
     assert.deepEqual(problems, []);
     await page.close();
+  });
+
+  test('a second tab does not download the same files twice (real Web Locks)', async () => {
+    const first = await open();
+    await ready(first.page, first.problems);
+    await first.page.evaluate(() => caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n)))));
+    const second = await open();
+    await ready(second.page, second.problems);
+    const requested = [];
+    second.page.on('request', (r) => { if (/\/assets\//.test(r.url())) requested.push(r.url()); });
+
+    // the first tab holds the preload lock, exactly as it does while downloading
+    await first.page.evaluate(() => {
+      window.__release = null;
+      const gate = new Promise((resolve) => { window.__release = resolve; });
+      window.__holding = navigator.locks.request('stronghold-resources-preload', () => gate);
+    });
+    await second.page.evaluate(() => window.__preload(true));
+    await second.page.waitForFunction("window.__res.state().phase === 'foreign'", { timeout: 15000 });
+    assert.equal(await second.page.$eval('.res-pill__state', (el) => el.textContent), '另一标签页预载中');
+    assert.deepEqual(requested, [], 'the second tab asked for no resource file at all');
+    assert.deepEqual(await second.page.evaluate(() => ({ done: window.__res.state().done, total: window.__res.state().total })), { done: 0, total: 3 });
+
+    // the first tab releases the lock (finished or closed): the second one takes over and completes the rest
+    await first.page.evaluate(() => window.__release());
+    await second.page.evaluate(() => window.__res.startResources());
+    await second.page.waitForFunction('window.__res.state().complete === true', { timeout: 30000 });
+    assert.deepEqual(requested.sort(), FILES.map((f) => `http://127.0.0.1:${srv.port}${f.url}`).sort());
+    assert.deepEqual(second.problems, []);
+    await first.page.close();
+    await second.page.close();
   });
 
   test('a second visit finds the files already cached (a new manifest version starts over)', async () => {

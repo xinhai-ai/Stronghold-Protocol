@@ -277,6 +277,7 @@ location = /resource-sw.js {
 }
 ```
 
+- 同一浏览器的多个标签页不会各下一遍：客户端用 Web Locks 串行化预载，只有一个标签页在下载（其余显示「另一标签页预载中」，回到该标签页时自动继续）。
 - **素材需要允许跨域读取**（与 §3.2 同一条要求）：预载会用 CORS 模式 `fetch` 素材并把响应写进缓存，缺 `Access-Control-Allow-Origin` 时该文件会被记为失败（游戏本身照常按需加载）。想确认预载是否生效：浏览器 DevTools → Application → Cache Storage 里应出现 `stronghold-resources-v1-<素材指纹>`，文件数为「已保存/总数」。
 
 ### 3.4 上限调整（房间 / 对局 / 连接）

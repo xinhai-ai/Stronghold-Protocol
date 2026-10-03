@@ -9,13 +9,13 @@
 // The settings panel (public/js/ui/resourcePanel.js) renders `resourceState()`; main.js calls `syncResources()` with the
 // persisted setting at boot and on every settings change.
 
-import { CACHE_PREFIX, MANIFEST_URL, SW_URL, TIER_ESSENTIAL, TIER_REST, formatBytes, validateManifest } from './common.js';
+import { CACHE_PREFIX, MANIFEST_URL, SW_URL, TIER_ESSENTIAL, TIER_REST, checkAbort, formatBytes, validateManifest } from './common.js';
 import { ResourceStore } from './store.js';
 
 /** @type {any} */
 const state = {
   enabled: false,
-  phase: 'off', // off | checking | download | ready | paused | error
+  phase: 'off', // off | checking | download | foreign (another tab) | ready | paused | error
   supported: true,
   reason: '',
   done: 0,
@@ -163,6 +163,36 @@ export async function startResources() {
   return start();
 }
 
+/**
+ * The download of one tab at a time (Web Locks): Cache Storage is shared by every tab of the origin, so without this
+ * two tabs of the same session would fetch the same ~250 MiB twice. The second tab does not queue behind the first: it
+ * reports what is already cached and re-checks when the player comes back to it (`ifAvailable`).
+ */
+export const DOWNLOAD_LOCK = 'stronghold-resources-preload';
+
+/** Run `job` while holding the download lock; `{ busy: true }` when another tab has it. Unsupported ⇒ just run it. */
+async function withDownloadLock(job) {
+  const locks = globalThis.navigator?.locks;
+  if (!locks || typeof locks.request !== 'function') return job();
+  return locks.request(DOWNLOAD_LOCK, { ifAvailable: true }, async (lock) => (lock ? job() : { busy: true }));
+}
+
+/** Another tab owns the download: show what is cached and look again when this tab becomes visible. */
+function watchOtherTab(store) {
+  if (globalThis.document?.addEventListener) {
+    const recheck = () => {
+      if (document.visibilityState !== 'visible' || !current) return;
+      document.removeEventListener('visibilitychange', recheck);
+      void startResources();
+    };
+    document.addEventListener('visibilitychange', recheck);
+  }
+  return store.status().then((st) => set({
+    ...counters(st), phase: 'foreign', error: false,
+    message: st.complete ? '资源已全部预载完成。' : '另一个标签页正在预载⋯回到这个标签页时会自动继续。',
+  }));
+}
+
 async function start() {
   set({ phase: 'checking', message: '正在检查已保存的资源…', error: false });
   const ctx = await resourceContext();
@@ -187,9 +217,15 @@ async function start() {
   const signal = controller.signal;
   const onProgress = (p) => set({ ...counters(p), phase: 'download', failed: p.failed, error: false });
   try {
-    // two passes: what a screen needs in its first second, then the rest (portraits, Spine models, board art)
-    await store.download({ tiers: [TIER_ESSENTIAL], signal, onProgress });
-    await store.download({ tiers: [TIER_REST], signal, onProgress });
+    // one tab at a time; two passes per tab: what a screen needs in its first second, then the rest (portraits, Spine,
+    // board art)
+    const outcome = await withDownloadLock(async () => {
+      checkAbort(signal);
+      await store.download({ tiers: [TIER_ESSENTIAL], signal, onProgress });
+      await store.download({ tiers: [TIER_REST], signal, onProgress });
+      return { busy: false };
+    });
+    if (outcome.busy) { await watchOtherTab(store); return; }
     const after = await store.status();
     set({
       ...counters(after),

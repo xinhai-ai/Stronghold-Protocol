@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CACHE_PREFIX, cacheName, MANIFEST_URL, SW_URL } from '../../public/js/resources/common.js';
+import { CACHE_PREFIX, MANIFEST_URL, SW_URL, cacheName } from '../../public/js/resources/common.js';
+import { DOWNLOAD_LOCK } from '../../public/js/resources/index.js';
 
 class MemoryCache {
   constructor() { this.entries = new Map(); }
@@ -130,6 +131,34 @@ test('the preload controller: off by default, downloads in two passes, serves of
   assert.equal(mod.resourceState().phase, 'off');
   assert.equal(mod.resourceState().done, 0);
   assert.equal(env.calls.unregistered, 1, 'nothing left to serve ⇒ the worker is removed');
+});
+
+test('a second tab does not download the same files twice (Web Locks)', async (t) => {
+  const env = stubEnv();
+  t.after(env.restore);
+  const lockCalls = [];
+  // another tab owns the lock: with `ifAvailable` the callback runs with null instead of queueing behind 250 MiB
+  Object.defineProperty(globalThis.navigator, 'locks', {
+    value: { request: async (name, opts, cb) => { lockCalls.push([name, opts]); return cb(null); } },
+    configurable: true, writable: true,
+  });
+  const mod = await import('../../public/js/resources/index.js?other-tab');
+  await mod.syncResources(true);
+  const st = mod.resourceState();
+  assert.deepEqual(lockCalls, [[DOWNLOAD_LOCK, { ifAvailable: true }]]);
+  assert.equal(st.phase, 'foreign');
+  assert.match(st.message, /另一个标签页正在预载/);
+  assert.deepEqual(env.calls.fetch, [MANIFEST_URL], 'nothing is downloaded: only the manifest was asked for');
+  assert.deepEqual([st.done, st.total], [0, FILES.length], 'the counters still come from the shared cache');
+  assert.equal(st.enabled, true, 'the setting stays on');
+
+  // the other tab is gone (released the lock): 再检查一次 downloads the rest
+  Object.defineProperty(globalThis.navigator, 'locks', { value: { request: async (name, opts, cb) => cb({ name }) }, configurable: true, writable: true });
+  await mod.startResources();
+  assert.equal(mod.resourceState().phase, 'ready');
+  assert.equal(mod.resourceState().complete, true);
+  assert.equal(env.calls.fetch.length, 1 + FILES.length, 'the tab that owns the lock does the work');
+  await mod.syncResources(false);
 });
 
 test('the worker entry (public/resource-sw.js) intercepts resources only', async (t) => {

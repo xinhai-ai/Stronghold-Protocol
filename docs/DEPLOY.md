@@ -265,6 +265,20 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 
 验证：`GET /healthz` 里 `assetsCdn` 会显示当前地址；浏览器网络面板里素材请求应指向 CDN。
 
+### 3.3 离线资源预载（可选，客户端开关）
+
+玩家在游戏里「设置 ▸ 离线资源」打开后，客户端会把对局素材存进浏览器缓存（Service Worker + Cache Storage，见 [docs/ASSETS.md](docs/ASSETS.md)「Preload」），之后断网或 CDN 变慢也不影响已经缓存的对局。默认关闭，服务端无需任何配置（清单 `GET /data/resource-manifest.json` 由服务端从 `data/assets.json` 自动生成）。部署上只需注意两件事：
+
+- **`/resource-sw.js` 必须由游戏服务器提供，且不要被边缘缓存。** Service Worker 脚本要能立即更新：本项目对 `public/` 下的 `.js` 已经是 `no-cache`，但如果把整个 `public/` 交给 CDN / Cloudflare，请把 `resource-sw.js` 排除（Cloudflare → Caching → Cache Rules：`http.request.uri.path eq "/resource-sw.js"` → **Bypass**）。Nginx 例：
+
+```nginx
+location = /resource-sw.js {
+    add_header Cache-Control "no-cache" always;
+}
+```
+
+- **素材需要允许跨域读取**（与 §3.2 同一条要求）：预载会用 CORS 模式 `fetch` 素材并把响应写进缓存，缺 `Access-Control-Allow-Origin` 时该文件会被记为失败（游戏本身照常按需加载）。想确认预载是否生效：浏览器 DevTools → Application → Cache Storage 里应出现 `stronghold-resources-v1-<素材指纹>`，文件数为「已保存/总数」。
+
 ## 4. macOS / Linux 常驻
 
 - 临时开服：`scripts/start.sh`（或 `npm start`），保持终端窗口打开。macOS 首次会询问是否允许 node 接受传入连接，选「允许」。

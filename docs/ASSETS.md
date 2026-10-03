@@ -25,6 +25,32 @@ client fetches Spine `.skel` / `.atlas` files with `fetch` and loads images with
 so a long `Cache-Control` is safe only if you invalidate on update — the server itself uses `max-age=86400` for
 `/assets/`.
 
+## Preload (optional offline resources)
+
+A player can have the client download the art ahead of time into the browser's Cache Storage, so entering a battle never
+waits on the network and a running match keeps its art while the CDN is slow or unreachable. It is **off by default**:
+the switch lives in 设置 ▸ 离线资源, and nothing is downloaded until it is turned on.
+
+- The list comes from the server: `GET /data/resource-manifest.json` is generated from the two manifests below and
+  rewritten the same way, so a CDN install preloads *from the CDN* (`server/resources.js`). It carries a `version` (the
+  asset manifest hash: a new build gets a new cache) and, per file, a `tier`:
+  **tier 1 (`essential`)** — fonts, UI sprites, profession / bond / band / item / skill icons, enemy icons, operator and
+  token avatars, audio: what a screen needs in its first second; **tier 2** — portraits, every Spine model
+  (skel/atlas/textures) and the local-client art that is not the board (the bulk of the ~250 MiB). Sizes are included
+  for the files this install has on disk; a CDN-only install omits them and the client reports progress in files
+  instead of bytes.
+- The client (`public/js/resources/*`) downloads tier 1 first, then tier 2 in the background: four lanes for small files
+  and one for files above 4 MiB, skipping whatever is already cached. A single failure is collected and retried next
+  time, a quota failure stops the run and says so, and a file above 24 MiB is skipped instead of cached. Downloads run
+  in the page (plain `fetch` + `cache.put`, `cache: 'no-store'` so nothing is stored twice).
+- `public/resource-sw.js` (a module Service Worker, registered with `updateViaCache: 'none'`) answers `/assets/**` and
+  `/fonts/**` from that cache — byte ranges included, so audio can seek — and passes everything else (code, `/data/`,
+  API, WebSocket) straight to the network. It needs HTTPS (or localhost); on plain HTTP the switch says why it cannot be
+  used instead of failing silently.
+- 「清理缓存」 deletes every cache the app owns; turning the switch off stops the downloads and keeps what is cached
+  (still served offline), and the worker is removed once there is nothing left to serve. A completed new version drops
+  the previous cache. The host therefore has to serve `/resource-sw.js` and never cache it at the edge.
+
 ## Running
 
 ```bash

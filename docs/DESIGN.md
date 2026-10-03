@@ -42,9 +42,13 @@ Run: `npm install && npm run assets && npm start` → `http://localhost:3000`. F
 ```
 server/
   index.js                 HTTP static server (gzip for .skel/.atlas/.json/.js/.css), WebSocket upgrade at /ws, boot
+  resources.js             the optional preload manifest (/data/resource-manifest.json): every asset file the client may
+                           cache, split essential/background, with the sizes of the files on disk (docs/ASSETS.md)
   net.js                   session registry, send helpers, per-connection rate limit, message validation (uses shared/protocol.js)
   lobby.js                 rooms (4-letter codes), seats, host, AI seats, ready/start, reconnect tokens, room→Match wiring
   data.js                  loads data/*.json once, builds indexes (getChess, getBond, …); frozen objects
+  redis.js                 optional state store (node-redis): sessions, rooms and match checkpoints survive a restart (SP_REDIS_URL)
+  persist.js               the state document + checkpoints: save loop, load & restore on boot (docs/DEPLOY.md §3.1)
   match/
     Match.js               match state machine, timers, round loop, co-op orchestration, broadcasting views
     PlayerState.js         per-player economy/shop/hand/board/items/bonds/LP state + all prep-intent handlers
@@ -100,10 +104,14 @@ public/
     data.js                fetches /data/*.json, same indexes as server/data.js
     audio.js               BGM/SFX manager (Web Audio), volume settings
     assets.js              asset URLs, image cache, Spine loader with LRU + fallback
+    resources/             optional offline preload (docs/ASSETS.md「Preload」): common.js (manifest/URL/Range rules),
+                           store.js (Cache Storage download), service.js (worker handler), index.js (settings ↔ worker)
     screens/               title.js, lobby.js, room.js, briefing.js, bandDraft.js, game.js, result.js
     ui/                    hud.js, bondStrip.js, bondPopup.js, shopBar.js, teamPanel.js, detailPanel.js,
-                           tooltip.js, choiceOverlay.js, rewardOverlay.js, ticker.js, emotes.js, settings.js, toasts.js
+                           tooltip.js, choiceOverlay.js, rewardOverlay.js, ticker.js, emotes.js, settings.js,
+                           resourcePanel.js, toasts.js
     render/                app.js, projection.js, tiles.js, units.js, spine.js, fx.js, interp.js, drag.js, pick.js, promote.js (API §9)
+  resource-sw.js           module Service Worker: serves /assets/** and /fonts/** from the preload cache (never code/data)
   vendor/                  pixi, pixi-spine, preact, hooks, htm (copied from node_modules by tools/vendor.mjs)
   assets/                  downloaded art/audio (git-ignored), see docs/ASSETS.md
   fonts/                   self-hosted fonts

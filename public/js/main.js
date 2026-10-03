@@ -344,7 +344,23 @@ async function boot() {
     splash.classList.add('is-done');
     setTimeout(() => splash.remove(), 300);
   }
+  installResourcePreload();
   globalThis.__SP__ = { store, net, data, version: 1 };
+}
+
+/**
+ * Optional offline-resource preload (docs/ASSETS.md「Preload」): off by default, and loaded after the first paint so a
+ * player who never enables it downloads nothing. The settings panel writes the switch; main.js mirrors it into
+ * public/js/resources/index.js (idempotent: the settings store also fires for volume changes).
+ */
+function installResourcePreload() {
+  import('./resources/index.js')
+    .then((r) => {
+      const apply = (s) => { r.syncResources(!!s.preload).catch((err) => console.warn('[resources] sync failed', err)); };
+      apply(settingsStore.get());
+      settingsStore.subscribe(apply);
+    })
+    .catch((err) => console.warn('[resources] unavailable', err));
 }
 
 boot().catch((err) => {

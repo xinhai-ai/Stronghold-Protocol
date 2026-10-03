@@ -1,0 +1,234 @@
+// public/js/resources/index.js — the page side of the optional offline-resource preload (docs/ASSETS.md「Preload」).
+//
+// Off by default (设置 ▸ 离线资源). When the player turns it on, this module fetches /data/resource-manifest.json,
+// registers the Service Worker (public/resource-sw.js, so the cached files are also served with no network) and fills
+// Cache Storage in two passes: the essential tier first, then the rest in the background. Turning it off stops the
+// downloads; 「清理缓存」 deletes them. Nothing here touches the match: a player who never enables it never downloads
+// anything, and a failed download only costs a console message.
+//
+// The settings panel (public/js/ui/resourcePanel.js) renders `resourceState()`; main.js calls `syncResources()` with the
+// persisted setting at boot and on every settings change.
+
+import { CACHE_PREFIX, MANIFEST_URL, SW_URL, TIER_ESSENTIAL, TIER_REST, formatBytes, validateManifest } from './common.js';
+import { ResourceStore } from './store.js';
+
+/** @type {any} */
+const state = {
+  enabled: false,
+  phase: 'off', // off | checking | download | ready | paused | error
+  supported: true,
+  reason: '',
+  done: 0,
+  total: 0,
+  wanted: 0,
+  tier1Done: 0,
+  tier1Total: 0,
+  tier2Done: 0,
+  tier2Total: 0,
+  bytes: 0,
+  totalBytes: null,
+  skipped: 0,
+  failed: 0,
+  complete: false,
+  message: '',
+  error: false,
+  worker: '',
+  version: '',
+};
+
+const listeners = new Set();
+let current = false;
+let controller = null;
+let contextPromise = null;
+
+/** Subscribe to preload state changes (returns the unsubscribe function). */
+export function subscribeResources(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+/** A copy of the current preload state (safe to hand to Preact). */
+export function resourceState() {
+  return { ...state };
+}
+
+function set(patch) {
+  const before = JSON.stringify(state); // the state is small and flat: a cheap "did anything change" test
+  Object.assign(state, patch);
+  if (JSON.stringify(state) === before) return;
+  for (const fn of [...listeners]) {
+    try { fn(resourceState()); } catch (err) { console.error('[resources] listener failed', err); }
+  }
+}
+
+const counters = (s) => ({
+  done: s.count,
+  total: s.total,
+  wanted: s.wanted,
+  tier1Done: s.tier1Present,
+  tier1Total: s.tier1,
+  tier2Done: s.tier2Present,
+  tier2Total: s.tier2,
+  bytes: s.bytes,
+  totalBytes: s.totalBytes,
+  skipped: s.skipped,
+  complete: s.complete,
+});
+
+/** Why this browser cannot keep the resources (empty ⇒ it can). */
+export function unsupportedReason() {
+  if (!globalThis.isSecureContext) return '需要 HTTPS（或 localhost）才能把资源保存在本地';
+  if (!globalThis.caches) return '当前浏览器不支持 Cache Storage';
+  if (!globalThis.navigator?.serviceWorker) return '当前浏览器不支持 Service Worker';
+  return '';
+}
+
+/**
+ * The preload context: the manifest plus (when this browser can cache) its store. Cached for the session; a failure is
+ * retried the next time the player enables the preload.
+ */
+export function resourceContext() {
+  contextPromise ??= (async () => {
+    const reason = unsupportedReason();
+    if (reason) return { unsupported: reason }; // no point in asking for a list this browser cannot store
+    let res;
+    try {
+      const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(10000) : undefined;
+      res = await fetch(MANIFEST_URL, { cache: 'no-store', signal });
+    } catch (err) {
+      return { error: `无法读取资源清单：${err?.message || err}` };
+    }
+    if (!res.ok) return { error: `无法读取资源清单：HTTP ${res.status}` };
+    let manifest;
+    try {
+      manifest = validateManifest(await res.json());
+    } catch (err) {
+      return { error: String(err?.message || err) };
+    }
+    if (!manifest.files.length) return { manifest, empty: true };
+    return { manifest, store: new ResourceStore(manifest) };
+  })();
+  return contextPromise;
+}
+
+/** Register the Service Worker that serves the cached files (downloads work without it). */
+async function ensureWorker() {
+  const nav = globalThis.navigator;
+  if (!nav?.serviceWorker) throw new Error('不支持 Service Worker');
+  const reg = await nav.serviceWorker.register(SW_URL, { type: 'module', scope: '/', updateViaCache: 'none' });
+  set({ worker: '' });
+  return reg;
+}
+
+/** Unregister the worker (nothing to serve from the cache any more). */
+async function dropWorker() {
+  const nav = globalThis.navigator;
+  if (!nav?.serviceWorker) return;
+  try {
+    for (const reg of await nav.serviceWorker.getRegistrations()) {
+      const url = reg.active?.scriptURL || reg.installing?.scriptURL || reg.waiting?.scriptURL || '';
+      if (url.endsWith(SW_URL)) await reg.unregister();
+    }
+  } catch { /* the worker is optional */ }
+}
+
+/**
+ * Turn the preload on or off (idempotent: the settings store fires on every volume change).
+ * @param {boolean} enabled
+ */
+export async function syncResources(enabled) {
+  enabled = !!enabled;
+  if (enabled === current) { set({ enabled }); return; }
+  current = enabled;
+  set({ enabled, error: false, message: '' });
+  if (!enabled) {
+    controller?.abort();
+    set({ phase: state.complete ? 'ready' : 'paused', message: state.complete ? '已保存的资源仍可离线使用；「清理缓存」可删除。' : '已停止预载。' });
+    return;
+  }
+  return start();
+}
+
+/** Continue (or start) the download of an enabled preload. */
+export async function startResources() {
+  if (!current) return;
+  return start();
+}
+
+async function start() {
+  set({ phase: 'checking', message: '正在检查已保存的资源…', error: false });
+  const ctx = await resourceContext();
+  if (ctx.error || ctx.unsupported || ctx.empty) {
+    const message = ctx.error || ctx.unsupported || '服务器没有可预载的资源';
+    set({ phase: 'error', message, error: true, supported: !ctx.unsupported });
+    if (ctx.unsupported) void dropWorker();
+    return;
+  }
+  const store = ctx.store;
+  set({ supported: true, version: store.manifest.version });
+  // registering an already-registered worker is a cheap no-op, so every start can retry a failed one
+  ensureWorker().catch((err) => set({ worker: `离线服务未启用（${err?.message || err}），资源仍会保存，只是断网时无法读取。` }));
+  const before = await store.status();
+  set({ ...counters(before), phase: before.complete ? 'ready' : 'download', message: before.complete ? '全部资源已保存，可离线进入对局。' : '' });
+  if (before.complete) { void store.pruneOld(); return; }
+  controller = new AbortController();
+  const signal = controller.signal;
+  const onProgress = (p) => set({ ...counters(p), phase: 'download', failed: p.failed, error: false });
+  try {
+    // two passes: what a screen needs in its first second, then the rest (portraits, Spine models, board art)
+    await store.download({ tiers: [TIER_ESSENTIAL], signal, onProgress });
+    await store.download({ tiers: [TIER_REST], signal, onProgress });
+    const after = await store.status();
+    set({
+      ...counters(after),
+      phase: 'ready',
+      error: false,
+      message: after.complete
+        ? `全部资源已保存（${formatBytes(after.bytes)}），可离线进入对局。`
+        : `已保存 ${after.count}/${after.total} 个文件；未完成的会在下次开启时重试。`,
+    });
+    if (after.complete) void store.pruneOld();
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      const now = await store.status().catch(() => null);
+      set({ ...(now ? counters(now) : {}), phase: 'paused', message: current ? '已暂停，可继续下载或清理缓存。' : '已停止预载。' });
+      return;
+    }
+    const message = err?.name === 'QuotaExceededError' || /quota|空间不足/i.test(String(err?.message || ''))
+      ? '浏览器存储空间不足：已保存的文件保留，可清理缓存后重试。'
+      : `预载失败：${err?.message || err}`;
+    const now = await store.status().catch(() => null);
+    set({ ...(now ? counters(now) : {}), phase: 'error', message, error: true });
+  } finally {
+    controller = null;
+  }
+}
+
+/** Stop downloading (keeps what is cached). */
+export function pauseResources() {
+  if (controller) {
+    controller.abort();
+    set({ message: '正在暂停…' });
+  }
+}
+
+/**
+ * Delete every cached resource (all versions) and stop.
+ */
+export async function clearResources() {
+  controller?.abort();
+  const ctx = await resourceContext();
+  // a run that was mid-file finishes (or aborts) before the caches go away, so nothing lands after the clear
+  if (ctx.store?.running) { try { await ctx.store.running; } catch { /* aborted — nothing to keep */ } }
+  if (ctx.store) await ctx.store.clear();
+  else if (globalThis.caches) {
+    const names = await globalThis.caches.keys();
+    await Promise.all(names.filter((n) => n.startsWith(CACHE_PREFIX)).map((n) => globalThis.caches.delete(n)));
+  }
+  if (!current) await dropWorker();
+  set({
+    done: 0, tier1Done: 0, tier2Done: 0, bytes: 0, failed: 0, complete: false, error: false,
+    phase: current ? 'paused' : 'off',
+    message: '已清理离线资源缓存。',
+  });
+}

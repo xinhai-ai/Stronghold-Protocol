@@ -538,6 +538,14 @@
 .pbar--sm { --ph: .06rem; }
 .pbar--lg { --ph: .16rem; }
 
+/* ---- shared bits of the offline-resource preload (docs/ASSETS.md「Preload」; ui/resourcePanel.js) ------------- */
+.res-actions { display: flex; align-items: center; gap: .12rem; flex-wrap: wrap; }
+.res-link {
+  padding: 0; background: none; border: 0; color: var(--text-dim); font-size: .13rem;
+  text-decoration: underline dotted; cursor: pointer;
+}
+.res-link:hover { color: var(--text-hi); }
+
 /* ---- tabs -------------------------------------------------------------------------------------------- */
 .tabs { display: flex; gap: .04rem; border-bottom: 1px solid var(--line); }
 .tabs__tab {

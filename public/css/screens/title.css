@@ -251,3 +251,24 @@
   font-size: .13rem;
   color: var(--text-dim);
 }
+
+/* ---- offline resource preload (docs/ASSETS.md「Preload」): the home screen's own way in ---------------- */
+.title-preload { position: absolute; z-index: 3; right: .44rem; bottom: .86rem; }
+.res-pill { width: 2.7rem; padding: .1rem .12rem; background: rgba(10, 14, 12, .74); border: 1px solid var(--line-2); }
+.res-pill.is-on { border-color: var(--mint-800); background: rgba(13, 20, 17, .86); }
+.res-pill__head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: .12rem; width: 100%;
+  padding: 0; background: none; border: 0; color: var(--text-hi); font-size: .15rem; text-align: left; cursor: pointer;
+}
+.res-pill__head:disabled { cursor: default; }
+.res-pill__label { display: flex; align-items: baseline; gap: .06rem; }
+.res-pill.is-on .res-pill__label { color: var(--mint-400); }
+.res-pill__label .micro { color: var(--text-dim); }
+.res-pill__state { font-size: .14rem; color: var(--mint-400); white-space: nowrap; }
+.res-pill__body { display: flex; flex-direction: column; gap: .07rem; margin-top: .09rem; }
+.res-pill__body .pbar { min-width: 0; }
+.res-pill__text { margin: 0; font-size: .13rem; line-height: 1.6; color: var(--text-md); }
+.res-pill__text.is-dim { color: var(--text-dim); }
+.res-pill__text.is-warn { color: var(--amber); }
+.res-pill__hint { margin: .06rem 0 0; font-size: .13rem; line-height: 1.6; color: var(--text-dim); }
+.res-pill:hover .res-pill__hint { color: var(--text-md); }

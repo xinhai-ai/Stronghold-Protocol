@@ -31,6 +31,13 @@ function makeInstall() {
   const dataDir = path.join(dir, 'data');
   fs.mkdirSync(dataDir, { recursive: true });
   fs.cpSync(path.join(ROOT, 'public', 'js'), path.join(publicDir, 'js'), { recursive: true });
+  // the launcher needs preact/htm (ui/components.js) and the progress-bar styles
+  fs.mkdirSync(path.join(publicDir, 'vendor'), { recursive: true });
+  for (const f of ['preact.module.js', 'hooks.module.js', 'htm.module.js']) {
+    fs.copyFileSync(path.join(ROOT, 'public', 'vendor', f), path.join(publicDir, 'vendor', f));
+  }
+  fs.mkdirSync(path.join(publicDir, 'css'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'public', 'css', 'components.css'), path.join(publicDir, 'css', 'components.css'));
   fs.copyFileSync(path.join(ROOT, 'public', 'resource-sw.js'), path.join(publicDir, 'resource-sw.js'));
   for (const f of FILES) {
     const abs = path.join(publicDir, f.url);
@@ -45,11 +52,23 @@ function makeInstall() {
     chars: { char_e2e: { portrait: FILES[2].url } },
   }));
   fs.writeFileSync(path.join(publicDir, 'index.html'), `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" />
-<title>resource e2e</title></head><body><div id="app"></div>
+<title>resource e2e</title><link rel="stylesheet" href="/css/components.css" /></head><body><div id="app"></div>
 <script type="module">
-  const mod = await import('/js/resources/index.js');
-  window.__res = mod;
-  window.__preload = (on) => mod.syncResources(on);
+  import { render } from '/vendor/preact.module.js';
+  import { html } from '/js/ui/components.js';
+  import { ResourceLauncher } from '/js/ui/resourcePanel.js';
+  import { resourceState, syncResources, clearResources } from '/js/resources/index.js';
+  // the fixture drives the real launcher, exactly as the title screen does
+  let enabled = false;
+  const paint = () => render(html\`<\${ResourceLauncher} enabled=\${enabled} onChange=\${(v) => set(v)} />\`, document.getElementById('app'));
+  const set = (v) => { enabled = v; void syncResources(v); paint(); };
+  window.__res = {
+    resourceState, syncResources, clearResources,
+    state: () => ({ ...resourceState(), enabled }),
+    click: () => document.querySelector('.res-pill__head').click(),
+  };
+  window.__preload = set;
+  paint();
   window.__ready = true;
 </script></body></html>`);
   return { dir, publicDir, dataDir };
@@ -77,14 +96,24 @@ describe('offline resources in headless Chrome', { skip }, () => {
     if (install) fs.rmSync(install.dir, { recursive: true, force: true });
   });
 
-  test('the settings switch downloads the files and the worker serves them with the network off', async () => {
+  /**
+   * A page of the fixture with its problems collected. `ready()` waits for the inline module and, when it never runs,
+   * reports what the console said (a broken import otherwise shows up only as a 20 s timeout).
+   */
+  async function open() {
     const page = await browser.newPage();
     const problems = [];
     page.on('pageerror', (err) => problems.push(`pageerror: ${err.message}`));
-    // a resource load failure is expected here: the fixture has no favicon, and the test fetches an uncached file offline
     page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) problems.push(`console: ${m.text()}`); });
     await page.goto(`http://127.0.0.1:${srv.port}/index.html`);
-    await page.waitForFunction('window.__ready === true', { timeout: 20000 });
+    return { page, problems };
+  }
+  const ready = (page, problems) => page.waitForFunction('window.__ready === true', { timeout: 20000 })
+    .catch((err) => { throw new Error(`${err.message} — ${problems.join(' | ') || 'no console error'}`); });
+
+  test('the settings switch downloads the files and the worker serves them with the network off', async () => {
+    const { page, problems } = await open();
+    await ready(page, problems);
 
     // the server offers the list, with the sizes of the files this install has
     const manifest = await page.evaluate(() => fetch('/data/resource-manifest.json').then((r) => r.json()));
@@ -131,10 +160,40 @@ describe('offline resources in headless Chrome', { skip }, () => {
     await page.close();
   });
 
+  test('the home-screen pill starts the preload with one click and shows the counters', async () => {
+    const { page, problems } = await open();
+    await ready(page, problems);
+
+    // a fresh device: off, collapsed, nothing cached
+    await page.evaluate(() => caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n)))));
+    assert.equal(await page.$eval('.res-pill__state', (el) => el.textContent), '预载');
+    assert.equal(await page.$('.res-pill__body'), null, 'collapsed while off');
+    assert.equal(await page.evaluate(() => window.__res.state().done), 0);
+
+    await page.evaluate(() => window.__res.click());
+    assert.equal(await page.evaluate(() => window.__res.state().enabled), true, 'one click turns the setting on');
+    await page.waitForFunction('window.__res.state().complete === true', { timeout: 30000 });
+    assert.equal(await page.$eval('.res-pill__state', (el) => el.textContent), '已保存');
+    const body = await page.$eval('.res-pill__body', (el) => el.textContent);
+    assert.match(body, /全部 3\/3/, `progress text: ${body}`);
+    assert.match(body, /33 B \/ 33 B/, `bytes: ${body}`);
+    assert.equal(body.includes('undefined'), false, 'no undefined counter is ever rendered');
+    const cached = await page.evaluate(async () => {
+      const cache = await caches.open((await caches.keys()).find((n) => n.startsWith('stronghold-resources-v1-')));
+      return (await cache.keys()).length;
+    });
+    assert.equal(cached, 3, 'the pill really downloaded the files');
+
+    // 关闭预载 turns the setting off again (keeping what is cached)
+    await page.evaluate(() => [...document.querySelectorAll('.res-link')].find((b) => b.textContent === '关闭预载').click());
+    assert.equal(await page.evaluate(() => window.__res.state().enabled), false);
+    assert.deepEqual(problems, []);
+    await page.close();
+  });
+
   test('a second visit finds the files already cached (a new manifest version starts over)', async () => {
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${srv.port}/index.html`);
-    await page.waitForFunction('window.__ready === true', { timeout: 20000 });
+    const { page, problems } = await open();
+    await ready(page, problems);
     await page.evaluate(() => window.__preload(true));
     await page.waitForFunction('window.__res.resourceState().complete === true', { timeout: 30000 });
     const state = await page.evaluate(() => window.__res.resourceState());

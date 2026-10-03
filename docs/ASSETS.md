@@ -28,8 +28,11 @@ so a long `Cache-Control` is safe only if you invalidate on update — the serve
 ## Preload (optional offline resources)
 
 A player can have the client download the art ahead of time into the browser's Cache Storage, so entering a battle never
-waits on the network and a running match keeps its art while the CDN is slow or unreachable. It is **off by default**:
-the switch lives in 设置 ▸ 离线资源, and nothing is downloaded until it is turned on.
+waits on the network and a running match keeps its art while the CDN is slow or unreachable. It is **off by default** and
+there is a way in without leaving the home screen: the title screen shows a compact 「离线资源」 pill in its bottom-right
+corner (one click starts the preload, then it shows progress with 暂停 / 清理缓存 / 关闭预载), and the same switch is in the
+in-match 设置 modal (`ui/resourcePanel.js` renders both faces from the same state). Nothing is downloaded until one of them
+is used.
 
 - The list comes from the server: `GET /data/resource-manifest.json` is generated from the two manifests below and
   rewritten the same way, so a CDN install preloads *from the CDN* (`server/resources.js`). It carries a `version` (the

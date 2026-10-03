@@ -5,6 +5,26 @@ Owner: `tools/fetch-assets.mjs` and `tools/assets/*`. Research background: `docs
 All art, Spine models and audio are **downloaded at install time**. They are never committed; `public/assets/` is git-ignored.
 Everything the client needs is listed in **`data/assets.json`**. The client should only request URLs that appear in that manifest.
 
+## CDN
+
+To serve the art from a CDN (or any other static host) instead of the game server, set `SP_ASSETS_CDN`:
+
+```bash
+SP_ASSETS_CDN=https://cdn.example.com/stronghold npm start
+```
+
+The server rewrites every `/assets/…` URL of the two manifests it serves — `data/assets.json` and
+`data/local-assets.json` — to `<SP_ASSETS_CDN>/assets/…`, so nothing on the client has to know about the CDN (images,
+Spine skeletons/atlases, audio and the local-client extraction all follow the manifest). A same-origin prefix works too
+(`SP_ASSETS_CDN=/cdn`). Leave it unset and the server serves `/assets/…` itself, exactly as before; when it is set, the
+local copy still works, so you can roll back at any time. `GET /healthz` reports the active base as `assetsCdn`.
+
+The CDN must mirror the `public/assets/` layout (upload the directory as-is) and must allow cross-origin reads: the
+client fetches Spine `.skel` / `.atlas` files with `fetch` and loads images with `crossOrigin="anonymous"`, so send
+`Access-Control-Allow-Origin` (the audio is played through `<audio>` and needs no CORS). Assets carry no content hash,
+so a long `Cache-Control` is safe only if you invalidate on update — the server itself uses `max-age=86400` for
+`/assets/`.
+
 ## Running
 
 ```bash

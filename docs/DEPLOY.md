@@ -13,7 +13,7 @@
 | 磁盘 | 素材约 250 MB（`public/assets`）+ 依赖约 125 MB（`node_modules`）；可选的本地提取约 40 MB（`.venv-extract`）+ 70 MB 贴图。 |
 | 玩家设备 | 支持 WebGL 的现代浏览器（Chrome / Edge / Firefox / Safari 最新版），电脑或手机平板（横屏）。老旧设备可在设置里调低画质或访问 `/?board=2d`。 |
 
-服务器**无状态**：房间和对局只存在内存里，没有数据库和存档，**不需要备份**。重启服务器会结束正在进行的对局（包括断线后本可在 24 小时内回来继续的独立模拟）。
+服务器**无状态**：房间和对局只存在内存里，没有数据库和存档，**不需要备份**。重启服务器会结束正在进行的对局（包括断线后本可在 24 小时内回来继续的独立模拟）。也可以把素材放到 CDN，见 §3.2。
 
 ## 1. Windows 小主机：一步步
 
@@ -187,7 +187,7 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
   -v "$PWD/public/assets:/app/public/assets:ro" stronghold-protocol
 ```
 
-镜像基于 `node:22-alpine`，多阶段构建，只含生产依赖；`public/vendor` 在构建时生成。`.dockerignore` 排除了 `public/assets`（不会把宿主机素材打进构建上下文）；`public/fonts`、`data/assets.json` 和 `data/local-assets.json` 若存在会被复制进去。环境变量同 README（`-e SP_VERIFY=sample` 等）。健康检查：`GET /healthz`。
+镜像基于 `node:22-alpine`，多阶段构建，只含生产依赖；`public/vendor` 在构建时生成。`.dockerignore` 排除了 `public/assets`（不会把宿主机素材打进构建上下文）；`public/fonts`、`data/assets.json` 和 `data/local-assets.json` 若存在会被复制进去。环境变量同 README（`-e SP_VERIFY=sample`、`-e SP_ASSETS_CDN=https://cdn.example.com/stronghold` 等）。健康检查：`GET /healthz`。
 
 docker compose 示例：
 
@@ -202,6 +202,24 @@ services:
     environment:
       SP_VERIFY: "off"
 ```
+
+### 3.2 素材放 CDN
+
+容器里最占地方的是 `public/assets/`（约 250 MB 图片 / Spine / 音频）。想把它交给 CDN（或对象存储 / 另一台静态服务器）时设置 `SP_ASSETS_CDN`：
+
+```bash
+docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
+  -e SP_ASSETS_CDN=https://cdn.example.com/stronghold \
+  stronghold-protocol
+```
+
+- 服务端在返回 `data/assets.json`、`data/local-assets.json` 时，把其中所有 `/assets/…` 改写成 `<SP_ASSETS_CDN>/assets/…`，因此**客户端零改动**：图片、Spine（skel / atlas / 贴图）、音频、本地提取的素材都自动走 CDN。
+- CDN 侧目录结构必须与 `public/assets/` 一致（把该目录整个上传即可），并且**必须允许跨域**：浏览器会用 `fetch` 取 Spine 的 `.skel` / `.atlas`、用 `crossOrigin="anonymous"` 取图片。Nginx 例：`add_header Access-Control-Allow-Origin "*" always;`（音频走 `<audio>`，不需要 CORS）。
+- 素材带内容指纹，可以放心设长缓存（`Cache-Control: public, max-age=31536000, immutable`）；`/fonts/` 与 `public/vendor/` 仍由游戏服务器自己提供。
+- 没设置该变量时行为完全不变（服务器照旧自己提供 `/assets/…`），设置后本地 `/assets/` 仍然可用，可随时回退。
+- 只想换目录名 / 走同源反代前缀也行：`SP_ASSETS_CDN=/cdn`。
+
+验证：`GET /healthz` 里 `assetsCdn` 会显示当前地址；浏览器网络面板里素材请求应指向 CDN。
 
 ## 4. macOS / Linux 常驻
 
@@ -240,3 +258,4 @@ services:
 | 本地提取失败 | 不影响游戏。确认客户端已下载全部资源；Python 版本太新导致依赖安装失败时，安装 Python 3.12 后删除 `.venv-extract` 再运行 `node tools/setup.mjs --local` |
 | 3D 棋盘没出现 | 需要本地提取的棋盘贴图（`node tools/doctor.mjs` 会显示「3D 棋盘可用」），以及支持 WebGL2 的浏览器 |
 | 断线 | 同盟模拟 10 分钟内、独立模拟 24 小时内（`config.constants.singleReconnectTime`）用同一浏览器重新打开页面，自动回到原座位。同盟掉线期间按原阵容自动作战、到时自动准备（不会代为购买；想让 AI 代打请用「离开模拟 → 暂离（AI 托管）」）；独立模拟不计时，等你回来 |
+| 设为 CDN 后素材 404 / 控制台报跨域 | CDN 目录结构必须与 `public/assets/` 一致；Spine 的 `.skel` / `.atlas` 靠 `fetch` 读取，需要 `Access-Control-Allow-Origin`。先直接访问 `<CDN>/assets/char/avatar/char_002_amiya.png` 确认能打开 |

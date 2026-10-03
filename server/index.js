@@ -18,6 +18,8 @@
 //   * Env: PORT (default 3000), HOST (default 0.0.0.0), TRUST_PROXY ('auto' default: honour CF-Connecting-IP /
 //     X-Real-IP / X-Forwarded-For only from loopback/private peers such as a local cloudflared; '1' always; '0' never).
 //     Prints LAN URLs on boot.
+//   * Assets CDN (docs/DEPLOY.md §3.2): SP_ASSETS_CDN rewrites the /assets/… URLs of the manifests served under
+//     /data/ (data/assets.json, data/local-assets.json) to the CDN directory — the client needs no change.
 //   * Per-network limits for internet clients (see net.js clientAddress; local/LAN peers are exempt): open sockets
 //     (maxConnectionsPerAddr, refused at upgrade with 429), rooms and running matches (lobby.js).
 //   * Graceful shutdown on SIGINT/SIGTERM (rooms get room.closed{reason:'shutdown'}, sockets close 1001).
@@ -159,6 +161,53 @@ class GzipCache {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// assets CDN
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * Parse the assets CDN setting: SP_ASSETS_CDN (or ASSETS_CDN) — a directory that serves the same layout as
+ * `public/assets/` (docs/ASSETS.md), either absolute (`https://cdn.example.com/stronghold`) or same-origin
+ * (`/cdn`). Empty / unset disables it. Trailing slashes are dropped.
+ * @param {string | undefined} v
+ * @returns {string} '' when disabled
+ */
+export function parseAssetCdn(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  if (!/^(https?:\/\/|\/)/i.test(s)) return '';
+  return s.replace(/\/+$/, '');
+}
+
+/**
+ * Rewrite every `/assets/…` URL of an asset manifest (data/assets.json, data/local-assets.json) to the CDN base,
+ * in place. The manifests are the only place the client takes asset URLs from (docs/ASSETS.md), so nothing else has to
+ * know about the CDN. A CDN must send CORS headers: the client loads Spine atlases / skeletons with fetch and images
+ * with `crossOrigin="anonymous"`.
+ * @param {any} value manifest (mutated)
+ * @param {string} base CDN directory (no trailing slash)
+ * @returns {any} the same value
+ */
+export function rewriteAssetPaths(value, base) {
+  if (!base || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const v = value[i];
+      if (typeof v === 'string') { if (v.startsWith('/assets/')) value[i] = base + v; }
+      else rewriteAssetPaths(v, base);
+    }
+    return value;
+  }
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v === 'string') { if (v.startsWith('/assets/')) value[k] = base + v; }
+    else if (v !== null && typeof v === 'object') rewriteAssetPaths(v, base);
+  }
+  return value;
+}
+
+/** Asset manifests the CDN rewriting applies to (under the `data` mount). */
+const CDN_MANIFESTS = new Set(['assets.json', 'local-assets.json']);
+
+// ---------------------------------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------------------------------
 
@@ -278,14 +327,17 @@ function splitUrl(url) {
 
 /**
  * Create the static request handler.
- * @param {{ publicDir: string, dataDir: string, sharedDir: string, simDir?: string, log?: object }} dirs
+ * @param {{ publicDir: string, dataDir: string, sharedDir: string, simDir?: string, log?: object, cdnBase?: string }} dirs
  * @returns {(req: http.IncomingMessage, res: http.ServerResponse, rawPath: string, query: string) => Promise<void>}
  */
 /** Optional per-machine art manifest (tools/local-extract) and the empty stand-in served when it is absent. */
 const LOCAL_ART_MANIFEST = 'local-assets.json';
 const EMPTY_LOCAL_ART = Buffer.from(JSON.stringify({ version: 1, source: 'none', count: 0, groups: {} }));
 
-export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), log = noopLog }) {
+export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), log = noopLog, cdnBase = '' }) {
+  const cdn = typeof cdnBase === 'string' ? cdnBase : '';
+  /** @type {Map<string, { mtimeMs: number, size: number, body: Buffer }>} rewritten manifests (per file path) */
+  const cdnCache = new Map();
   const mounts = [
     { prefix: '/data/', name: 'data', dir: path.resolve(dataDir) },
     { prefix: '/shared/', name: 'shared', dir: path.resolve(sharedDir) },
@@ -368,8 +420,44 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
       }
       return;
     }
+    // assets CDN: the manifests are rewritten on the way out, so every client keeps requesting /data/assets.json
+    if (cdn && mount.name === 'data' && segments.length === 1 && CDN_MANIFESTS.has(segments[0].toLowerCase())) {
+      const cached = cdnCache.get(absPath);
+      let body = cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size ? cached.body : null;
+      if (!body) {
+        try {
+          body = Buffer.from(JSON.stringify(rewriteAssetPaths(JSON.parse(fs.readFileSync(absPath, 'utf8')), cdn)));
+          cdnCache.set(absPath, { mtimeMs: stat.mtimeMs, size: stat.size, body });
+        } catch (e) {
+          log.error(`[http] cannot rewrite ${segments[0]} for the CDN`, e);
+          sendError(req, res, 500, '服务器内部错误 · Internal error');
+          return;
+        }
+      }
+      serveBuffer(req, res, body, stat, MIME['.json'], 'no-cache', cdn);
+      return;
+    }
     await serveFile(req, res, absPath, stat, mount.name, segments, query, gzipCache, log);
   };
+}
+
+/**
+ * Serve an in-memory body with the same validator/HEAD/range-free semantics as serveFile.
+ * @param {Buffer} body @param {string} tag salt (the CDN base: the same file yields different bodies)
+ */
+function serveBuffer(req, res, body, stat, type, cacheControl, tag = '') {
+  const isHead = req.method === 'HEAD';
+  const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}${tag ? '-' + Buffer.from(tag).toString('hex').slice(0, 12) : ''}"`;
+  const headers = {
+    'Content-Type': type,
+    'Cache-Control': cacheControl,
+    ETag: etag,
+    'Last-Modified': stat.mtime.toUTCString(),
+  };
+  if (isNotModified(req, etag, stat.mtime)) { res.writeHead(304, headers); res.end(); return; }
+  headers['Content-Length'] = body.length;
+  res.writeHead(200, headers);
+  res.end(isHead ? undefined : body);
 }
 
 async function serveFile(req, res, absPath, stat, mountName, segments, query, gzipCache, log) {
@@ -488,6 +576,7 @@ function makeLogger(quiet) {
  *   ratePerSec?: number, rateBurst?: number, maxConnections?: number, maxRooms?: number,
  *   maxConnectionsPerAddr?: number, maxRoomsPerAddr?: number, maxMatchesPerAddr?: number, resyncMinGapMs?: number,
  *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number,
+ *   assetsCdn?: string,
  * }} [opts]
  * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: WebSocketServer,
  *                     lobby: Lobby, network: Network, registry: SessionRegistry, close: () => Promise<void> }>}
@@ -500,6 +589,12 @@ export async function startServer(opts = {}) {
   const publicDir = opts.publicDir || path.join(ROOT, 'public');
   const dataDir = opts.dataDir || path.join(ROOT, 'data');
   const sharedDir = opts.sharedDir || path.join(ROOT, 'shared');
+  // assets CDN: a serving-time rewrite of the two manifests (docs/DEPLOY.md §3.2)
+  const rawCdn = opts.assetsCdn != null ? opts.assetsCdn : (process.env.SP_ASSETS_CDN ?? process.env.ASSETS_CDN);
+  const assetsCdn = parseAssetCdn(rawCdn);
+  if (String(rawCdn ?? '').trim() && !assetsCdn) {
+    log.warn(`[http] SP_ASSETS_CDN=${String(rawCdn).trim()} ignored: an http(s):// URL or a /path is required (docs/DEPLOY.md §3.2)`);
+  }
 
   // The process-wide singleton serves the default data dir; a custom dir (tests) gets its own copy.
   const data = opts.dataDir ? loadData(dataDir, { log }) : getData({ dir: dataDir, log });
@@ -516,7 +611,7 @@ export async function startServer(opts = {}) {
   }
   const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions });
   const network = new Network({ registry, handler: lobby, log, options: netOptions });
-  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log });
+  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log, cdnBase: assetsCdn });
   const startedAt = Date.now();
 
   const server = http.createServer((req, res) => {
@@ -542,6 +637,7 @@ export async function startServer(opts = {}) {
       sendJson(req, res, 200, {
         ok: true, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
+        assetsCdn: assetsCdn || null,
       });
       return;
     }

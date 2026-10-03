@@ -81,6 +81,9 @@ const counters = (s) => ({
   sizedTotal: s.sizedTotal,
   skipped: s.skipped,
   complete: s.complete,
+  // migration (kept bytes) vs network (fetched bytes): 0 unless a run is/was in flight
+  adopted: s.adopted ?? 0,
+  downloaded: s.downloaded ?? 0,
 });
 
 /** Why this browser cannot keep the resources (empty ⇒ it can). */
@@ -212,10 +215,14 @@ async function start() {
   });
   const before = await store.status();
   set({ ...counters(before), phase: before.complete ? 'ready' : 'download', message: before.complete ? '资源已全部预载完成。' : '' });
-  if (before.complete) { void store.pruneOld(); return; }
+  if (before.complete) { void store.prune(); return; }
   controller = new AbortController();
   const signal = controller.signal;
-  const onProgress = (p) => set({ ...counters(p), phase: 'download', failed: p.failed, error: false });
+  const onProgress = (p) => {
+    // "整理" instead of "下载" when the files came out of an older cache: nothing is being fetched (store.js 的迁移).
+    const message = p.adopted > 0 && p.downloaded === 0 ? '正在整理已保存的资源（无需重新下载）…' : '';
+    set({ ...counters(p), phase: 'download', failed: p.failed, error: false, message });
+  };
   try {
     // one tab at a time; two passes per tab: what a screen needs in its first second, then the rest (portraits, Spine,
     // board art)
@@ -235,7 +242,7 @@ async function start() {
         ? `资源已全部预载完成（${formatBytes(after.bytes)}）。`
         : `已保存 ${after.count}/${after.total} 个文件；未完成的会在下次开启时重试。`,
     });
-    if (after.complete) void store.pruneOld();
+    if (after.complete) void store.prune();
   } catch (err) {
     if (err?.name === 'AbortError') {
       const now = await store.status().catch(() => null);

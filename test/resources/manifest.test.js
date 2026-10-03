@@ -53,13 +53,13 @@ function manifest(over = {}) {
 const local = () => ({
   version: 1,
   groups: {
-    map: { TX_autochessi_D: { path: '/assets/local/map/autochess/TX_D.png' } },
+    map: { TX_autochessi_D: { path: '/assets/local/map/autochess/TX_D.png', hash: 'aaaabbbbcccc' } },
     emoticon: { e1: { path: '/assets/local/emoticon/e1.png' } },
   },
 });
 
-/** A temp install: the two manifests plus the files that actually exist on disk. */
-function install({ assets = manifest(), localDoc = local(), files = [
+/** A temp install: the two manifests (plus optional asset hashes) and the files that actually exist on disk. */
+function install({ assets = manifest(), localDoc = local(), hashesDoc = null, files = [
   'assets/char/avatar/char_002_amiya.png', 'assets/ui/battle/sprite_shadow.png', 'assets/audio/bgm/lobby_loop.mp3',
   'assets/spine/op/char_002_amiya/front/char_002_amiya.skel', 'assets/local/map/autochess/TX_D.png', 'fonts/bender-regular.woff2',
 ] } = {}) {
@@ -67,6 +67,7 @@ function install({ assets = manifest(), localDoc = local(), files = [
   const publicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-res-pub-'));
   if (assets) fs.writeFileSync(path.join(dataDir, 'assets.json'), JSON.stringify(assets));
   if (localDoc) fs.writeFileSync(path.join(dataDir, 'local-assets.json'), JSON.stringify(localDoc));
+  if (hashesDoc) fs.writeFileSync(path.join(dataDir, 'asset-hashes.json'), JSON.stringify(hashesDoc));
   for (const rel of files) {
     const abs = path.join(publicDir, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -173,7 +174,7 @@ describe('the served resource manifest', () => {
     assert.match(res.headers.get('content-type'), /application\/json/);
     const m = await res.json();
     assert.equal(m.format, RESOURCES_FORMAT);
-    assert.match(m.version, /^deadbeefcafe-/, 'the asset manifest hash is the cache version');
+    assert.match(m.version, /^[0-9a-f]{12}$/, 'the version is a digest of every url|hash');
     assert.ok(m.count > 20);
     assert.ok(m.tier1 > 0 && m.tier1 < m.count);
     const byUrl = new Map(m.files.map((f) => [f.url, f]));
@@ -190,7 +191,11 @@ describe('the served resource manifest', () => {
     const srv = await serve(inst, 'https://cdn.example.com/static');
     t.after(() => { srv.close(); inst.cleanup(); });
     const m = await (await fetch(`http://127.0.0.1:${srv.address().port}/data/${RESOURCE_MANIFEST_FILE}`)).json();
-    assert.match(m.version, /deadbeefcafe.*cdn\.example\.com/, 'a different CDN is a different cache');
+    const other = install();
+    const srvOther = await serve(other);
+    t.after(() => { srvOther.close(); other.cleanup(); });
+    const plain = await (await fetch(`http://127.0.0.1:${srvOther.address().port}/data/${RESOURCE_MANIFEST_FILE}`)).json();
+    assert.notEqual(m.version, plain.version, 'a different CDN is a different version');
     assert.ok(m.files.every((f) => f.url.startsWith('https://cdn.example.com/static/') || f.url.startsWith('/fonts/')));
     assert.ok(m.files.some((f) => f.url === 'https://cdn.example.com/static/assets/char/avatar/char_002_amiya.png' && f.size === 'assets/char/avatar/char_002_amiya.png'.length), 'a CDN URL still maps back to the local file for its size');
   });
@@ -214,6 +219,28 @@ describe('the served resource manifest', () => {
     assert.equal(notModified.headers.get('etag'), head.headers.get('etag'), 'the validator stays the same');
   });
 
+  test('every entry carries a hash: the recorded one when known, a synthetic one otherwise', async (t) => {
+    const inst = install({
+      hashesDoc: { version: 1, generator: 'tools/asset-hashes.mjs', count: 1, bytes: 10, files: { '/assets/ui/battle/sprite_shadow.png': 'fedcba987654' } },
+    });
+    const srv = await serve(inst);
+    t.after(() => { srv.close(); inst.cleanup(); });
+    const m = await (await fetch(`http://127.0.0.1:${srv.address().port}/data/${RESOURCE_MANIFEST_FILE}`)).json();
+    const byUrl = new Map(m.files.map((f) => [f.url, f]));
+    assert.equal(byUrl.get('/assets/local/map/autochess/TX_D.png').hash, 'aaaabbbbcccc', 'data/local-assets.json gives the local art its hash');
+    assert.equal(byUrl.get('/assets/ui/battle/sprite_shadow.png').hash, 'fedcba987654', 'data/asset-hashes.json covers the fetched assets');
+    assert.match(byUrl.get('/assets/char/avatar/char_002_amiya.png').hash, /^syn-[0-9a-f]{12}$/, 'a file without a known hash falls back to its source stamp');
+    assert.match(byUrl.get('/assets/local/emoticon/e1.png').hash, /^syn-[0-9a-f]{12}$/);
+    assert.ok(m.files.every((f) => typeof f.hash === 'string' && f.hash.length > 0), 'the client can always compare something');
+    // the fallback keeps the old rule: a regenerated asset manifest invalidates the fetched files it does not hash
+    const other = install({ assets: manifest({ hash: 'otherhash000' }), hashesDoc: { version: 1, files: { '/assets/ui/battle/sprite_shadow.png': 'fedcba987654' } } });
+    const srv2 = await serve(other);
+    t.after(() => { srv2.close(); other.cleanup(); });
+    const m2 = await (await fetch(`http://127.0.0.1:${srv2.address().port}/data/${RESOURCE_MANIFEST_FILE}`)).json();
+    assert.notEqual(m2.files.find((f) => f.url === '/assets/char/avatar/char_002_amiya.png').hash, byUrl.get('/assets/char/avatar/char_002_amiya.png').hash);
+    assert.equal(m2.files.find((f) => f.url === '/assets/ui/battle/sprite_shadow.png').hash, 'fedcba987654', 'a hashed file does not depend on the asset manifest hash any more');
+  });
+
   test('an install without data/assets.json answers an empty manifest (never a 404 loop)', async (t) => {
     const inst = install({ assets: null, localDoc: null });
     const srv = await serve(inst);
@@ -235,6 +262,22 @@ describe('the served resource manifest', () => {
 });
 
 describe('the resource index cache', () => {
+  test('the version follows the hashes, not the file times', async () => {
+    const localDoc = { version: 1, groups: { map: { TX: { path: '/assets/local/map/autochess/TX_D.png', hash: 'aaaaaaaaaaaa' } } } };
+    const inst = install({ localDoc });
+    try {
+      const index = createResourceIndex({ dataDir: inst.dataDir, publicDir: inst.publicDir });
+      const a = await index.get();
+      await new Promise((r) => setTimeout(r, 20));
+      fs.writeFileSync(path.join(inst.dataDir, 'local-assets.json'), JSON.stringify(localDoc)); // same art, new mtime
+      const b = await index.get();
+      assert.equal(b.manifest.version, a.manifest.version, 'a re-extraction that changed nothing is the same version');
+      fs.writeFileSync(path.join(inst.dataDir, 'local-assets.json'), JSON.stringify({ version: 1, groups: { map: { TX: { path: '/assets/local/map/autochess/TX_D.png', hash: 'bbbbbbbbbbbb' } } } }));
+      const c = await index.get();
+      assert.notEqual(c.manifest.version, a.manifest.version, 'changed art is a new version');
+      assert.equal(c.manifest.files.find((f) => f.url === '/assets/local/map/autochess/TX_D.png').hash, 'bbbbbbbbbbbb');
+    } finally { inst.cleanup(); }
+  });
   test('rebuilds only when a source manifest changes', async () => {
     const inst = install();
     const index = createResourceIndex({ dataDir: inst.dataDir, publicDir: inst.publicDir, rewrite: (v) => rewriteAssetPaths(v, 'https://cdn.example.com'), cdnBase: 'https://cdn.example.com' });
@@ -246,7 +289,8 @@ describe('the resource index cache', () => {
     fs.writeFileSync(path.join(inst.dataDir, 'assets.json'), JSON.stringify(manifest({ hash: '0123456789ab' })));
     const c = await index.get();
     assert.notEqual(c.body, a.body);
-    assert.match(c.manifest.version, /^0123456789ab/);
+    assert.notEqual(c.manifest.version, a.manifest.version, 'a regenerated asset manifest is a new version');
+    assert.match(c.manifest.version, /^[0-9a-f]{12}$/);
     assert.ok(c.gzip.length < c.body.length, 'the served copy is compressed too');
     inst.cleanup();
   });

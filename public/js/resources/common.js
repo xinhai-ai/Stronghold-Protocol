@@ -4,8 +4,16 @@
 // this module. It owns the manifest shape, the URL/MIME rules and byte formatting — the same rules the server applies
 // when it generates /data/resource-manifest.json (server/resources.js).
 
-/** Cache Storage names are versioned: a new asset manifest never mixes with the files of the previous one. */
+/** Cache Storage names this app owns. One cache holds every version: entries are replaced per file (by hash), so an
+ * asset update re-downloads the changed files only (docs/ASSETS.md「Preload」). */
 export const CACHE_PREFIX = 'stronghold-resources-v1-';
+export const CACHE_NAME = CACHE_PREFIX + 'all';
+/** The one synthetic entry of that cache: absolute URL → the hash of the bytes stored for it. */
+export const INDEX_PATH = '/__sp-resource-index__';
+/** A hash as the server writes it (hex digest, the `syn-` fallback, a `sha1-…` label). */
+export const HASH_RE = /^[A-Za-z0-9._:-]{1,64}$/;
+/** A *content* digest (12 hex of a SHA-1): the only hashes the store can verify against cached bytes. */
+export const CONTENT_HASH_RE = /^[0-9a-f]{12}$/;
 export const RESOURCES_FORMAT = 1;
 /** Never store a single file bigger than this (mirrors server/resources.js). */
 export const MAX_FILE_BYTES = 24 * 1024 * 1024;
@@ -63,7 +71,7 @@ export function isResourceUrl(url) {
   return isResourcePath(pathname) && !!resourceType(pathname);
 }
 
-/** Cache Storage name of a manifest version. */
+/** A version-named cache of the pre-hash layout (`pruneOld()` cleans those up). The store itself uses CACHE_NAME. */
 export function cacheName(version) {
   return CACHE_PREFIX + String(version || 'none');
 }
@@ -71,6 +79,11 @@ export function cacheName(version) {
 /** Absolute URL of a manifest entry (the cache key): `/assets/x.png` → `https://site/assets/x.png`. */
 export function absoluteUrl(url, origin = globalThis.location?.origin || 'http://localhost') {
   try { return new URL(String(url), origin).href; } catch { return null; }
+}
+
+/** Absolute URL of the preload index entry (`INDEX_PATH` lives in the same cache as the files it describes). */
+export function indexUrl(origin = globalThis.location?.origin || 'http://localhost') {
+  return absoluteUrl(INDEX_PATH, origin) || INDEX_PATH;
 }
 
 /** `1.5 GiB` / `820 KiB` / `900 B` — progress text (binary units, the ones browsers report storage in). */
@@ -98,6 +111,8 @@ export function validateManifest(m) {
     if (!f || typeof f !== 'object' || !isResourceUrl(f.url)) throw new Error(`资源清单条目无效：${String(f && f.url).slice(0, 80)}`);
     if (f.tier !== TIER_ESSENTIAL && f.tier !== TIER_REST) throw new Error(`资源清单条目缺少分层：${f.url.slice(0, 80)}`);
     if (f.size != null && (!Number.isSafeInteger(f.size) || f.size < 0)) throw new Error(`资源大小无效：${f.url.slice(0, 80)}`);
+    // Optional: without a hash an entry keeps the old "a new manifest replaces the whole cache" rule.
+    if (f.hash != null && (typeof f.hash !== 'string' || !HASH_RE.test(f.hash))) throw new Error(`资源指纹无效：${f.url.slice(0, 80)}`);
   }
   return m;
 }

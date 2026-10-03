@@ -278,7 +278,8 @@ location = /resource-sw.js {
 ```
 
 - 同一浏览器的多个标签页不会各下一遍：客户端用 Web Locks 串行化预载，只有一个标签页在下载（其余显示「另一标签页预载中」，回到该标签页时自动继续）。
-- **素材需要允许跨域读取**（与 §3.2 同一条要求）：预载会用 CORS 模式 `fetch` 素材并把响应写进缓存，缺 `Access-Control-Allow-Origin` 时该文件会被记为失败（游戏本身照常按需加载）。想确认预载是否生效：浏览器 DevTools → Application → Cache Storage 里应出现 `stronghold-resources-v1-<素材指纹>`，文件数为「已保存/总数」。
+- **更新只下变化的文件。** 清单里每个文件都带 `hash`（素材字节的 SHA-1 前 12 位）：本地素材由 `extract.py` 写入，网页素材由 `node tools/asset-hashes.mjs` 生成到 `data/asset-hashes.json`（跟 `data/assets.json` 一起放到服务器/镜像里；**重建 CDN 素材后记得重跑一次**，否则这些条目退回旧的「整个清单换版才失效」规则）。客户端把文件存在一个缓存 `stronghold-resources-v1-all` 里，靠这个 `hash` 决定哪些要重下；旧布局（`stronghold-resources-v1-<指纹>`）的缓存会被**迁移**而不是丢弃：客户端现算旧条目的 SHA-1，仍然一致的就搬进新缓存，不一致的删掉再下——所以这次上线不会让已预载的玩家把 310 MB 重下一次。
+- **素材需要允许跨域读取**（与 §3.2 同一条要求）：预载会用 CORS 模式 `fetch` 素材并把响应写进缓存，缺 `Access-Control-Allow-Origin` 时该文件会被记为失败（游戏本身照常按需加载）。想确认预载是否生效：浏览器 DevTools → Application → Cache Storage 里应出现 `stronghold-resources-v1-all`，文件数为「已保存/总数」。
 
 ### 3.4 上限调整（房间 / 对局 / 连接）
 

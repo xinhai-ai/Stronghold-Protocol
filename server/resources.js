@@ -6,16 +6,32 @@
 // rewritten exactly like /data/assets.json (SP_ASSETS_CDN, docs/ASSETS.md「CDN」) — so the client preloads from the
 // CDN. Local file sizes are added when this install has the files on disk (a CDN-only install simply omits them).
 //
+// Every entry carries a `hash`: the client stores the files under ONE cache name and replaces a file when its hash
+// changes, so an asset update only re-downloads what really changed (docs/ASSETS.md「Preload」) instead of the whole
+// ~310 MiB. Hashes come from the manifests themselves — `local-assets.json` entries (written by extract.py) and
+// `asset-hashes.json` (tools/asset-hashes.mjs over public/assets + public/fonts). A file without one keeps the old
+// set-level rule through a synthetic hash of its source stamp, so a manifest that predates hashing still invalidates.
+//
 // /data/resource-manifest.json:
-//   { format: 1, version: '<assets hash>-<local hash>-<cdn base>', count, tier1, sized, totalBytes,
-//     files: [ { url, tier, size? } … ] }   // sorted: essential tier first, then by URL
+//   { format: 1, version: '<digest of every url|hash>', count, tier1, sized, totalBytes,
+//     files: [ { url, tier, size?, hash } … ] }   // sorted: essential tier first, then by URL
 
+import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
 export const RESOURCE_MANIFEST_FILE = 'resource-manifest.json';
+/** Per-file content hashes of the fetched assets, written by tools/asset-hashes.mjs (optional). */
+export const ASSET_HASHES_FILE = 'asset-hashes.json';
 export const RESOURCES_FORMAT = 1;
+/** A hash as the client accepts it (hex digests, the `syn-` fallback, a plain `sha1-…` label). */
+export const HASH_RE = /^[A-Za-z0-9._:-]{1,64}$/;
+
+/** Short digest of anything — 12 hex characters is plenty to notice a changed file, and keeps the manifest small. */
+export function shortHash(text) {
+  return crypto.createHash('sha1').update(String(text)).digest('hex').slice(0, 12);
+}
 /** A single cached file may never exceed this (a broken manifest cannot make a browser store something huge). */
 export const MAX_FILE_BYTES = 24 * 1024 * 1024;
 /** Essential: fonts, UI, icons, avatars, audio — what a screen needs in its first second. */
@@ -91,40 +107,94 @@ export function tierForPath(keyPath) {
 
 /**
  * Every resource file of the asset manifests, deduplicated (a file keeps its lowest tier) and sorted essential-first.
+ * `source` says which manifest listed it ('web' | 'local'): the fallback hash of an unhashed file depends on it, so a
+ * regenerated local extraction cannot invalidate the fetched assets and vice versa.
  * @param {any} assets parsed data/assets.json (already CDN-rewritten)
  * @param {any} local parsed data/local-assets.json, optional
- * @returns {{ url: string, tier: number }[]}
+ * @returns {{ url: string, tier: number, source: 'web' | 'local' }[]}
  */
 export function collectResourceFiles(assets, local) {
-  /** @type {Map<string, number>} */
+  /** @type {Map<string, { tier: number, source: 'web' | 'local' }>} */
   const byUrl = new Map();
-  const walk = (node, keyPath) => {
+  const walk = (node, keyPath, source) => {
     if (typeof node === 'string') {
       if (!validateResourceUrl(node)) return;
       const tier = tierForPath(keyPath);
       const prev = byUrl.get(node);
-      if (prev == null || tier < prev) byUrl.set(node, tier);
+      if (prev == null || tier < prev.tier) byUrl.set(node, { tier, source });
       return;
     }
     if (Array.isArray(node)) {
-      for (let i = 0; i < node.length; i++) walk(node[i], `${keyPath}.${i}`);
+      for (let i = 0; i < node.length; i++) walk(node[i], `${keyPath}.${i}`, source);
       return;
     }
-    if (node && typeof node === 'object') for (const [k, v] of Object.entries(node)) walk(v, keyPath ? `${keyPath}.${k}` : k);
+    if (node && typeof node === 'object') for (const [k, v] of Object.entries(node)) walk(v, keyPath ? `${keyPath}.${k}` : k, source);
   };
   for (const [k, v] of Object.entries(assets && typeof assets === 'object' ? assets : {})) {
     if (k === 'stats' || k === 'skillsById') continue; // counters / id maps: no files
-    walk(v, k);
+    walk(v, k, 'web');
   }
-  if (local && typeof local === 'object') walk(local, 'local');
-  return [...byUrl].map(([url, tier]) => ({ url, tier })).sort((a, b) => a.tier - b.tier || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0));
+  if (local && typeof local === 'object') walk(local, 'local', 'local');
+  return [...byUrl]
+    .map(([url, e]) => ({ url, tier: e.tier, source: e.source }))
+    .sort((a, b) => a.tier - b.tier || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0));
+}
+
+/** Path part of a URL — the key real hashes are matched by (a CDN install rewrites the URLs, not the hash file). */
+export function pathKey(url) {
+  const s = String(url || '');
+  if (s.startsWith('/') && !s.startsWith('//')) return s;
+  try { return new URL(s).pathname; } catch { return s; }
+}
+
+/**
+ * Content hashes known for this install, keyed by URL path: every `hash` of `data/local-assets.json`'s groups
+ * (extract.py) plus `data/asset-hashes.json` (tools/asset-hashes.mjs over the fetched assets).
+ * @param {any} localDoc parsed local-assets.json (may be CDN-rewritten)
+ * @param {any} hashesDoc parsed asset-hashes.json, optional
+ * @returns {Map<string, string>}
+ */
+export function collectRealHashes(localDoc, hashesDoc) {
+  /** @type {Map<string, string>} */
+  const map = new Map();
+  const put = (url, hash) => {
+    if (typeof url === 'string' && validateResourceUrl(url) && typeof hash === 'string' && HASH_RE.test(hash)) map.set(pathKey(url), hash);
+  };
+  const groups = localDoc && typeof localDoc === 'object' ? localDoc.groups : null;
+  if (groups && typeof groups === 'object') {
+    for (const group of Object.values(groups)) {
+      if (!group || typeof group !== 'object') continue;
+      for (const entry of Object.values(group)) if (entry && typeof entry === 'object') put(entry.path, entry.hash);
+    }
+  }
+  const files = hashesDoc && typeof hashesDoc === 'object' ? hashesDoc.files : null;
+  if (files && typeof files === 'object') for (const [url, hash] of Object.entries(files)) put(url, hash);
+  return map;
+}
+
+/**
+ * The hash of every collected file: the real one when known, otherwise a synthetic value that reproduces the old rule
+ * (any change to the source manifest's own hash/mtime invalidates everything of that source).
+ * @param {{ url: string, source: string }[]} files
+ * @param {Map<string, string>} real
+ * @param {{ web: string, local: string }} stamps
+ * @returns {Map<string, string>}
+ */
+export function resolveHashes(files, real, stamps) {
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  for (const f of files) {
+    const known = real.get(pathKey(f.url));
+    out.set(f.url, typeof known === 'string' && known ? known : `syn-${shortHash(`${f.source}|${stamps[f.source] || ''}|${f.url}`)}`);
+  }
+  return out;
 }
 
 /**
  * The manifest body. `sizes` (URL → bytes) is optional: without it the client still preloads, it just reports progress
  * in files instead of bytes.
  */
-export function buildResourceManifest({ files, sizes = null, version = 'none' }) {
+export function buildResourceManifest({ files, sizes = null, version = 'none', hashes = null }) {
   let totalBytes = 0;
   let sized = 0;
   let tier1 = 0;
@@ -132,6 +202,8 @@ export function buildResourceManifest({ files, sizes = null, version = 'none' })
   for (const f of files) {
     const size = sizes ? sizes.get(f.url) : undefined;
     const entry = { url: f.url, tier: f.tier };
+    const hash = (hashes ? hashes.get(f.url) : f.hash) || null;
+    if (hash) entry.hash = hash;
     if (Number.isSafeInteger(size) && size >= 0) {
       entry.size = size;
       totalBytes += size;
@@ -208,22 +280,30 @@ export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite 
   async function build() {
     const assets = await readJson('assets.json');
     const local = await readJson('local-assets.json');
-    const key = [assets ? `${assets.mtimeMs}:${assets.size}` : '-', local ? `${local.mtimeMs}:${local.size}` : '-', cdnBase].join('|');
+    const hashesDoc = await readJson(ASSET_HASHES_FILE);
+    const key = [assets ? `${assets.mtimeMs}:${assets.size}` : '-', local ? `${local.mtimeMs}:${local.size}` : '-',
+      hashesDoc ? `${hashesDoc.mtimeMs}:${hashesDoc.size}` : '-', cdnBase].join('|');
     if (cache && cache.key === key) return cache;
     const t0 = Date.now();
     const assetsDoc = assets ? rewrite(assets.doc) : null;
     const localDoc = local ? rewrite(local.doc) : null;
     const files = collectResourceFiles(assetsDoc, localDoc);
-    const version = [
-      assetsDoc && assetsDoc.hash ? assetsDoc.hash : assets ? `m${Math.floor(assets.mtimeMs)}` : 'none',
-      localDoc && localDoc.hash ? localDoc.hash : local ? `l${Math.floor(local.mtimeMs)}` : '',
-      cdnBase || '',
-    ].filter(Boolean).join('-');
-    const manifest = buildResourceManifest({ files, sizes: await measure(files), version });
+    const real = collectRealHashes(localDoc, hashesDoc ? hashesDoc.doc : null);
+    const stamps = {
+      web: assetsDoc && assetsDoc.hash ? assetsDoc.hash : assets ? `m${Math.floor(assets.mtimeMs)}` : 'none',
+      local: localDoc && localDoc.hash ? localDoc.hash : local ? `l${Math.floor(local.mtimeMs)}` : 'none',
+    };
+    const fileHashes = resolveHashes(files, real, stamps);
+    // The version is informational now (the client keys its cache per file), but it must still change whenever the set
+    // or any hash does — the settings panel and the /healthz-style diagnostics read it.
+    const version = shortHash([cdnBase, ...files.map((f) => `${f.url}|${fileHashes.get(f.url)}`)].join('\n'));
+    const manifest = buildResourceManifest({ files, sizes: await measure(files), version, hashes: fileHashes });
     const body = Buffer.from(JSON.stringify(manifest));
     cache = { key, body, gzip: zlib.gzipSync(body), mtimeMs: Date.now(), manifest };
     log?.info?.(`[resources] ${manifest.count} file(s), ${manifest.tier1} essential, ${manifest.sized} sized`
-      + `${manifest.totalBytes ? `, ${(manifest.totalBytes / 1048576).toFixed(1)} MiB` : ''} (${Date.now() - t0} ms)`);
+      + `${manifest.totalBytes ? `, ${(manifest.totalBytes / 1048576).toFixed(1)} MiB` : ''}, `
+      + `${fileHashes.size ? [...fileHashes.values()].filter((h) => !h.startsWith('syn-')).length : 0} hashed`
+      + `, version ${version} (${Date.now() - t0} ms)`);
     return cache;
   }
 

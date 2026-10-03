@@ -5,8 +5,9 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  CACHE_PREFIX, MAX_FILE_BYTES, RESOURCES_FORMAT, TIER_ESSENTIAL, TIER_REST, cacheName, absoluteUrl, formatBytes,
-  isQuotaError, isResourcePath, isResourceUrl, resourceType, validateManifest, rangeResponse, checkAbort, abortError,
+  CACHE_NAME, CACHE_PREFIX, HASH_RE, INDEX_PATH, MAX_FILE_BYTES, RESOURCES_FORMAT, TIER_ESSENTIAL, TIER_REST, cacheName,
+  absoluteUrl, formatBytes, indexUrl, isQuotaError, isResourcePath, isResourceUrl, resourceType, validateManifest,
+  rangeResponse, checkAbort, abortError,
 } from '../../public/js/resources/common.js';
 
 describe('resource manifest validation', () => {
@@ -28,6 +29,21 @@ describe('resource manifest validation', () => {
     assert.throws(() => validateManifest({ ...ok, files: [{ url: '/assets/a.png', tier: 1, size: 1.5 }] }), /大小/);
     // a huge file is allowed (imported) — the store skips it, the manifest stays usable
     assert.equal(validateManifest({ ...ok, files: [{ url: '/assets/a.png', tier: 1, size: MAX_FILE_BYTES + 1 }] }).files.length, 1);
+  });
+
+  test('the per-file hash is optional but must be usable when present', () => {
+    const base = { format: RESOURCES_FORMAT, version: 'v' };
+    // absent (a server of an older build / a manifest without hashes) and both shapes the server writes
+    for (const hash of [undefined, 'c72412846779', 'syn-07572a8a157e', 'sha1-abc']) {
+      const files = [{ url: '/assets/a.png', tier: 1, ...(hash === undefined ? {} : { hash }) }];
+      assert.equal(validateManifest({ ...base, files }).files[0].hash, hash);
+    }
+    assert.equal(HASH_RE.test('syn-07572a8a157e'), true);
+    // anything the store would compare but never match, or that could blow up the index entry
+    assert.throws(() => validateManifest({ ...base, files: [{ url: '/assets/a.png', tier: 1, hash: '' }] }), /指纹/);
+    assert.throws(() => validateManifest({ ...base, files: [{ url: '/assets/a.png', tier: 1, hash: 42 }] }), /指纹/);
+    assert.throws(() => validateManifest({ ...base, files: [{ url: '/assets/a.png', tier: 1, hash: 'x'.repeat(65) }] }), /指纹/);
+    assert.throws(() => validateManifest({ ...base, files: [{ url: '/assets/a.png', tier: 1, hash: 'a/b' }] }), /指纹/);
   });
 
   test('URL rules: site paths and CDN URLs yes, everything else no', () => {
@@ -53,6 +69,11 @@ describe('resource manifest validation', () => {
     assert.equal(resourceType('/assets/x.json'), null);
     assert.equal(cacheName('deadbeef'), `${CACHE_PREFIX}deadbeef`);
     assert.equal(cacheName(undefined), `${CACHE_PREFIX}none`);
+    assert.equal(CACHE_NAME.startsWith(CACHE_PREFIX), true, 'the store uses one cache of this app');
+    assert.equal(INDEX_PATH.startsWith('/assets'), false, 'the index is not a resource path the worker would answer');
+    assert.equal(isResourcePath(INDEX_PATH), false);
+    assert.equal(indexUrl('https://site.example'), `https://site.example${INDEX_PATH}`);
+    assert.equal(indexUrl('https://cdn.example'), `https://cdn.example${INDEX_PATH}`);
     assert.equal(absoluteUrl('/assets/x.png', 'https://site.example'), 'https://site.example/assets/x.png');
     assert.equal(absoluteUrl('https://cdn.example/assets/x.png', 'https://site.example'), 'https://cdn.example/assets/x.png');
     assert.equal(absoluteUrl('::::', 'https://site.example'), 'https://site.example/::::', 'a relative string resolves');

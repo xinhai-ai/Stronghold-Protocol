@@ -1,21 +1,48 @@
 // public/js/resources/store.js — the preload store: downloads the manifest's files into Cache Storage and reports what
 // is already there (docs/ASSETS.md「Preload」).
 //
+// One cache (`CACHE_NAME`) holds every asset, whatever manifest it came from, and each file's *hash* decides whether the
+// stored bytes are still current: an asset update re-downloads the changed files only (~310 MiB → a few MiB), and a
+// re-run of the extraction or a redeploy with unchanged art costs nothing. The hashes of the stored files live in one
+// index entry inside that cache, written as the run advances — an interrupted run keeps the progress it flushed.
+//
 // The page does the downloading (a plain `fetch` per file, stored with `cache.put`), so a page without a Service Worker
 // still builds the cache and only *serving it from the cache* needs one. Files are fetched with `cache: 'no-store'` on
 // purpose: they are stored in Cache Storage, and letting the HTTP cache keep a second copy would double the disk the
 // browser needs (~250 MiB of art). Everything is injected (`caches`, `fetcher`) so this module is unit-testable.
 
-import { CACHE_PREFIX, MAX_FILE_BYTES, TIER_ESSENTIAL, TIER_REST, absoluteUrl, cacheName, checkAbort, isQuotaError } from './common.js';
+import {
+  CACHE_NAME, CACHE_PREFIX, CONTENT_HASH_RE, MAX_FILE_BYTES, TIER_ESSENTIAL, TIER_REST, absoluteUrl, indexUrl, checkAbort, isQuotaError,
+} from './common.js';
 
 /** Files above this are downloaded one at a time (a 20 MiB Spine texture should not race three others). */
 const BIG_FILE_BYTES = 4 << 20;
 /** Failures kept for the UI (the count is always exact). */
 const MAX_FAILURES = 10;
+/** Successful files between two index writes (a flush is one put of a few KiB; 64 keeps an abort at ~1 % loss). */
+const INDEX_FLUSH_EVERY = 64;
+
+/**
+ * The 12-hex SHA-1 of a response body — the same digest the server puts in the manifest (tools/asset-hashes.mjs,
+ * tools/local-extract/extract.py). WebCrypto has no streaming digest, so one file is read at a time (Big files go
+ * through the single big-file lane, so at most one of them is ever in memory).
+ * @param {Response} response
+ * @returns {Promise<string|null>} null when the browser cannot hash (no WebCrypto, an unreadable body)
+ */
+async function digestOf(response) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  try {
+    const bits = await subtle.digest('SHA-1', await response.clone().arrayBuffer());
+    return [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+  } catch {
+    return null;
+  }
+}
 
 export class ResourceStore {
   /**
-   * @param {{ files: { url: string, tier: number, size?: number }[], version: string, totalBytes?: number|null }} manifest
+   * @param {{ files: { url: string, tier: number, size?: number, hash?: string }[], version: string, totalBytes?: number|null }} manifest
    * @param {{ caches?: any, fetcher?: typeof fetch, origin?: string, smallLanes?: number, bigLanes?: number,
    *           now?: () => number }} [opts]
    */
@@ -28,7 +55,7 @@ export class ResourceStore {
     this.smallLanes = Math.max(1, smallLanes);
     this.bigLanes = Math.max(1, bigLanes);
     this.now = now;
-    this.cacheName = cacheName(manifest.version);
+    this.cacheName = CACHE_NAME;
     /** @type {Promise<any> | null} */
     this.running = null;
   }
@@ -36,6 +63,27 @@ export class ResourceStore {
   /** Cache key (absolute URL) of a manifest entry. */
   keyOf(url) {
     return absoluteUrl(url, this.origin) || String(url);
+  }
+
+  /**
+   * The hashes of what this cache holds: `<absolute url>` → hash. A missing or unreadable index means "nothing is
+   * verified", i.e. every entry is fetched again — what the first run of this version and a cleared cache need.
+   * @param {any} cache
+   */
+  async #readIndex(cache) {
+    let doc = null;
+    try {
+      const res = await cache.match(indexUrl(this.origin));
+      if (res) doc = await res.json();
+    } catch { doc = null; }
+    const files = doc && typeof doc === 'object' && doc.files && typeof doc.files === 'object' ? doc.files : null;
+    return { manifest: typeof doc?.manifest === 'string' ? doc.manifest : '', files: files ? { ...files } : {} };
+  }
+
+  /** Write the index entry (the only synthetic entry of the cache; the worker never answers it: not /assets|/fonts). */
+  async #writeIndex(cache, files, manifest) {
+    const body = JSON.stringify({ version: 1, manifest: String(manifest || ''), files });
+    await cache.put(indexUrl(this.origin), new Response(body, { headers: { 'Content-Type': 'application/json' } }));
   }
 
   /** A file this store will fetch: small enough to be worth caching (a huge one is skipped, never fails the run). */
@@ -62,13 +110,58 @@ export class ResourceStore {
   }
 
   /**
-   * What is already cached: `present` holds absolute URLs, plus every counter the settings panel shows. Entries of an
-   * older manifest never count (the cache name carries the version).
+   * What is already cached *and current*: `present` holds the absolute URLs whose stored bytes match the manifest's
+   * hash, plus every counter the settings panel shows. An entry of another revision (or with no index record yet) does
+   * not count, which is what makes the next run fetch it again.
    */
   async status() {
     const cache = await this.caches.open(this.cacheName);
-    const present = new Set((await cache.keys()).map((k) => k.url));
-    return { ...this.#tally(present), present };
+    const cached = new Set((await cache.keys()).map((k) => k.url));
+    const index = await this.#readIndex(cache);
+    const fresh = this.#fresh(cached, index);
+    return { ...this.#tally(fresh), present: fresh };
+  }
+
+  /** The subset of `cached` whose recorded hash equals the manifest's (an entry without a hash counts as current). */
+  #fresh(cached, index) {
+    const fresh = new Set();
+    for (const f of this.files) {
+      const key = this.keyOf(f.url);
+      if (!cached.has(key)) continue;
+      if (f.hash && index.files[key] !== f.hash) continue;
+      fresh.add(key);
+    }
+    return fresh;
+  }
+
+  /** Caches of earlier builds this app wrote: their entries carry no hash record and are verified before being kept. */
+  async #olderCaches() {
+    const names = (await this.caches.keys()) || [];
+    return names.filter((n) => n.startsWith(CACHE_PREFIX) && n !== this.cacheName);
+  }
+
+  /**
+   * Rescue a file from a cache of the previous layout instead of downloading it again: hash the stored bytes and, when
+   * they are exactly the revision this manifest wants, move the entry into the current cache. A mismatching entry is
+   * dropped (the caller downloads the right bytes next) so a stale copy can never shadow the fresh one.
+   * @returns {Promise<boolean>} true when the file needed no network at all
+   */
+  async #adopt(file, cache, older) {
+    if (!older.length || !file.hash || !CONTENT_HASH_RE.test(file.hash)) return false; // nothing to compare against
+    const key = this.keyOf(file.url);
+    for (const name of older) {
+      const other = await this.caches.open(name);
+      const hit = await other.match(key);
+      if (!hit) continue;
+      if ((await digestOf(hit)) === file.hash) {
+        await cache.put(key, hit); // same bytes, now in the current cache…
+        await other.delete(key); // …and gone from the old one: never two copies, never a stale shadow
+        return true;
+      }
+      await other.delete(key);
+      return false;
+    }
+    return false;
   }
 
   /** Counters for a set of cached URLs (shared by status() and clear(), which must not re-create a cache). */
@@ -125,6 +218,8 @@ export class ResourceStore {
 
   async #download({ signal, onProgress, tiers }) {
     const wanted = new Set(tiers);
+    const cache = await this.caches.open(this.cacheName);
+    const index = await this.#readIndex(cache);
     const start = await this.status();
     checkAbort(signal);
     const work = this.files.filter((f) => wanted.has(f.tier) && this.eligible(f) && !start.present.has(this.keyOf(f.url)));
@@ -134,6 +229,10 @@ export class ResourceStore {
     let failed = 0;
     let tier1Done = start.tier1Present;
     let tier2Done = start.tier2Present;
+    let pendingFlush = 0;
+    // Migration and network traffic are reported separately: the panel says "整理已保存的资源" while nothing is fetched.
+    let adopted = 0;
+    let downloaded = 0;
     /** @type {{ url: string, message: string }[]} */
     const failures = [];
     let lastEmit = 0;
@@ -142,7 +241,7 @@ export class ResourceStore {
       phase: 'download', count: done, total: start.total, wanted: start.wanted, skipped: start.skipped,
       bytes, totalBytes: start.totalBytes, sized, sizedTotal: start.sizedTotal,
       tier1: start.tier1, tier1Present: tier1Done, tier2: start.tier2, tier2Present: tier2Done,
-      complete: false, failed, failures: failures.slice(), current,
+      complete: false, failed, failures: failures.slice(), current, adopted, downloaded,
     });
     const emit = (current = null, force = false) => {
       if (!onProgress) return;
@@ -157,15 +256,25 @@ export class ResourceStore {
       const small = [];
       const big = [];
       for (const f of work) (Number.isSafeInteger(f.size) && f.size > BIG_FILE_BYTES ? big : small).push(f);
-      const cache = await this.caches.open(this.cacheName);
+      // Caches of the pre-hash layout: their entries are verified (and moved) before anything is fetched.
+      const older = await this.#olderCaches();
       const one = async (file) => {
         checkAbort(signal);
         const key = this.keyOf(file.url);
         try {
-          const res = await this.fetcher(key, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal });
-          if (res.type === 'opaque' || !res.body) throw new Error('响应不可读取（缺少 CORS 头或空响应）');
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          await cache.put(key, this.storable(res));
+          if (await this.#adopt(file, cache, older)) adopted++;
+          else {
+            const res = await this.fetcher(key, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal });
+            if (res.type === 'opaque' || !res.body) throw new Error('响应不可读取（缺少 CORS 头或空响应）');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            await cache.put(key, this.storable(res));
+            downloaded++;
+          }
+          // The file is current only once the index says so: a run stopped before its next flush re-fetches this one.
+          if (file.hash) {
+            index.files[key] = file.hash;
+            if (++pendingFlush >= INDEX_FLUSH_EVERY) { pendingFlush = 0; await this.#writeIndex(cache, index.files, this.manifest.version); }
+          }
           done++;
           if (file.tier === TIER_ESSENTIAL) tier1Done++; else tier2Done++;
           if (Number.isSafeInteger(file.size)) { bytes += file.size; sized++; }
@@ -188,16 +297,25 @@ export class ResourceStore {
           for (let i = next++; i < list.length; i = next++) await one(list[i]);
         }));
       };
-      await drain(small, this.smallLanes);
-      await drain(big, this.bigLanes);
+      try {
+        await drain(small, this.smallLanes);
+        await drain(big, this.bigLanes);
+        checkAbort(signal);
+      } finally {
+        // Flush on every exit — an abort or a quota failure included: the files stored so far must count as current
+        // next time. A failing write only costs re-downloading them.
+        try { await this.#writeIndex(cache, index.files, this.manifest.version); } catch { /* out of storage: the run is already failing */ }
+      }
+    } else {
+      checkAbort(signal);
     }
-    checkAbort(signal);
     const after = await this.status();
-    const result = { ...after, phase: 'ready', failed, failures: failures.slice() };
+    const result = { ...after, phase: 'ready', failed, failures: failures.slice(), adopted, downloaded };
     onProgress?.(result);
+    // Only a complete set may drop anything: a partial run never deletes files it did not replace.
+    if (result.complete) await this.prune();
     return result;
   }
-
   /** Delete every cache this app owns, of every version — 「清理缓存」 in the settings panel. Never re-creates one. */
   async clear() {
     if (this.caches?.keys) {
@@ -213,5 +331,34 @@ export class ResourceStore {
     const stale = names.filter((n) => n.startsWith(CACHE_PREFIX) && n !== this.cacheName);
     await Promise.all(stale.map((n) => this.caches.delete(n)));
     return stale;
+  }
+
+  /**
+   * Delete cached entries that the manifest no longer lists (a file that was renamed or dropped would otherwise sit in
+   * the cache forever, and its index record with it). Older caches are only cleaned up once they held no serviceable
+   * entry at all — i.e. after the migration of this run moved or dropped what it could.
+   */
+  async pruneStale() {
+    const cache = await this.caches.open(this.cacheName);
+    const wanted = new Set(this.files.map((f) => this.keyOf(f.url)));
+    const indexKey = indexUrl(this.origin);
+    const keys = await cache.keys();
+    const doomed = keys.filter((k) => k.url !== indexKey && !wanted.has(k.url));
+    if (!doomed.length) return 0;
+    await Promise.all(doomed.map((k) => cache.delete(k)));
+    const index = await this.#readIndex(cache);
+    for (const k of doomed) delete index.files[k.url];
+    await this.#writeIndex(cache, index.files, this.manifest.version);
+    return doomed.length;
+  }
+
+  /**
+   * Housekeeping after a complete run: other caches (the version-named layout of earlier builds) and the entries this
+   * manifest dropped. `includeStale: false` is used from a download, where the cache was just brought up to date.
+   */
+  async prune(includeStale = true) {
+    const caches = await this.pruneOld();
+    const files = includeStale ? await this.pruneStale() : 0;
+    return { caches, files };
   }
 }

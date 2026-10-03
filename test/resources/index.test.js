@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CACHE_PREFIX, MANIFEST_URL, SW_URL, cacheName } from '../../public/js/resources/common.js';
+import { CACHE_NAME, CACHE_PREFIX, MANIFEST_URL, SW_URL, cacheName } from '../../public/js/resources/common.js';
 import { DOWNLOAD_LOCK } from '../../public/js/resources/index.js';
 
 class MemoryCache {
@@ -115,7 +115,7 @@ test('the preload controller: off by default, downloads in two passes, serves of
     }
   }
   assert.ok(states.some((s) => s.phase === 'download' && s.done >= 1 && s.done < 4), 'a mid-download update carried the partial count');
-  assert.equal(await (await env.caches.open(cacheName('testversion'))).match(`${ORIGIN}/assets/ui/panel.png`) !== undefined, true);
+  assert.equal(await (await env.caches.open(CACHE_NAME)).match(`${ORIGIN}/assets/ui/panel.png`) !== undefined, true);
 
   // a second sync with the same value is a no-op (the settings store fires for volume changes too)
   const fetches = env.calls.fetch.length;

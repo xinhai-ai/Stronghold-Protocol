@@ -4,7 +4,7 @@
 // Only /assets/** and /fonts/** (site paths or CDN URLs) are ever answered, and only from caches this app wrote
 // (`X-SP-Resource`): code, data, API responses, manifests and WebSocket traffic never pass through this module.
 
-import { CACHE_PREFIX, isResourcePath, rangeResponse } from './common.js';
+import { CACHE_NAME, CACHE_PREFIX, CONTENT_HASH_RE, isResourcePath, rangeResponse } from './common.js';
 
 /**
  * @param {Request} request
@@ -27,9 +27,14 @@ export async function handleResourceRequest(request, { caches = globalThis.cache
   }
 }
 
-/** First cache entry for a URL across every cache this app owns. */
+/**
+ * First cache entry for a URL across every cache this app owns: the current cache first, then the caches of earlier
+ * builds (the pre-hash layout). Those are still answered while an update migrates them into `CACHE_NAME` — and the
+ * order matters, because a stale entry left in an older cache must never shadow the fresh file of the current one.
+ */
 async function matchResource(url, caches) {
   const names = (await caches.keys()).filter((n) => n.startsWith(CACHE_PREFIX));
+  names.sort((a, b) => (a === CACHE_NAME ? -1 : b === CACHE_NAME ? 1 : 0));
   for (const name of names) {
     const cache = await caches.open(name);
     const res = await cache.match(url);

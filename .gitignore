@@ -10,6 +10,8 @@ public/fonts/
 # tools/local-extract/extract.py → public/assets/local/** and this per-machine manifest
 # (optional: the client and the tests work without it)
 data/local-assets.json
+# tools/asset-hashes.mjs → per-file hashes of public/assets + public/fonts (ship it next to the manifests)
+data/asset-hashes.json
 # download caches, upstream tables, ledgers, reports, setup state
 .cache/
 

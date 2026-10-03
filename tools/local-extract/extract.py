@@ -36,6 +36,7 @@ jobs whose output subdir starts with one of the prefixes run, and their groups r
 Everything is (c) Hypergryph; for private, non-commercial fan use only.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -545,6 +546,36 @@ def export_enemy_spines(ab_root, out_root, manifest, log, ids=None):
     return n
 
 
+def add_hashes(out_root, groups, log):
+    """Record a content hash per entry (docs/ASSETS.md「Preload」).
+
+    The preload stores files by hash: with `hash` in the manifest the client replaces only the entries whose art really
+    changed, instead of re-downloading the whole set when this manifest is regenerated. Only the files written by the
+    run are re-hashed; entries kept from a previous manifest keep the hash they already carry.
+    """
+    hashed = 0
+    for group in groups.values():
+        for entry in group.values():
+            if not isinstance(entry, dict):
+                continue
+            path = str(entry.get('path') or '')
+            marker = '/assets/local/'
+            if marker not in path:
+                continue
+            f = out_root / path.split(marker, 1)[1]
+            try:
+                digest = hashlib.sha1()
+                with open(f, 'rb') as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b''):
+                        digest.update(chunk)
+            except OSError:
+                entry.pop('hash', None)
+                continue
+            entry['hash'] = digest.hexdigest()[:12]
+            hashed += 1
+    log(f'hashed {hashed} file(s)')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--game', help='AssetBundle root (…/StreamingAssets/AB/Windows or …/Documents/Bundles)')
@@ -588,6 +619,7 @@ def main():
         except (OSError, ValueError) as e:
             print(f'warn: previous manifest unreadable ({e}); writing only the re-extracted groups', file=sys.stderr)
     groups = merge_manifest(old, manifest, set(manifest))  # a missing bundle keeps its previous group
+    add_hashes(out_root, groups, print)
     count = sum(len(v) for v in groups.values())
     doc = {'version': 1, 'source': 'local-client', 'count': count, 'groups': groups}
     Path(args.manifest).write_text(json.dumps(doc, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')

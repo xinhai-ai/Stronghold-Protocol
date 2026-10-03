@@ -35,13 +35,23 @@ in-match 设置 modal (`ui/resourcePanel.js` renders both faces from the same st
 is used.
 
 - The list comes from the server: `GET /data/resource-manifest.json` is generated from the two manifests below and
-  rewritten the same way, so a CDN install preloads *from the CDN* (`server/resources.js`). It carries a `version` (the
-  asset manifest hash: a new build gets a new cache) and, per file, a `tier`:
+  rewritten the same way, so a CDN install preloads *from the CDN* (`server/resources.js`). Every entry carries a
+  `hash` — the first 12 hex of the SHA-1 of the file's bytes, written by `tools/asset-hashes.mjs` (fetched assets) and
+  `tools/local-extract/extract.py` (local-client art) — plus a `tier`:
   **tier 1 (`essential`)** — fonts, UI sprites, profession / bond / band / item / skill icons, enemy icons, operator and
   token avatars, audio: what a screen needs in its first second; **tier 2** — portraits, every Spine model
-  (skel/atlas/textures) and the local-client art that is not the board (the bulk of the ~250 MiB). Sizes are included
+  (skel/atlas/textures) and the local-client art that is not the board (the bulk of the ~310 MiB). Sizes are included
   for the files this install has on disk; a CDN-only install omits them and the client reports progress in files
-  instead of bytes.
+  instead of bytes. A file without a recorded hash falls back to a synthetic one derived from its source manifest, so
+  such a manifest keeps the old "any rebuild invalidates the set" rule.
+- **Updating is incremental.** All the files live in one cache (`stronghold-resources-v1-all`) and each entry's hash is
+  recorded in an index entry inside it, so a new manifest re-downloads the files whose hash changed and keeps the rest:
+  adding the local-client art to an install that already preloaded costs the new files, not the whole set. A cache of
+  the older layout (named after a version, no hashes) is **migrated instead of discarded**: the store hashes the bytes
+  it finds there (`crypto.subtle.digest('SHA-1', …)`), moves the entries that are still current into the new cache,
+  drops the ones that are not, and only then fetches what is missing — the panel says 「正在整理已保存的资源（无需重新下载）」
+  while that runs. The worker prefers the current cache when a URL exists in both, so a stale copy can never shadow a
+  fresh file.
 - The client (`public/js/resources/*`) downloads tier 1 first, then tier 2 in the background: four lanes for small files
   and one for files above 4 MiB, skipping whatever is already cached. Two tabs of the same browser never download the
   same file twice: a Web Lock (`stronghold-resources-preload`, `ifAvailable`) makes one tab do the work while the others
@@ -51,10 +61,12 @@ is used.
 - `public/resource-sw.js` (a module Service Worker, registered with `updateViaCache: 'none'`) answers `/assets/**` and
   `/fonts/**` from that cache — byte ranges included, so audio can seek — and passes everything else (code, `/data/`,
   API, WebSocket) straight to the network. It needs HTTPS (or localhost); on plain HTTP the switch says why it cannot be
-  used instead of failing silently.
+  used instead of failing silently. `updateViaCache: 'none'` matters: it is what makes a new worker (and its module
+  imports) reach the browser on the next reload instead of being served from the HTTP cache.
 - 「清理缓存」 deletes every cache the app owns; turning the switch off stops the downloads and keeps what is cached
-  (still served from the cache by the worker), and the worker is removed once there is nothing left to serve. A completed new version drops
-  the previous cache. The host therefore has to serve `/resource-sw.js` and never cache it at the edge.
+  (still served from the cache by the worker), and the worker is removed once there is nothing left to serve. Once a run
+  has brought the set up to date, the caches of earlier layouts and the entries the manifest no longer lists are
+  dropped. The host therefore has to serve `/resource-sw.js` and never cache it at the edge.
 
 ## Running
 

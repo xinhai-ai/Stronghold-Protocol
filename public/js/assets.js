@@ -12,6 +12,9 @@
 //   await assets.local();                           // optional local-client art manifest (data/local-assets.json,
 //   assets.localUrl('map/autochess', 'TX_autochessi_D')   DESIGN §13) → URL or null (never required)
 //
+// Manifest URLs are normally same-origin paths (`/assets/…`), but SP_ASSETS_CDN makes the server rewrite them to
+// absolute CDN URLs (docs/ASSETS.md「CDN」), so every helper here accepts both shapes (`isAssetUrl`).
+//
 // Every URL helper is also exported as a pure function taking the manifest first (`avatarUrl(manifest, …)`),
 // so it can be unit tested without a browser. Helpers never throw on unknown ids — they return null and the
 // caller falls back (docs/ASSETS.md "Other fallbacks").
@@ -143,8 +146,20 @@ export function hasBackSpine(m, id) {
   return !!(ch && isObj(ch.spine) && validSpine(ch.spine.back));
 }
 
+/**
+ * Whether a manifest string may be requested as art: a same-origin path (`/assets/…`) or an absolute http(s) URL —
+ * an assets CDN rewrites the manifests to the latter (docs/ASSETS.md「CDN」). Anything else (a `javascript:` / `data:`
+ * URL, a relative path) is refused, so a malformed manifest can never turn into an arbitrary request.
+ * @param {unknown} v @param {string} [ext] required extension, e.g. '.skel'
+ */
+export function isAssetUrl(v, ext = '') {
+  if (typeof v !== 'string' || v.length === 0 || /\s/.test(v)) return false;
+  if (!v.startsWith('/') && !/^https?:\/\//i.test(v)) return false;
+  return !ext || v.endsWith(ext);
+}
+
 export function validSpine(sp) {
-  return isObj(sp) && typeof sp.skel === 'string' && /^\/[^\s]*\.skel$/.test(sp.skel) && typeof sp.atlas === 'string' && isObj(sp.anims);
+  return isObj(sp) && isAssetUrl(sp.skel, '.skel') && typeof sp.atlas === 'string' && isObj(sp.anims);
 }
 
 /** Best 2D picture for a unit asset id (operator avatar, token avatar, enemy icon, item icon). */

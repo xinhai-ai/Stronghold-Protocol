@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   avatarUrl, portraitUrl, enemyIconUrl, tokenAvatarUrl, bondIconUrl, bandIconUrl, itemIconUrl, skillIconUrl, uiUrl,
   profIconUrl, subProfIconUrl, spineEntry, hasBackSpine, unitPictureUrl, bgmEntry, sfxUrl, unitSfxUrl, baseCharId,
-  validSpine, RefLru, createAssets, unloadSpineData, spinePages, spineDataWeight, SPINE_WEIGHT_MIN, SPINE_IDLE_BYTES,
+  validSpine, isAssetUrl, RefLru, createAssets, unloadSpineData, spinePages, spineDataWeight, SPINE_WEIGHT_MIN, SPINE_IDLE_BYTES,
   SPINE_IDLE_GRACE_MS, SPINE_EVICT_DELAY_MS, SPINE_QUIET_DELAY_MS,
 } from '../../public/js/assets.js';
 
@@ -122,6 +122,33 @@ describe('URL helpers (synthetic manifest)', () => {
     assert.equal(unitPictureUrl(M, 'enemy_9016_acstmr'), '/e/acstmr.png');
     assert.equal(unitPictureUrl(M, 'trap_1041_acarm041'), '/i/1041.png');
     assert.equal(unitPictureUrl(M, 'trap_x'), null);
+  });
+
+  test('an assets CDN (absolute manifest URLs) resolves like a same-origin path', () => {
+    // SP_ASSETS_CDN rewrites every /assets/… URL of the manifest to the CDN (docs/ASSETS.md「CDN」): the client must
+    // accept that shape everywhere a texture is requested, not only where it renders a plain image
+    const CDN = 'https://cdn.example.com/stronghold';
+    const cdn = (u) => CDN + u;
+    const M2 = {
+      chars: { char_002_amiya: { avatar: cdn('/assets/a/amiya.png'), spine: { front: SP('amiya_f', { skel: cdn('/assets/spine/amiya_f.skel'), atlas: cdn('/assets/spine/amiya_f.atlas'), textures: [cdn('/assets/spine/amiya_f.png')] }) } } },
+      enemies: { enemy_1007_slime: { icon: cdn('/assets/e/slime.png'), spine: SP('slime', { skel: cdn('/assets/spine/slime.skel'), atlas: cdn('/assets/spine/slime.atlas'), pma: true }) } },
+      tokens: { token_cdn: { spine: SP('tok', { skel: cdn('/assets/spine/tok.skel'), atlas: cdn('/assets/spine/tok.atlas') }) } },
+    };
+    assert.equal(validSpine(M2.chars.char_002_amiya.spine.front), true);
+    assert.equal(spineEntry(M2, 'char_002_amiya').skel, cdn('/assets/spine/amiya_f.skel'));
+    assert.equal(spineEntry(M2, 'enemy_1007_slime').pma, true);
+    assert.equal(spineEntry(M2, 'token_cdn').atlas, cdn('/assets/spine/tok.atlas'));
+    assert.equal(avatarUrl(M2, 'char_002_amiya'), cdn('/assets/a/amiya.png'));
+    assert.equal(enemyIconUrl(M2, 'enemy_1007_slime'), cdn('/assets/e/slime.png'));
+    // the sibling pages of a CDN spine entry stay on the CDN too (unload bookkeeping)
+    assert.deepEqual(spinePages(spineEntry(M2, 'char_002_amiya')), [cdn('/assets/spine/amiya_f.png')]);
+    // shapes that must never become a request
+    assert.equal(isAssetUrl('javascript:alert(1).skel', '.skel'), false);
+    assert.equal(isAssetUrl(cdn('/assets/x.png'), '.skel'), false);
+    assert.equal(isAssetUrl('/assets/x.skel', '.skel'), true);
+    assert.equal(isAssetUrl(cdn('/assets/x.skel'), '.skel'), true);
+    assert.equal(isAssetUrl('ftp://cdn.example.com/x.skel', '.skel'), false);
+    assert.equal(isAssetUrl('//cdn.example.com/x.skel', '.skel'), true, 'protocol-relative was accepted before — keep it');
   });
 
   test('audio', () => {

@@ -25,6 +25,9 @@
 //     changes, and an unreachable Redis only logs a warning (server/redis.js, server/persist.js).
 //   * Assets CDN (docs/DEPLOY.md §3.2): SP_ASSETS_CDN rewrites the /assets/… URLs of the manifests served under
 //     /data/ (data/assets.json, data/local-assets.json) to the CDN directory — the client needs no change.
+//   * Offline resources (docs/ASSETS.md「Preload」): GET /data/resource-manifest.json lists every asset file the client
+//     may preload into Cache Storage (tier 1 essential → tier 2 the rest), derived from those same manifests and
+//     rewritten the same way, so an optional client-side preload works without a CDN-less install (server/resources.js).
 //   * Per-network limits for internet clients (see net.js clientAddress; local/LAN peers are exempt): open sockets
 //     (maxConnectionsPerAddr, refused at upgrade with 429), rooms and running matches (lobby.js).
 //   * Graceful shutdown on SIGINT/SIGTERM (rooms get room.closed{reason:'shutdown'}, sockets close 1001).
@@ -47,6 +50,7 @@ import { Lobby } from './lobby.js';
 import { getData, loadData } from './data.js';
 import { openStoreFromEnv } from './redis.js';
 import { Persister, restoreServer, SAVE_MS } from './persist.js';
+import { createResourceIndex, RESOURCE_MANIFEST_FILE } from './resources.js';
 import { PROTOCOL_VERSION, APP_VERSION } from '../shared/constants.js';
 
 /** Repository root. */
@@ -343,6 +347,8 @@ const EMPTY_LOCAL_ART = Buffer.from(JSON.stringify({ version: 1, source: 'none',
 
 export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), log = noopLog, cdnBase = '' }) {
   const cdn = typeof cdnBase === 'string' ? cdnBase : '';
+  // the preload manifest (docs/ASSETS.md「Preload」): built on first request, cached until the manifests change
+  const resources = createResourceIndex({ dataDir, publicDir, cdnBase: cdn, rewrite: (v) => (cdn ? rewriteAssetPaths(v, cdn) : v), log });
   /** @type {Map<string, { mtimeMs: number, size: number, body: Buffer }>} rewritten manifests (per file path) */
   const cdnCache = new Map();
   const mounts = [
@@ -361,6 +367,34 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
     try { decoded = decodeURIComponent(rawPath); } catch { sendError(req, res, 400, '请求地址无效 · Bad request'); return; }
     if (!decoded.startsWith('/') || decoded.includes('\0') || decoded.includes('\\')) {
       sendError(req, res, 400, '请求地址无效 · Bad request');
+      return;
+    }
+    // The offline-resource manifest (docs/ASSETS.md「Preload」) is generated, never read from disk: the asset
+    // manifests would 404 for that name, so answer before the mount/traversal handling below.
+    if (decoded.toLowerCase() === `/data/${RESOURCE_MANIFEST_FILE}`) {
+      let idx;
+      try {
+        idx = await resources.get();
+      } catch (e) {
+        log.error('[http] cannot build the resource manifest', e);
+        sendError(req, res, 500, '服务器内部错误 · Internal error');
+        return;
+      }
+      const gz = acceptsGzip(req.headers['accept-encoding']) ? idx.gzip : null;
+      const body = gz || idx.body;
+      const stat = { size: idx.body.length, mtimeMs: idx.mtimeMs, mtime: new Date(idx.mtimeMs) };
+      const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}-${idx.manifest.version.slice(0, 12)}${gz ? '-gz' : ''}"`;
+      const headers = {
+        'Content-Type': MIME['.json'],
+        'Cache-Control': 'no-cache',
+        ETag: etag,
+        'Last-Modified': stat.mtime.toUTCString(),
+      };
+      if (gz) { headers['Content-Encoding'] = 'gzip'; headers.Vary = 'Accept-Encoding'; }
+      if (isNotModified(req, etag, stat.mtime)) { res.writeHead(304, headers); res.end(); return; }
+      headers['Content-Length'] = body.length;
+      res.writeHead(200, headers);
+      res.end(req.method === 'HEAD' ? undefined : body);
       return;
     }
     if (decoded === '/data.js') {

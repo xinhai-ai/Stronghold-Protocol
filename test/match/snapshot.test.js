@@ -60,13 +60,21 @@ function runBoth(a, b, pred, maxSteps = 2e6) {
 }
 
 /**
- * Normalizes what a restore deliberately changes: the battle-id sequence is bumped (a re-fought round may not reuse the
- * ids of the interrupted one) and every human starts disconnected (the lobby rebinds them on hello).
+ * Normalizes what a restore deliberately changes or what the two matches legitimately disagree about:
+ * - the battle-id sequence is bumped (a re-fought round may not reuse the ids of the interrupted one);
+ * - every human starts disconnected (the lobby rebinds them on hello);
+ * - `ready` is a client-driven flag of the same kind (a reconnecting player presses it again), and a restored match
+ *   re-arms its clocks from the *remaining* time, so the two instances may sit at different points of the ready cycle
+ *   even after the same number of harness steps. Everything else — boards, pool, funds, round, RNG positions — must
+ *   match exactly.
  */
 function norm(state, { seqGap = 0 } = {}) {
   const out = JSON.parse(JSON.stringify(state));
   out.match._battleSeq = (Number(out.match._battleSeq) || 0) - seqGap;
-  for (const p of Object.values(out.players)) p.connected = true;
+  for (const p of Object.values(out.players)) {
+    p.connected = true;
+    p.ready = true;
+  }
   return out;
 }
 

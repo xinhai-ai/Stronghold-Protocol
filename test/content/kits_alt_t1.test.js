@@ -673,11 +673,13 @@ test('1_20 雷蛇 反击电弧: attack interval +70 % of the base (PRTS 增大(+
   for (const id of pair('20')) {
     const bb = raw(id).skill.bb;
     assert.equal(raw(id).skill.skillId, 'skchr_liskam_2');
-    // 重装 S2: TAKE_DAMAGE (the enemy has to hit her)
-    const h = run({ defs: { enemies: { e: dummy('e', { atk: 300, bat: 1 }) }, chess: noGarrison(id) }, units: [{ chessId: id, row: 9, col: 4, carryState: READY }], enemies: [{ key: 'e', pos: [9, 4] }] });
+    // 重装 S2 反击电弧 is an OFFENSIVE skill: the basic strategy casts it with an enemy in the skill range (issue #4; the
+    // deliberate deviation from the official 重装 row, DESIGN §21.29) —
+    // the enemy here stands two tiles ahead and, being a speed-0 dummy, never touches her
+    const h = run({ defs: { enemies: { e: dummy('e', { atk: 300, bat: 1 }) }, chess: noGarrison(id) }, units: [{ chessId: id, row: 9, col: 4, carryState: READY }], enemies: [{ key: 'e', pos: [9, 6] }] });
     const u = h.unit(id);
     assert.ok(h.runUntil(() => u.skill.active, 5));
-    assert.equal(started(h, u)[0].reason, 'TAKE_DAMAGE');
+    assert.equal(started(h, u)[0].reason, 'DEFAULT');
     approx(u.s.interval, u.base.bat * (1 + bb.base_attack_time) * 100 / u.s.aspd, `${id} interval ×${1 + bb.base_attack_time}`);
     h.runUntil(() => !u.skill.active, 30);
     approx(u.s.interval, u.base.bat * 100 / u.s.aspd, 'restored');

@@ -36,7 +36,7 @@ function manifest(files, over = {}) {
 }
 
 /** A fetcher that answers every URL with `body.length` bytes and records the call order. */
-function fetcherFor({ bodies = {}, fail = [], opaque = [], onCall } = {}) {
+function fetcherFor({ bodies = {}, fail = [], opaque = [], gzip = [], onCall } = {}) {
   const calls = [];
   const fetch = async (url, opts = {}) => {
     calls.push(url);
@@ -45,6 +45,8 @@ function fetcherFor({ bodies = {}, fail = [], opaque = [], onCall } = {}) {
     if (fail.includes(url)) throw new Error('HTTP 404');
     const body = bodies[url] ?? 'x'.repeat(8);
     if (opaque.includes(url)) return { type: 'opaque', ok: true, status: 200, body: null, headers: new Headers() };
+    // a gzipped transfer: fetch hands over the DECODED body while Content-Length describes the compressed bytes
+    if (gzip.includes(url)) return new Response(body, { status: 200, headers: { 'Content-Type': 'application/octet-stream', 'Content-Encoding': 'gzip', 'Content-Length': '42' } });
     return new Response(body, { status: 200, headers: { 'Content-Type': 'image/png', 'Content-Length': String(body.length) } });
   };
   return { fetch, calls };
@@ -94,7 +96,21 @@ describe('ResourceStore', () => {
     assert.equal(await cached.text(), 'x'.repeat(8));
     assert.equal(cached.headers.get('x-sp-resource'), '1', 'entries are marked as ours');
     assert.equal(cached.headers.get('accept-ranges'), 'bytes');
-    assert.equal(cached.headers.get('content-length'), null, 'no stale length of the compressed transfer');
+    assert.equal(cached.headers.get('content-length'), '8', 'an uncompressed response keeps its exact length');
+  });
+
+  test('a gzip response never keeps the compressed Content-Length (it would truncate the stored body)', async () => {
+    const m = manifest([{ url: '/assets/spine/a.skel', tier: 1, size: 8 }]);
+    const caches = new MemoryCaches();
+    const { fetch } = fetcherFor({ gzip: [`${ORIGIN}/assets/spine/a.skel`] });
+    const s = store(m, { caches, fetch });
+    const res = await s.download();
+    assert.equal(res.failed, 0);
+    const cached = await (await caches.open(cacheName('v1'))).match(`${ORIGIN}/assets/spine/a.skel`);
+    assert.equal(cached.headers.get('content-length'), null, 'fetch reports the compressed size (42) for a longer body');
+    assert.equal(cached.headers.get('content-encoding'), null, 'the stored body is already decoded');
+    assert.equal(cached.headers.get('content-type'), 'application/octet-stream', 'the type still follows the file');
+    assert.equal(await cached.text(), 'x'.repeat(8));
   });
 
   test('two passes (tiers) can be run one after the other, as the controller does', async () => {

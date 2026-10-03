@@ -1,8 +1,8 @@
-// public/js/resources/store.js — the offline-resource store: downloads the manifest's files into Cache Storage and
-// reports what is already there (docs/ASSETS.md「Preload」).
+// public/js/resources/store.js — the preload store: downloads the manifest's files into Cache Storage and reports what
+// is already there (docs/ASSETS.md「Preload」).
 //
 // The page does the downloading (a plain `fetch` per file, stored with `cache.put`), so a page without a Service Worker
-// still builds the cache and only the *offline serving* needs one. Files are fetched with `cache: 'no-store'` on
+// still builds the cache and only *serving it from the cache* needs one. Files are fetched with `cache: 'no-store'` on
 // purpose: they are stored in Cache Storage, and letting the HTTP cache keep a second copy would double the disk the
 // browser needs (~250 MiB of art). Everything is injected (`caches`, `fetcher`) so this module is unit-testable.
 
@@ -48,6 +48,14 @@ export class ResourceStore {
     const headers = new Headers();
     const type = response.headers.get('content-type');
     if (type) headers.set('Content-Type', type);
+    // A stored body must never claim a length it does not have: `fetch` hands us the DECODED body, so a compressed
+    // transfer's Content-Length (372 for a 100 000-byte gzipped .skel) would describe the wrong bytes and the browser
+    // would truncate it. Keep the header only when the response was not content-encoded — there it is exactly the
+    // length we store (and DevTools' Cache Storage view can show a size instead of 0).
+    if (!response.headers.get('content-encoding')) {
+      const len = Number(response.headers.get('content-length'));
+      if (Number.isSafeInteger(len) && len >= 0) headers.set('Content-Length', String(len));
+    }
     headers.set('Accept-Ranges', 'bytes');
     headers.set('X-SP-Resource', '1');
     return new Response(response.body, { status: 200, statusText: 'OK', headers });

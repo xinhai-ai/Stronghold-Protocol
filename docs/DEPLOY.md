@@ -279,6 +279,35 @@ location = /resource-sw.js {
 
 - **素材需要允许跨域读取**（与 §3.2 同一条要求）：预载会用 CORS 模式 `fetch` 素材并把响应写进缓存，缺 `Access-Control-Allow-Origin` 时该文件会被记为失败（游戏本身照常按需加载）。想确认预载是否生效：浏览器 DevTools → Application → Cache Storage 里应出现 `stronghold-resources-v1-<素材指纹>`，文件数为「已保存/总数」。
 
+### 3.4 上限调整（房间 / 对局 / 连接）
+
+服务端对「一个网络能占用多少」有几道上限。默认值适用于家用小主机与几十人的公网部署；容器里用环境变量就能调，不必改代码：
+
+| 环境变量 | 默认 | 含义 | 客户端看到 |
+|---|---|---|---|
+| `SP_MAX_ROOMS` | `1000` | 全局同时存在的房间数（**含正在对局的房间**） | 「服务器内部错误」 |
+| `SP_MAX_ROOMS_PER_ADDR` | `16` | 单个客户端网络同时拥有的房间数（`0` = 不限） | 「操作过于频繁」 |
+| `SP_MAX_MATCHES_PER_ADDR` | `8` | 单个客户端网络同时进行的对局数（`0` = 不限） | 「操作过于频繁」 |
+| `SP_MAX_CONNECTIONS` | `2000` | 全局 WebSocket 连接数 | 升级时 HTTP 503 |
+| `SP_MAX_CONNECTIONS_PER_ADDR` | `64` | 单个客户端网络的连接数（`0` = 不限） | 升级时 HTTP 429 |
+
+例子（`.env` 或 compose 的 `environment:`）：
+
+```yaml
+    environment:
+      SP_MAX_ROOMS: "2000"            # 大服务器：放宽全局房间数
+      SP_MAX_ROOMS_PER_ADDR: "32"     # 宿舍 / 校园网 / CGNAT：多人在同一出口 IP
+      SP_MAX_MATCHES_PER_ADDR: "0"    # 0 = 不限制（只保留全局兜底）
+```
+
+几点要注意：
+
+- 「一个网络」怎么算：直连时是客户端 IP（IPv6 取 /64）；经过反代 / Cloudflare 时是转发头里的真实玩家 IP（`cf-connecting-ip` / `x-real-ip` / `x-forwarded-for`）。**本机/内网直连不受单网络限制**。
+- 若把 `TRUST_PROXY` 设为 `0`，经本机反代的流量全部算作「本地」→ 单网络上限**完全不生效**，只剩全局兜底；默认 `auto` 才会按真实玩家 IP 计数。
+- 房间只在真的变空时才释放：大厅断线满 60 秒，或对局中重连窗口结束（同盟 10 分钟、**独立 24 小时**）。**打完一局不会释放房间**（只是回到大厅，仍计入上限）。
+- 程序内调用还可以直接传 `startServer({ maxRooms, maxRoomsPerAddr, ... })`；显式传的参数优先于环境变量（便于测试），环境变量优先于代码默认值。值写错了（负数、小数、非数字）会记一条 warn 并继续用默认值——不会因为一个手误把防护关掉。
+- 观察方式：启动日志有一行 `[http] limits: rooms 1000 (16/network), matches 8/network, sockets 2000 (64/network)`；`GET /healthz` 的 `limits` 字段是当前生效值；被拒绝时日志里有 `[lobby] room limit (N) reached …` / `match limit (N) reached …`（同一条 10 秒内只打一次，并附上被合并的次数）。
+
 ## 4. macOS / Linux 常驻
 
 - 临时开服：`scripts/start.sh`（或 `npm start`），保持终端窗口打开。macOS 首次会询问是否允许 node 接受传入连接，选「允许」。

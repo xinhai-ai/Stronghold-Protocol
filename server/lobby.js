@@ -38,6 +38,9 @@
 //     created from one network may exist at once and at most `maxMatchesPerAddr` matches started from one
 //     network may run at once (room.create / room.start → ERR.RATE). Without them a socket loop could fill
 //     `maxRooms` or keep hundreds of unattended matches simulating for the whole reconnect window.
+//     Defaults live in LOBBY_DEFAULTS and can be overridden per startServer option or with the SP_MAX_ROOMS,
+//     SP_MAX_ROOMS_PER_ADDR and SP_MAX_MATCHES_PER_ADDR environment variables (docs/DEPLOY.md §3.4); every refusal
+//     is logged (`room limit (N) reached …` / `match limit (N) reached …`, throttled to one line per 10 s).
 //   * Permanent departure during a match (room.leave, g.leave, reconnect window expired): the seat is
 //     marked departed (shown as connected=false), match.onLeave(playerId) is called, and the seat is freed
 //     when the match ends. 'g.leave' is handled here and never reaches match.handle().
@@ -380,7 +383,11 @@ export class Lobby {
   create(session, { mode, difficulty }) {
     const cur = this.roomOf(session);
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
-    if (this.rooms.size >= this.opts.maxRooms) return fail(ERR.INTERNAL, 'too many rooms');
+    if (this.rooms.size >= this.opts.maxRooms) {
+      // the global cap used to fail silently: a full server and a crash looked the same to the player (docs/DEPLOY.md §3.4)
+      this.limitWarn(`room limit (${this.opts.maxRooms}) reached (global)`);
+      return fail(ERR.INTERNAL, 'too many rooms');
+    }
     const key = session.limitKey || null;
     if (key && this.opts.maxRoomsPerAddr > 0) {
       // The room being left disappears with this create when the creator is its only human.

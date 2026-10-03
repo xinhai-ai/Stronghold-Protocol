@@ -11,10 +11,10 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { startServer, parseRange, acceptsGzip, parseTrustProxy } from '../server/index.js';
+import { startServer, parseRange, acceptsGzip, parseTrustProxy, parseEnvLimit } from '../server/index.js';
 import { loadData, lookup, getChess, getBond, getBand, getMode, getConfig, INDEXED_FILES } from '../server/data.js';
 import * as dataModule from '../server/data.js';
-import { CODE_ALPHABET, BOT_NAMES } from '../server/lobby.js';
+import { CODE_ALPHABET, BOT_NAMES, LOBBY_DEFAULTS } from '../server/lobby.js';
 import { sanitizeName, TokenBucket, SessionRegistry, clientAddress, normalizeIp, isLocalIp, limitKeyOf } from '../server/net.js';
 import { StubMatch as Match } from '../server/match/StubMatch.js';
 import { Match as RealMatch } from '../server/match/Match.js';
@@ -1536,6 +1536,160 @@ describe('per-network limits', () => {
     await delay(50);
     const ok = await netPlayer('s4', C);
     assert.ok(ok.isOpen, 'a slot freed up');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Limit overrides (docs/DEPLOY.md §3.4): SP_MAX_* environment variables, the boot line and /healthz
+// ---------------------------------------------------------------------------------------------------
+
+const LIMIT_ENVS = ['SP_MAX_ROOMS', 'SP_MAX_ROOMS_PER_ADDR', 'SP_MAX_MATCHES_PER_ADDR', 'SP_MAX_CONNECTIONS', 'SP_MAX_CONNECTIONS_PER_ADDR'];
+
+describe('limit overrides', () => {
+  const saved = Object.fromEntries(LIMIT_ENVS.map((k) => [k, process.env[k]]));
+  const clearEnvs = () => { for (const k of LIMIT_ENVS) delete process.env[k]; };
+  const restoreEnvs = () => {
+    for (const k of LIMIT_ENVS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  };
+  afterEach(() => { clearEnvs(); restoreEnvs(); });
+
+  /** A server that records warnings, plus the client/room helpers of this file. */
+  async function boot(opts = {}) {
+    const warns = [];
+    const srv = await startServer({
+      port: 0, host: '127.0.0.1', MatchClass: Match,
+      log: { info() {}, warn: (...a) => warns.push(a.map(String).join(' ')), debug() {}, error: (...a) => warns.push(`[error] ${a.map(String).join(' ')}`) },
+      ...opts,
+    });
+    const open = new Set();
+    const player = async (name, ip) => {
+      const c = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`, { wsOptions: ip ? { headers: { 'X-Forwarded-For': ip } } : {} });
+      open.add(c);
+      const w = await c.hello(name);
+      c.id = w.playerId;
+      return c;
+    };
+    const healthz = async () => JSON.parse((await httpReq(srv.port, '/healthz')).body.toString());
+    const close = async () => { await Promise.all([...open].map((c) => c.terminate().catch(() => {}))); await srv.close(); };
+    return { srv, warns, player, healthz, close };
+  }
+
+  test('parseEnvLimit: a value from the environment wins, 0 means unlimited, junk keeps the default', () => {
+    assert.equal(parseEnvLimit(undefined, 16, 'X'), 16);
+    assert.equal(parseEnvLimit('', 16, 'X'), 16);
+    assert.equal(parseEnvLimit(' 25 ', 16, 'X'), 25);
+    assert.equal(parseEnvLimit('0', 16, 'X'), 0, '0 = unlimited for the per-network caps');
+    const warns = [];
+    for (const bad of ['many', '-1', '1.5', '1e9', 'NaN']) assert.equal(parseEnvLimit(bad, 16, 'SP_MAX_ROOMS', { warn: (m) => warns.push(m) }), 16, bad);
+    assert.equal(warns.length, 5);
+    assert.match(warns[0], /SP_MAX_ROOMS=many ignored: a non-negative integer is required/);
+    assert.equal(parseEnvLimit('50', 16, 'X'), 50);
+  });
+
+  test('the environment raises and lowers the caps; /healthz reports them and the boot line prints them', async () => {
+    process.env.SP_MAX_ROOMS = '7';
+    process.env.SP_MAX_ROOMS_PER_ADDR = '3';
+    process.env.SP_MAX_MATCHES_PER_ADDR = '2';
+    process.env.SP_MAX_CONNECTIONS = '500';
+    process.env.SP_MAX_CONNECTIONS_PER_ADDR = '0';
+    const { srv, healthz, close } = await boot();
+    try {
+      assert.deepEqual((await healthz()).limits, {
+        maxRooms: 7, maxRoomsPerAddr: 3, maxMatchesPerAddr: 2, maxConnections: 500, maxConnectionsPerAddr: 0,
+      });
+      assert.equal(srv.lobby.opts.maxRooms, 7);
+      assert.equal(srv.network.opts.maxConnectionsPerAddr, 0, '0 = unlimited also arrives at net.js');
+    } finally { await close(); }
+  });
+
+  test('an explicit startServer option wins over the environment, the default stays when neither is set', async () => {
+    process.env.SP_MAX_ROOMS_PER_ADDR = '9';
+    process.env.SP_MAX_ROOMS = '3';
+    const { healthz, close } = await boot({ maxRoomsPerAddr: 5 });
+    try {
+      const l = (await healthz()).limits;
+      assert.equal(l.maxRoomsPerAddr, 5, 'the option wins');
+      assert.equal(l.maxRooms, 3, 'the environment applies to the rest');
+      assert.equal(l.maxMatchesPerAddr, LOBBY_DEFAULTS.maxMatchesPerAddr);
+    } finally { await close(); }
+  });
+
+  test('an unusable value warns and keeps the default (a typo never removes a protection)', async () => {
+    process.env.SP_MAX_ROOMS = 'lots';
+    process.env.SP_MAX_ROOMS_PER_ADDR = '-2';
+    const { warns, healthz, close } = await boot();
+    try {
+      const l = (await healthz()).limits;
+      assert.equal(l.maxRooms, LOBBY_DEFAULTS.maxRooms);
+      assert.equal(l.maxRoomsPerAddr, LOBBY_DEFAULTS.maxRoomsPerAddr);
+      assert.ok(warns.some((w) => /SP_MAX_ROOMS=lots ignored/.test(w)), warns.join(' | '));
+      assert.ok(warns.some((w) => /SP_MAX_ROOMS_PER_ADDR=-2 ignored/.test(w)), warns.join(' | '));
+    } finally { await close(); }
+  });
+
+  test('SP_MAX_ROOMS refuses the next room (the global cap now logs instead of failing silently)', async () => {
+    process.env.SP_MAX_ROOMS = '1';
+    const { warns, player, close } = await boot();
+    try {
+      const a = await player('a');
+      await expectOk(a, { t: 'room.create', mode: 'solo', difficulty: 'FUNNY' });
+      const b = await player('b');
+      const r = await b.request({ t: 'room.create', mode: 'solo', difficulty: 'FUNNY' });
+      assert.equal(r.t, 'error');
+      assert.equal(r.code, ERR.INTERNAL);
+      assert.match(r.detail, /too many rooms/);
+      assert.ok(warns.some((w) => /room limit \(1\) reached \(global\)/.test(w)), warns.join(' | '));
+    } finally { await close(); }
+  });
+
+  test('SP_MAX_ROOMS_PER_ADDR applies per network (other networks and local peers are unaffected)', async () => {
+    process.env.SP_MAX_ROOMS_PER_ADDR = '2';
+    const { warns, player, close } = await boot();
+    try {
+      const D = '203.0.113.201';
+      const one = await player('one', D);
+      await expectOk(one, { t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
+      await expectOk(one, { t: 'room.addBot' });
+      await expectOk(one, { t: 'room.start' }); // a room in a match still counts against the creator's network
+      const two = await player('two', D);
+      await expectOk(two, { t: 'room.create', mode: 'solo', difficulty: 'FUNNY' });
+      const three = await player('three', D);
+      const refused = await three.request({ t: 'room.create', mode: 'solo', difficulty: 'FUNNY' });
+      assert.equal(refused.t, 'error');
+      assert.equal(refused.code, ERR.RATE);
+      assert.match(refused.detail, /rooms/);
+      assert.ok(warns.some((w) => /room limit \(2\) reached for 203\.0\.113\.201/.test(w)), warns.join(' | '));
+
+      const other = await player('other', '198.51.100.77');
+      await expectOk(other, { t: 'room.create', mode: 'solo', difficulty: 'FUNNY' });
+      const local = await player('local');
+      await expectOk(local, { t: 'room.create', mode: 'solo', difficulty: 'FUNNY' }, 'a local peer is never limited per network');
+    } finally { await close(); }
+  });
+
+  test('SP_MAX_MATCHES_PER_ADDR limits running matches per network (rooms stay allowed)', async () => {
+    process.env.SP_MAX_MATCHES_PER_ADDR = '1';
+    const { warns, player, close } = await boot();
+    try {
+      const E = '203.0.113.202';
+      const one = await player('one', E);
+      await expectOk(one, { t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
+      await expectOk(one, { t: 'room.addBot' });
+      await expectOk(one, { t: 'room.start' });
+      const two = await player('two', E);
+      await expectOk(two, { t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
+      await expectOk(two, { t: 'room.addBot' });
+      const refused = await two.request({ t: 'room.start' });
+      assert.equal(refused.t, 'error');
+      assert.equal(refused.code, ERR.RATE);
+      assert.match(refused.detail, /matches/);
+      assert.ok(warns.some((w) => /match limit \(1\) reached for 203\.0\.113\.202/.test(w)), warns.join(' | '));
+      // another network can still start its own match
+      const other = await player('other', '198.51.100.78');
+      await expectOk(other, { t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
+      await expectOk(other, { t: 'room.addBot' });
+      await expectOk(other, { t: 'room.start' });
+    } finally { await close(); }
   });
 });
 

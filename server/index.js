@@ -17,7 +17,7 @@
 //   * WebSocket (ws) at /ws, maxPayload 64 KB → server/net.js Network → server/lobby.js Lobby.
 //   * Env: PORT (default 3000), HOST (default 0.0.0.0), TRUST_PROXY ('auto' default: honour CF-Connecting-IP /
 //     X-Real-IP / X-Forwarded-For only from loopback/private peers such as a local cloudflared; '1' always; '0' never).
-//     Prints LAN URLs on boot.
+//     Prints LAN URLs on boot; it also prints the effective limits (rooms/matches/sockets).
 //   * State (docs/DEPLOY.md §3.1): with SP_REDIS_URL (or REDIS_URL) the server writes a state document — sessions,
 //     rooms and the match checkpoints of server/match/snapshot.js — to Redis every SP_REDIS_SAVE_MS (default 10 s) and
 //     once on shutdown, and reads it back before it starts listening, so a container restart keeps every player on
@@ -29,7 +29,10 @@
 //     may preload into Cache Storage (tier 1 essential → tier 2 the rest), derived from those same manifests and
 //     rewritten the same way, so an optional client-side preload works without a CDN-less install (server/resources.js).
 //   * Per-network limits for internet clients (see net.js clientAddress; local/LAN peers are exempt): open sockets
-//     (maxConnectionsPerAddr, refused at upgrade with 429), rooms and running matches (lobby.js).
+//     (maxConnectionsPerAddr, refused at upgrade with 429), rooms and running matches (lobby.js). The effective values
+//     are printed on boot, reported as `limits` on /healthz and can be overridden with SP_MAX_ROOMS,
+//     SP_MAX_ROOMS_PER_ADDR, SP_MAX_MATCHES_PER_ADDR, SP_MAX_CONNECTIONS and SP_MAX_CONNECTIONS_PER_ADDR
+//     (docs/DEPLOY.md §3.4; an explicit startServer option wins, 0 = unlimited for the per-network caps).
 //   * Graceful shutdown on SIGINT/SIGTERM (rooms get room.closed{reason:'shutdown'}, sockets close 1001).
 //
 // Programmatic use (tests): `const srv = await startServer({ port: 0, quiet: true }); … await srv.close();`
@@ -46,7 +49,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { Network, SessionRegistry, NET_DEFAULTS } from './net.js';
-import { Lobby } from './lobby.js';
+import { Lobby, LOBBY_DEFAULTS } from './lobby.js';
 import { getData, loadData } from './data.js';
 import { openStoreFromEnv } from './redis.js';
 import { Persister, restoreServer, SAVE_MS } from './persist.js';
@@ -482,6 +485,25 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
   };
 }
 
+/** `0` (or a missing value) means "no per-network cap": say so instead of printing a pointless 0. */
+const perNetwork = (n) => (Number.isFinite(n) && n > 0 ? String(n) : 'unlimited');
+
+/**
+ * Read a numeric limit from the environment (docs/DEPLOY.md §3.4). An empty or absent value keeps the default, and an
+ * unparsable one warns and keeps it too — a typo must not silently drop a protection.
+ * @param {string|undefined} raw @param {number} fallback @param {string} name @param {any} [log]
+ */
+export function parseEnvLimit(raw, fallback, name, log = null) {
+  const s = String(raw ?? '').trim();
+  if (s === '') return fallback;
+  const n = Number(s);
+  if (!Number.isSafeInteger(n) || n < 0 || n > 1_000_000) {
+    log?.warn?.(`[http] ${name}=${s} ignored: a non-negative integer is required (docs/DEPLOY.md §3.4)`);
+    return fallback;
+  }
+  return n;
+}
+
 /**
  * Serve an in-memory body with the same validator/HEAD/range-free semantics as serveFile.
  * @param {Buffer} body @param {string} tag salt (the CDN base: the same file yields different bodies)
@@ -649,11 +671,25 @@ export async function startServer(opts = {}) {
     if (opts[k] != null) netOptions[k] = opts[k];
   }
   if (netOptions.trustProxy == null) netOptions.trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
-  const registry = new SessionRegistry({ reconnectWindowMs: netOptions.reconnectWindowMs ?? NET_DEFAULTS.reconnectWindowMs });
   const lobbyOptions = {};
   for (const k of ['lobbyGraceMs', 'maxRooms', 'maxRoomsPerAddr', 'maxMatchesPerAddr', 'resyncMinGapMs', 'soloReconnectWindowMs']) {
     if (opts[k] != null) lobbyOptions[k] = opts[k];
   }
+  // Limit overrides (docs/DEPLOY.md §3.4): an explicit startServer option wins, then the environment, then the code
+  // default. `0` means unlimited for the per-network caps; an unparsable value warns and keeps the default (a typo
+  // must not silently remove a protection).
+  const envLimits = [
+    [lobbyOptions, 'maxRooms', 'SP_MAX_ROOMS', LOBBY_DEFAULTS.maxRooms],
+    [lobbyOptions, 'maxRoomsPerAddr', 'SP_MAX_ROOMS_PER_ADDR', LOBBY_DEFAULTS.maxRoomsPerAddr],
+    [lobbyOptions, 'maxMatchesPerAddr', 'SP_MAX_MATCHES_PER_ADDR', LOBBY_DEFAULTS.maxMatchesPerAddr],
+    [netOptions, 'maxConnections', 'SP_MAX_CONNECTIONS', NET_DEFAULTS.maxConnections],
+    [netOptions, 'maxConnectionsPerAddr', 'SP_MAX_CONNECTIONS_PER_ADDR', NET_DEFAULTS.maxConnectionsPerAddr],
+  ];
+  for (const [target, key, env, fallback] of envLimits) {
+    if (target[key] == null) target[key] = parseEnvLimit(process.env[env], fallback, env, log);
+  }
+  log.info(`[http] limits: rooms ${lobbyOptions.maxRooms} (${perNetwork(lobbyOptions.maxRoomsPerAddr)}/network), matches ${perNetwork(lobbyOptions.maxMatchesPerAddr)}/network, sockets ${netOptions.maxConnections} (${perNetwork(netOptions.maxConnectionsPerAddr)}/network)`);
+  const registry = new SessionRegistry({ reconnectWindowMs: netOptions.reconnectWindowMs ?? NET_DEFAULTS.reconnectWindowMs });
   const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions });
   // Resume the last state before listening: every reconnecting client is recognized by its token right away.
   const persister = store ? new Persister({ store, registry, lobby, log, now: opts.now, saveMs }) : null;
@@ -699,6 +735,13 @@ export async function startServer(opts = {}) {
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
         persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.matchDocs.size } : null,
         assetsCdn: assetsCdn || null,
+        limits: {
+          maxRooms: lobby.opts.maxRooms,
+          maxRoomsPerAddr: lobby.opts.maxRoomsPerAddr,
+          maxMatchesPerAddr: lobby.opts.maxMatchesPerAddr,
+          maxConnections: network.opts.maxConnections,
+          maxConnectionsPerAddr: network.opts.maxConnectionsPerAddr,
+        },
       });
       return;
     }

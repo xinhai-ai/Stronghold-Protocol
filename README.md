@@ -111,6 +111,10 @@ npm start          # 启动服务器：http://localhost:3000
 | `SP_COMBAT` | `client` | `client`：各玩家浏览器模拟自己的战斗（服务器负载极低）；`server`：由服务器模拟并推流 |
 | `SP_VERIFY` | `off` | 服务器复算客户端上报的战斗结果：`off` / `sample`（约 1/8 抽查）/ `all`（全部复算，更耗 CPU） |
 | `TRUST_PROXY` | `auto` | 是否信任 `X-Forwarded-For` 等转发头：`auto` 只信任来自本机 / 内网的代理；`1` 总是；`0` 从不 |
+| `SP_REDIS_URL` | 空 | 设置后把会话、房间与对局检查点存入 Redis（容器重启后玩家回到原座位，见 [docs/DEPLOY.md](docs/DEPLOY.md)「断点续玩」）；不设置 = 纯内存、行为与以前完全一致 |
+| `SP_REDIS_PREFIX` | `stronghold:` | Redis 键前缀（多个实例共用一个 Redis 时区分） |
+| `SP_REDIS_TTL` | `90000` | 状态键的过期秒数（默认 25 小时，兜底清理） |
+| `SP_REDIS_SAVE_MS` | `10000` | 状态写入间隔（毫秒）；优雅关闭时另会立即写一次 |
 | `SP_ASSETS_CDN` | 空 | 素材 CDN 目录，例如 `https://cdn.example.com/stronghold` 或同源 `/cdn`：服务端把 `data/assets.json` 里的 `/assets/…` 改写为该地址（见 [docs/ASSETS.md](docs/ASSETS.md)「CDN」） |
 | `DEBUG` | 空 | 设为任意值输出详细日志 |
 | `SP_NO_BROWSER` | 空 | 设为 `1` 时启动脚本不自动打开浏览器 |

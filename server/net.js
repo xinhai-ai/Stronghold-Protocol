@@ -165,6 +165,34 @@ export class SessionRegistry {
   /** @param {string} playerId @returns {Session | null} */
   byId(playerId) { return this.byPlayerId.get(playerId) || null; }
 
+  /**
+   * Re-create a persisted session verbatim (server/persist.js): the exact playerId and token are kept, so the client
+   * that owns the token is recognized as the same player after a restart. Always disconnected — the socket is gone.
+   * Returns null when the id or the token is already taken / malformed.
+   * @param {{ playerId: string, token: string, name: string, disconnectedAt?: number, resumeWindowMs?: number|null,
+   *           roomCode?: string|null, loadout?: object|null, addr?: string }} doc
+   * @returns {Session | null}
+   */
+  adopt(doc) {
+    if (!doc || typeof doc.playerId !== 'string' || typeof doc.token !== 'string') return null;
+    if (!doc.playerId || !doc.token) return null;
+    if (this.byPlayerId.has(doc.playerId) || this.byTokenMap.has(doc.token)) return null;
+    if (this.byPlayerId.size >= this.maxSessions) return null;
+    const now = this.now();
+    const s = new Session({ playerId: doc.playerId, token: doc.token, name: doc.name, now });
+    s.connected = false;
+    s.ws = null;
+    const since = Number(doc.disconnectedAt);
+    s.disconnectedAt = Number.isFinite(since) ? since : now;
+    s.resumeWindowMs = Number.isFinite(doc.resumeWindowMs) && doc.resumeWindowMs > 0 ? Number(doc.resumeWindowMs) : null;
+    s.roomCode = typeof doc.roomCode === 'string' && doc.roomCode ? doc.roomCode : null;
+    s.loadout = doc.loadout && typeof doc.loadout === 'object' ? doc.loadout : null;
+    s.addr = typeof doc.addr === 'string' ? doc.addr : '?';
+    this.byPlayerId.set(s.playerId, s);
+    this.byTokenMap.set(s.token, s);
+    return s;
+  }
+
   /** @param {Session} s */
   remove(s) {
     if (this.byPlayerId.get(s.playerId) === s) this.byPlayerId.delete(s.playerId);

@@ -14,6 +14,8 @@
 #
 # Run:  docker run -d --name stronghold -p 3000:3000 --restart unless-stopped stronghold-protocol
 # Env:  PORT (3000), HOST (0.0.0.0), SP_COMBAT (client|server), SP_VERIFY (off|sample|all), TRUST_PROXY (auto|1|0),
+#       SP_REDIS_URL (redis://redis:6379/0 — keep sessions/rooms/matches across restarts, docs/DEPLOY.md §3.1),
+#       SP_REDIS_PREFIX, SP_REDIS_TTL, SP_REDIS_SAVE_MS,
 #       SP_ASSETS_CDN (https://cdn.example.com/stronghold — serve /assets/… from a CDN, docs/DEPLOY.md §3.2), DEBUG
 
 ARG NODE_IMAGE=node:22-alpine

@@ -18,6 +18,11 @@
 //   * Env: PORT (default 3000), HOST (default 0.0.0.0), TRUST_PROXY ('auto' default: honour CF-Connecting-IP /
 //     X-Real-IP / X-Forwarded-For only from loopback/private peers such as a local cloudflared; '1' always; '0' never).
 //     Prints LAN URLs on boot.
+//   * State (docs/DEPLOY.md §3.1): with SP_REDIS_URL (or REDIS_URL) the server writes a state document — sessions,
+//     rooms and the match checkpoints of server/match/snapshot.js — to Redis every SP_REDIS_SAVE_MS (default 10 s) and
+//     once on shutdown, and reads it back before it starts listening, so a container restart keeps every player on
+//     their seat and resumes a running match at its last checkpoint. Redis is optional: without the variable nothing
+//     changes, and an unreachable Redis only logs a warning (server/redis.js, server/persist.js).
 //   * Assets CDN (docs/DEPLOY.md §3.2): SP_ASSETS_CDN rewrites the /assets/… URLs of the manifests served under
 //     /data/ (data/assets.json, data/local-assets.json) to the CDN directory — the client needs no change.
 //   * Per-network limits for internet clients (see net.js clientAddress; local/LAN peers are exempt): open sockets
@@ -40,6 +45,8 @@ import { WebSocketServer } from 'ws';
 import { Network, SessionRegistry, NET_DEFAULTS } from './net.js';
 import { Lobby } from './lobby.js';
 import { getData, loadData } from './data.js';
+import { openStoreFromEnv } from './redis.js';
+import { Persister, restoreServer, SAVE_MS } from './persist.js';
 import { PROTOCOL_VERSION, APP_VERSION } from '../shared/constants.js';
 
 /** Repository root. */
@@ -576,10 +583,11 @@ function makeLogger(quiet) {
  *   ratePerSec?: number, rateBurst?: number, maxConnections?: number, maxRooms?: number,
  *   maxConnectionsPerAddr?: number, maxRoomsPerAddr?: number, maxMatchesPerAddr?: number, resyncMinGapMs?: number,
  *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number,
- *   assetsCdn?: string,
+ *   store?: object | null, resume?: boolean, saveMs?: number, assetsCdn?: string,
  * }} [opts]
  * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: WebSocketServer,
- *                     lobby: Lobby, network: Network, registry: SessionRegistry, close: () => Promise<void> }>}
+ *                     lobby: Lobby, network: Network, registry: SessionRegistry, store: object | null,
+ *                     persister: Persister | null, close: () => Promise<void> }>}
  */
 export async function startServer(opts = {}) {
   const port = opts.port ?? (process.env.PORT != null && process.env.PORT !== '' ? Number(process.env.PORT) : 3000);
@@ -595,6 +603,9 @@ export async function startServer(opts = {}) {
   if (String(rawCdn ?? '').trim() && !assetsCdn) {
     log.warn(`[http] SP_ASSETS_CDN=${String(rawCdn).trim()} ignored: an http(s):// URL or a /path is required (docs/DEPLOY.md §3.2)`);
   }
+  // Redis is optional: no SP_REDIS_URL / REDIS_URL and the server is exactly what it always was (in memory only)
+  const store = opts.store !== undefined ? opts.store : openStoreFromEnv({ log });
+  const saveMs = Number.isFinite(opts.saveMs) ? Number(opts.saveMs) : Number(process.env.SP_REDIS_SAVE_MS) || SAVE_MS;
 
   // The process-wide singleton serves the default data dir; a custom dir (tests) gets its own copy.
   const data = opts.dataDir ? loadData(dataDir, { log }) : getData({ dir: dataDir, log });
@@ -610,6 +621,21 @@ export async function startServer(opts = {}) {
     if (opts[k] != null) lobbyOptions[k] = opts[k];
   }
   const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions });
+  // Resume the last state before listening: every reconnecting client is recognized by its token right away.
+  const persister = store ? new Persister({ store, registry, lobby, log, now: opts.now, saveMs }) : null;
+  if (store && opts.resume !== false) {
+    try {
+      const doc = await store.load();
+      if (doc) {
+        const stats = restoreServer({ doc, registry, lobby, log, now: Date.now() });
+        log.info(`[persist] state loaded (${stats.sessions} session(s), ${stats.rooms} room(s), ${stats.matches} match(es), ${stats.expired} expired${stats.droppedSeats ? `, ${stats.droppedSeats} seat(s) dropped` : ''})`);
+      } else {
+        log.info('[persist] no saved state in Redis — starting fresh');
+      }
+    } catch (e) {
+      log.warn('[persist] could not load the saved state — starting fresh', e);
+    }
+  }
   const network = new Network({ registry, handler: lobby, log, options: netOptions });
   const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log, cdnBase: assetsCdn });
   const startedAt = Date.now();
@@ -637,6 +663,7 @@ export async function startServer(opts = {}) {
       sendJson(req, res, 200, {
         ok: true, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
+        persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.matchDocs.size } : null,
         assetsCdn: assetsCdn || null,
       });
       return;
@@ -684,9 +711,11 @@ export async function startServer(opts = {}) {
     });
   } catch (e) {
     network.close(); // stop heartbeat/sweep timers of the half-built server
+    persister?.stop();
     throw e;
   }
   server.on('error', (e) => log.error('[http] server error', e));
+  persister?.start();
 
   const addr = server.address();
   const actualPort = typeof addr === 'object' && addr ? addr.port : port;
@@ -696,6 +725,12 @@ export async function startServer(opts = {}) {
   async function close() {
     if (closing) return closing;
     closing = (async () => {
+      // the state (match checkpoints included) is written while the rooms still exist, then the rooms are disposed
+      // (room.closed) and only then are the sockets closed (1001: clients should not auto-reconnect)
+      if (persister) {
+        const ok = await persister.shutdown('shutdown');
+        log.info?.(`[persist] final state ${ok ? 'saved' : 'NOT saved (Redis unavailable)'}`);
+      }
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       network.close();
       await new Promise((resolve) => {
@@ -704,11 +739,12 @@ export async function startServer(opts = {}) {
         setTimeout(() => { server.closeAllConnections?.(); }, 500).unref();
       });
       try { wss.close(); } catch { /* ignore */ }
+      try { await store?.close(); } catch { /* ignore */ }
     })();
     return closing;
   }
 
-  return { port: actualPort, host, url, server, wss, lobby, network, registry, close };
+  return { port: actualPort, host, url, server, wss, lobby, network, registry, store: store || null, persister, close };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -740,6 +776,7 @@ async function main() {
   if (srv.host === '0.0.0.0' || srv.host === '::') {
     for (const u of lanUrls(srv.port)) console.log(`  LAN:     ${u}`);
   }
+  console.log(`  State:   ${srv.persister ? `Redis (${srv.store.label}, every ${Math.round(srv.persister.saveMs / 1000)} s)` : 'memory only (set SP_REDIS_URL to keep sessions and matches across restarts)'}`);
   console.log('  Internet: cloudflared tunnel --url ' + `http://localhost:${srv.port}` + '\n');
 
   let stopping = false;

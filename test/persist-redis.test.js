@@ -1,0 +1,145 @@
+// test/persist-redis.test.js — the Redis store against a *real* server (server/redis.js). Skipped when no Redis answers
+// on SP_TEST_REDIS_URL / 127.0.0.1:6379, so the suite stays green on a machine without one.
+//
+// The tests use a throwaway key prefix and clean up after themselves; nothing else in the database is touched.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import net from 'node:net';
+
+import { StateStore, parseRedisConfig, openStoreFromEnv } from '../server/redis.js';
+import { startServer } from '../server/index.js';
+import { StubMatch } from '../server/match/StubMatch.js';
+import { TestClient } from './helpers/wsClient.js';
+
+const quietLog = { info() {}, warn() {}, error() {}, debug() {} };
+const REDIS_URL = process.env.SP_TEST_REDIS_URL || 'redis://127.0.0.1:6379/15';
+
+/** Is a TCP port answering? (fast, so an absent Redis skips instead of clamping the suite) */
+function reachable(url) {
+  return new Promise((resolve) => {
+    let opts;
+    try {
+      const u = new URL(url);
+      opts = { host: u.hostname, port: Number(u.port) || 6379 };
+    } catch { resolve(false); return; }
+    const sock = net.connect({ ...opts, timeout: 400 });
+    const done = (ok) => { try { sock.destroy(); } catch { /* ignore */ } resolve(ok); };
+    sock.once('connect', () => done(true));
+    sock.once('timeout', () => done(false));
+    sock.once('error', () => done(false));
+  });
+}
+
+const available = await reachable(REDIS_URL);
+const PREFIX = `sptest:${process.pid}:${Date.now().toString(36)}:`;
+
+function store(name = 'state') {
+  return new StateStore({ url: REDIS_URL, prefix: PREFIX, ttlSec: 120, name, log: quietLog });
+}
+
+// ---------------------------------------------------------------------------------------------------
+// configuration (no Redis needed)
+// ---------------------------------------------------------------------------------------------------
+
+test('parseRedisConfig reads the environment and ignores nonsense', () => {
+  assert.equal(parseRedisConfig({}), null);
+  assert.equal(parseRedisConfig({ SP_REDIS_URL: '' }), null);
+  assert.equal(parseRedisConfig({ SP_REDIS_URL: 'not-a-url' }), null);
+  const a = parseRedisConfig({ SP_REDIS_URL: 'redis://redis:6379/0' });
+  assert.deepEqual(a, { url: 'redis://redis:6379/0', prefix: 'stronghold:', ttlSec: 90_000 });
+  const b = parseRedisConfig({ REDIS_URL: 'rediss://user:pw@host:6380/2', SP_REDIS_PREFIX: 'sp:', SP_REDIS_TTL: '3600' });
+  assert.equal(b.url, 'rediss://user:pw@host:6380/2');
+  assert.equal(b.prefix, 'sp:');
+  assert.equal(b.ttlSec, 3600);
+  assert.equal(parseRedisConfig({ SP_REDIS_URL: 'redis://h:1', SP_REDIS_TTL: '5' }).ttlSec, 90_000, 'a short TTL falls back');
+  assert.equal(openStoreFromEnv({ env: {} }), null);
+  const s = openStoreFromEnv({ env: { SP_REDIS_URL: 'redis://h:1' }, log: quietLog });
+  assert.ok(s instanceof StateStore);
+  assert.equal(s.key, 'stronghold:state');
+  assert.equal(s.label, 'redis://h:1');
+});
+
+test('a store that cannot connect degrades instead of throwing or hanging', async () => {
+  // port 1 never answers: the connect attempt must give up on its own (node-redis would otherwise retry forever)
+  const dead = new StateStore({ url: 'redis://127.0.0.1:1/0', prefix: PREFIX, log: quietLog, connectTimeoutMs: 400, commandTimeoutMs: 400 });
+  const started = Date.now();
+  assert.equal(await dead.load({ attempts: 1, retryMs: 10 }), null);
+  assert.equal(await dead.save({ a: 1 }), false);
+  assert.ok(dead.failures > 0, 'the failure was recorded');
+  assert.ok(Date.now() - started < 5000, `gave up quickly (${Date.now() - started} ms)`);
+  await dead.close();
+});
+
+// ---------------------------------------------------------------------------------------------------
+// against a real Redis
+// ---------------------------------------------------------------------------------------------------
+
+test('save/load round trip, TTL and clear', { skip: !available && `no Redis at ${REDIS_URL}` }, async () => {
+  const s = store('roundtrip');
+  try {
+    assert.equal(await s.load(), null, 'nothing saved yet');
+    const doc = { v: 1, rooms: [{ code: 'ABCD' }], nested: { list: [1, 2, { deep: true }] }, text: '卫戍协议' };
+    assert.equal(await s.save(doc), true);
+    assert.deepEqual(await s.load(), doc);
+    const raw = await s.client.ttl(s.key);
+    assert.ok(raw > 0 && raw <= 120, `ttl is set (${raw})`);
+    assert.equal(await s.clear(), true);
+    assert.equal(await s.load(), null);
+  } finally {
+    await s.clear();
+    await s.close();
+  }
+});
+
+test('a restart through Redis keeps rooms and tokens', { skip: !available && `no Redis at ${REDIS_URL}` }, async (t) => {
+  // startServer owns the store it is given (it closes it on shutdown), so every boot gets its own handle
+  const servers = [];
+  const cleanup = [];
+  const boot = async () => {
+    const srv = await startServer({ port: 0, quiet: true, store: store('server'), MatchClass: StubMatch, log: quietLog });
+    servers.push(srv);
+    return srv;
+  };
+  const probe = () => { const p = store('server'); cleanup.push(p); return p; };
+  t.after(async () => {
+    for (const srv of servers) await srv.close().catch(() => {});
+    for (const p of cleanup) { await p.clear().catch(() => {}); await p.close().catch(() => {}); }
+  });
+
+  const srvA = await boot();
+  const c1 = await TestClient.connect(`ws://127.0.0.1:${srvA.port}/ws`);
+  const w1 = await c1.hello('Redis Alice');
+  const c2 = await TestClient.connect(`ws://127.0.0.1:${srvA.port}/ws`);
+  const w2 = await c2.hello('Redis Bob');
+  assert.equal((await c1.request({ t: 'room.create', mode: 'coop', difficulty: 'NORMAL' })).t, 'ok');
+  const code = (await c1.waitFor('room.state')).code;
+  await c2.request({ t: 'room.join', code });
+  await c1.waitFor('room.state', (x) => x.seats.filter(Boolean).length === 2);
+  await c1.close();
+  await c2.close();
+  await srvA.close();
+
+  // the document is really in Redis (not only in the process that wrote it)
+  const stored = await probe().load();
+  assert.ok(stored, 'the shutdown flushed the state into Redis');
+  assert.equal(stored.v, 1);
+  assert.equal(stored.rooms[0].code, code);
+  assert.equal(stored.sessions.length, 2);
+
+  const srvB = await boot();
+  const back = await TestClient.connect(`ws://127.0.0.1:${srvB.port}/ws`);
+  const w = await back.hello('Redis Alice', w1.token);
+  assert.equal(w.resumed, true);
+  assert.equal(w.playerId, w1.playerId);
+  const state = await back.waitFor('room.state');
+  assert.equal(state.code, code);
+  assert.equal(state.seats.filter(Boolean).length, 2);
+  assert.equal(state.hostId, w1.playerId);
+  const other = await TestClient.connect(`ws://127.0.0.1:${srvB.port}/ws`);
+  const wOther = await other.hello('Redis Bob', w2.token);
+  assert.equal(wOther.playerId, w2.playerId);
+  await back.waitFor('room.state', (x) => x.seats.filter(Boolean).length === 2);
+  await back.close();
+  await other.close();
+});

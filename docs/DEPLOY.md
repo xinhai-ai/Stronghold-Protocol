@@ -13,7 +13,7 @@
 | 磁盘 | 素材约 250 MB（`public/assets`）+ 依赖约 125 MB（`node_modules`）；可选的本地提取约 40 MB（`.venv-extract`）+ 70 MB 贴图。 |
 | 玩家设备 | 支持 WebGL 的现代浏览器（Chrome / Edge / Firefox / Safari 最新版），电脑或手机平板（横屏）。老旧设备可在设置里调低画质或访问 `/?board=2d`。 |
 
-服务器**无状态**：房间和对局只存在内存里，没有数据库和存档，**不需要备份**。重启服务器会结束正在进行的对局（包括断线后本可在 24 小时内回来继续的独立模拟）。也可以把素材放到 CDN，见 §3.2。
+服务器默认**无状态**：房间和对局只存在内存里，没有数据库和存档，不需要备份。重启服务器会结束正在进行的对局（包括断线后本可在 24 小时内回来继续的独立模拟）。想让容器/进程重启后玩家仍回到原座位，设置 `SP_REDIS_URL` 使用你自己的 Redis 做状态存档，见 §3.1「断点续玩」；也可以把素材放到 CDN，见 §3.2。
 
 ## 1. Windows 小主机：一步步
 
@@ -187,7 +187,7 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
   -v "$PWD/public/assets:/app/public/assets:ro" stronghold-protocol
 ```
 
-镜像基于 `node:22-alpine`，多阶段构建，只含生产依赖；`public/vendor` 在构建时生成。`.dockerignore` 排除了 `public/assets`（不会把宿主机素材打进构建上下文）；`public/fonts`、`data/assets.json` 和 `data/local-assets.json` 若存在会被复制进去。环境变量同 README（`-e SP_VERIFY=sample`、`-e SP_ASSETS_CDN=https://cdn.example.com/stronghold` 等）。健康检查：`GET /healthz`。
+镜像基于 `node:22-alpine`，多阶段构建，只含生产依赖；`public/vendor` 在构建时生成。`.dockerignore` 排除了 `public/assets`（不会把宿主机素材打进构建上下文）；`public/fonts`、`data/assets.json` 和 `data/local-assets.json` 若存在会被复制进去。环境变量同 README（`-e SP_VERIFY=sample`、`-e SP_REDIS_URL=redis://redis:6379/0`、`-e SP_ASSETS_CDN=https://cdn.example.com/stronghold` 等）。健康检查：`GET /healthz`。
 
 docker compose 示例：
 
@@ -202,6 +202,50 @@ services:
     environment:
       SP_VERIFY: "off"
 ```
+
+### 3.1 断点续玩：Redis 会话 / 对局恢复
+
+设置 `SP_REDIS_URL`（例如 `redis://127.0.0.1:6379/0`）后，服务器每 `SP_REDIS_SAVE_MS`（默认 10 秒）以及**优雅关闭时**把一份状态文档写入 Redis，启动时读回。容器 `docker restart` / `docker compose up -d` 之后，玩家用浏览器重开页面（同一浏览器、同一令牌）就回到原房间原座位。
+
+| 会恢复 | 不会恢复 |
+|---|---|
+| 玩家身份：`playerId` + 重连令牌、昵称、干员调配（DESIGN §16） | 具体的 Socket：客户端用令牌重连后被服务器重新绑定 |
+| 房间：代号、模式、难度、房主、座位（真人 + AI）、准备状态、房间的对局计数 | 重连窗口已经过期的会话（同盟 10 分钟 / 独立模拟 24 小时）—— 其房间若因此没人也会一并丢弃 |
+| 进行中的对局：回合数、经济、棋盘 / 手牌 / 装备、生命、策略与机变选择、共享池剩余数量、随机数进度、当前阶段 | 战斗本身：检查点只在状态可序列化的阶段生成（信息确认 / 策略选择 / 机变 / 回合开始 / 休整期），所以**在战斗中被打断的对局会从该回合的休整期继续**：阵容与经济原样保留，这一回合重打（战斗 ID 会跳到新的一段，旧上报不会被误收） |
+| | 独立模拟的“暂停”（`g.pause`）：恢复后对局是运行状态；当前阶段的剩余时间按检查点记录继续走，休整期至少还剩 20 秒 |
+| | 服务器进程内的其他一切：日志、错误统计、诊断信息 |
+
+把 Redis 一起用 compose 起来（`appendonly yes` 让 Redis 自己重启也不丢状态）：
+
+```yaml
+services:
+  stronghold:
+    build:
+      context: .
+      args: { FETCH_ASSETS: "1" }
+    ports: ["3000:3000"]
+    restart: unless-stopped
+    depends_on: [redis]
+    environment:
+      SP_REDIS_URL: redis://redis:6379/0
+      SP_VERIFY: "off"
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    volumes:
+      - redis-data:/data
+volumes:
+  redis-data:
+```
+
+要点：
+
+- **Redis 只是存档，不是必需**：连不上或中途挂掉时游戏照常运行（只会在日志里看到 `[redis] …` 警告），只是重启不再恢复；服务器会自己重试。
+- 状态键默认前缀 `stronghold:`、TTL 25 小时（`SP_REDIS_TTL`，兜底清理）。多个实例共用一个 Redis 时用 `SP_REDIS_PREFIX` 分开。
+- 不要把 Redis 配成 `maxmemory-policy allkeys-lru`，否则状态键可能被淘汰。
+- 想清空存档（所有人从头开始）：删除状态键即可，`redis-cli DEL stronghold:state`。
+- 验证：`GET /healthz` 会返回 `persist: { redis: true, writes, checkpoints }`；启动日志会打印 `State: Redis (…)` 与 `[persist] state loaded (…)`。
 
 ### 3.2 素材放 CDN
 
@@ -258,4 +302,6 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 | 本地提取失败 | 不影响游戏。确认客户端已下载全部资源；Python 版本太新导致依赖安装失败时，安装 Python 3.12 后删除 `.venv-extract` 再运行 `node tools/setup.mjs --local` |
 | 3D 棋盘没出现 | 需要本地提取的棋盘贴图（`node tools/doctor.mjs` 会显示「3D 棋盘可用」），以及支持 WebGL2 的浏览器 |
 | 断线 | 同盟模拟 10 分钟内、独立模拟 24 小时内（`config.constants.singleReconnectTime`）用同一浏览器重新打开页面，自动回到原座位。同盟掉线期间按原阵容自动作战、到时自动准备（不会代为购买；想让 AI 代打请用「离开模拟 → 暂离（AI 托管）」）；独立模拟不计时，等你回来 |
+| 重启（容器 / 进程）后玩家回不到房间 | 没设 `SP_REDIS_URL` 时这是预期行为（纯内存）。设了之后看启动日志的 `State:` 行和 `[persist] state loaded (…)`；`GET /healthz` 的 `persist.writes` 应持续增长。宕机超过重连窗口（同盟 10 分钟 / 独立 24 小时）的会话必然丢弃 |
+| 日志刷 `[redis] connect failed / write failed` | Redis 不可达或权限不对；游戏不受影响。确认地址（`redis://主机:端口/库号`）、有没有设密码（`redis://:密码@主机:6379/0`）、容器网络里主机名是否是服务名 |
 | 设为 CDN 后素材 404 / 控制台报跨域 | CDN 目录结构必须与 `public/assets/` 一致；Spine 的 `.skel` / `.atlas` 靠 `fetch` 读取，需要 `Access-Control-Allow-Origin`。先直接访问 `<CDN>/assets/char/avatar/char_002_amiya.png` 确认能打开 |

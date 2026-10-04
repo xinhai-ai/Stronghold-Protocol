@@ -11,7 +11,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { startServer, parseRange, acceptsGzip, parseTrustProxy, parseEnvLimit } from '../server/index.js';
+import { startServer, parseRange, acceptsGzip, parseTrustProxy, parseEnvLimit, parseWsCompression } from '../server/index.js';
 import { loadData, lookup, getChess, getBond, getBand, getMode, getConfig, INDEXED_FILES } from '../server/data.js';
 import * as dataModule from '../server/data.js';
 import { CODE_ALPHABET, BOT_NAMES, LOBBY_DEFAULTS } from '../server/lobby.js';
@@ -978,6 +978,25 @@ describe('websocket lobby', () => {
     assert.ok(h.rooms >= 1);
     assert.ok(h.sockets >= 1);
     assert.ok(h.sessions >= 1);
+  });
+
+  test('WebSocket permessage-deflate is enabled by default, configurable, and reported by healthz', async () => {
+    assert.equal(parseWsCompression(undefined), true);
+    assert.equal(parseWsCompression('off'), false);
+    assert.equal(parseWsCompression('0'), false);
+    assert.equal(parseWsCompression('yes'), true);
+    const on = await startServer({ port: 0, host: '127.0.0.1', quiet: true, store: null, wsCompression: true });
+    const off = await startServer({ port: 0, host: '127.0.0.1', quiet: true, store: null, wsCompression: false });
+    const a = await TestClient.connect(`ws://127.0.0.1:${on.port}/ws`);
+    const b = await TestClient.connect(`ws://127.0.0.1:${off.port}/ws`);
+    try {
+      assert.match(a.ws.extensions, /permessage-deflate/);
+      assert.equal(b.ws.extensions, '');
+      const onHealth = JSON.parse((await httpReq(on.port, '/healthz')).body.toString());
+      const offHealth = JSON.parse((await httpReq(off.port, '/healthz')).body.toString());
+      assert.deepEqual(onHealth.websocket, { compression: true, threshold: 1024 });
+      assert.deepEqual(offHealth.websocket, { compression: false, threshold: 1024 });
+    } finally { await a.close(); await b.close(); await on.close(); await off.close(); }
   });
 });
 

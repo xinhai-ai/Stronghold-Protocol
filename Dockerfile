@@ -19,6 +19,7 @@
 #       SP_ASSETS_CDN (https://cdn.example.com/stronghold — serve /assets/… from a CDN, docs/DEPLOY.md §3.2), DEBUG
 #       SP_WORKERS (auto, up to 8; 0 disables), SP_WORKER_QUEUE (256), SP_WORKER_TIMEOUT_MS (120000)
 #       SP_ANNOUNCEMENTS_FILE (/app/config/announcements.json; mount /app/config read-only for live edits)
+#       SP_WS_COMPRESSION (on by default; off/0 disables WebSocket permessage-deflate)
 
 ARG NODE_IMAGE=node:22-alpine
 

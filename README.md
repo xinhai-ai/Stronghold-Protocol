@@ -115,6 +115,7 @@ npm start          # 启动服务器：http://localhost:3000
 | `SP_WORKER_QUEUE` | `256` | 等待计算任务的队列上限（不含执行中的任务）；满时必要计算退回分片执行，抽样校验跳过 |
 | `SP_WORKER_TIMEOUT_MS` | `120000` | 单个计算任务的超时，包含排队时间；超时的执行线程会终止并按需重建 |
 | `SP_ANNOUNCEMENTS_FILE` | `config/announcements.json` | 全站临时滚动公告配置，修改后约 2 秒自动生效；支持定时、持续时间、等级及撤回，Docker 挂载见 [部署文档](docs/DEPLOY.md#36-全站临时公告) |
+| `SP_WS_COMPRESSION` | 开启 | WebSocket `permessage-deflate` 压缩；默认只压缩不小于 1 KB 的消息。设置为 `off` / `0` 可关闭 |
 | `TRUST_PROXY` | `auto` | 是否信任 `X-Forwarded-For` 等转发头：`auto` 只信任来自本机 / 内网的代理；`1` 总是；`0` 从不 |
 | `SP_REDIS_URL` | 空 | 设置后把会话、房间与对局检查点存入 Redis（容器重启后玩家回到原座位，见 [docs/DEPLOY.md](docs/DEPLOY.md)「断点续玩」）；不设置 = 纯内存、行为与以前完全一致 |
 | `SP_REDIS_PREFIX` | `stronghold:` | Redis 键前缀（多个实例共用一个 Redis 时区分） |

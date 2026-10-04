@@ -13,6 +13,8 @@
 | 磁盘 | 素材约 270 MB（`public/assets`）+ 依赖约 125 MB（`node_modules`）；可选的本地提取约 40 MB（`.venv-extract`）+ 70 MB 贴图（见第 6 节）。 |
 | 玩家设备 | 支持 WebGL 的现代浏览器（Chrome / Edge / Firefox / Safari 最新版），电脑或手机平板（横屏）。老旧设备可在设置里调低画质或访问 `/?board=2d`。 |
 
+WebSocket 默认启用 `permessage-deflate`，仅压缩不小于 1 KB 的消息，并关闭客户端和服务端上下文复用。大型 `m.public` / `b.snap` 消息通常能显著减少带宽，小消息不会增加压缩开销；压缩会消耗 CPU，真实容量应在目标机器上压测。设置 `SP_WS_COMPRESSION=off` 或 `0` 可关闭；`/healthz.websocket` 会报告当前开关和阈值。
+
 服务器默认**无状态**：房间和对局只存在内存里，没有数据库和存档，不需要备份。重启服务器会结束正在进行的对局（包括断线后本可在 24 小时内回来继续的独立模拟）。想让容器/进程重启后玩家仍回到原座位，设置 `SP_REDIS_URL` 使用你自己的 Redis 做状态存档，见 §3.1「断点续玩」；也可以把素材放到 CDN，见 §3.2。
 
 ## 1. Windows 小主机：一步步

@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, modeIdFor } from '../../../shared/constants.js';
-import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
+import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, OnlineCount, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
 import { LoadoutButton } from './loadout.js';
@@ -231,6 +231,7 @@ function MatchQueuePanel({ queue, onCancel }) {
 export function LobbyScreen() {
   const me = useStore((s) => s.me, shallowEqual);
   const conn = useStore((s) => s.connection, shallowEqual);
+  const presence = useStore((s) => s.presence, shallowEqual);
   const matchQueue = useStore((s) => s.ui.matchQueue);
   useData('config');
   const [roomMode, setRoomMode] = useState(() => (loadPref('lobby.mode', 'coop') === 'solo' ? 'solo' : 'coop'));
@@ -285,6 +286,7 @@ export function LobbyScreen() {
         <h1 class="topbar__title">选择模拟协议</h1>
       </div>
       <div class="topbar__right">
+        <${OnlineCount} online=${presence.online} />
         <${GuideButton} class="lobby-guide" variant="secondary" />
         <${LoadoutButton} from="lobby" size="sm" class="lobby-loadout" />
         <div class="me-chip">

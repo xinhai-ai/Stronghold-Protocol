@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, MAX_SEATS } from '../../../shared/constants.js';
 import {
-  html, Button, Icon, MicroLabel, PingPill, AvatarFrame, DifficultyTag, DifficultyIcon, Tooltip, confirmDialog, doctorNo,
+  html, Button, Icon, MicroLabel, PingPill, OnlineCount, AvatarFrame, DifficultyTag, DifficultyIcon, Tooltip, confirmDialog, doctorNo,
 } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
@@ -189,6 +189,7 @@ export function RoomScreen() {
   const room = useStore((s) => s.room);
   const me = useStore((s) => s.me, shallowEqual);
   const conn = useStore((s) => s.connection, shallowEqual);
+  const presence = useStore((s) => s.presence, shallowEqual);
   const [busy, setBusy] = useState(null);
   const [fillBots, setFillBots] = useState(true);
   const [, tickMatchClock] = useState(0);
@@ -276,6 +277,7 @@ export function RoomScreen() {
         <h1 class="topbar__title">${coop ? '同盟模拟' : '独立模拟'}<span class="topbar__sep"></span><${DifficultyTag} difficulty=${room.difficulty} size="lg" /></h1>
       </div>
       <div class="topbar__right">
+        <${OnlineCount} online=${presence.online} />
         ${coop ? html`<${InviteBox} code=${room.code} />` : html`<div class="solo-note"><${MicroLabel}>SINGLE OPERATOR<//><span>仅限 1 名博士</span></div>`}
       </div>
     </header>

@@ -265,17 +265,19 @@ export function TitleScreen() {
           <${FullscreenButton} class="title-fs" />
         </div>
       </div>
+      <div class="title-about-wrap">
+        <${Button} variant="ghost" size="sm" class="title-about-button" aria-haspopup="dialog"
+          onClick=${() => setAboutOpen(true)}>关于本服务器<//>
+      </div>
     </main>
 
     <div class="title-preload"><${ResourceLauncher} enabled=${settings.preload} onChange=${(v) => updateSettings({ preload: v })} /></div>
 
     <footer class="title-foot">
       <span>非官方同人复刻 · 游戏素材版权归 上海鹰角网络 / Yostar 所有</span>
-      <${Button} variant="ghost" size="sm" class="title-about-button" aria-haspopup="dialog"
-        onClick=${() => setAboutOpen(true)}>关于<//>
       <${MicroLabel}>v${APP_VERSION} · WEB SIMULATION<//>
     </footer>
-    <${Modal} open=${aboutOpen} title="关于本站" class="title-about" width="min(7.4rem, 94vw)"
+    <${Modal} open=${aboutOpen} title="关于本服务器" class="title-about" width="min(7.4rem, 94vw)"
       onClose=${() => setAboutOpen(false)}
       actions=${html`<${Button} variant="primary" data-autofocus onClick=${() => setAboutOpen(false)}>关闭<//>`}>
       <dl class="title-about__links">
@@ -284,10 +286,19 @@ export function TitleScreen() {
           <dd><a href="mailto:linxia@fastmail.com">linxia@fastmail.com</a></dd>
         </div>
         <div>
-          <dt>GitHub 仓库</dt>
+          <dt>问题反馈</dt>
+          <dd><a href="https://space.bilibili.com/401522003" target="_blank" rel="noopener noreferrer">B 站：临夏俨然</a></dd>
+          <p class="title-about__hint">如果遇到服务器方面的问题，可以通过 B 站私信或发送邮件联系。</p>
+        </div>
+        <div>
+          <dt>本服务器使用的 GitHub 仓库</dt>
           <dd><a href="https://github.com/xinhai-ai/Stronghold-Protocol" target="_blank" rel="noopener noreferrer">https://github.com/xinhai-ai/Stronghold-Protocol</a></dd>
         </div>
       </dl>
+      <div class="title-about__disclaimer">
+        <h3>免责声明</h3>
+        <p>本站为纯公益的非官方同人站点，不收取任何费用，与游戏官方及其关联方无关。</p>
+      </div>
     <//>
   </div>`;
 }

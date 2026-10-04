@@ -253,6 +253,7 @@
   color: var(--text-dim);
 }
 
+.title-about-wrap { display: flex; justify-content: center; margin-top: .1rem; }
 .title-about-button { flex: none; height: max(.4rem, 28px); font-size: max(.16rem, 12px); }
 .title-about .modal__title { font-size: max(.26rem, 18px); }
 .title-about .modal__actions .btn { height: max(.48rem, 32px); font-size: max(.18rem, 13px); }
@@ -261,6 +262,10 @@
 .title-about__links dd { margin: 0; font-size: max(.2rem, 14px); line-height: 1.7; }
 .title-about__links a { color: var(--mint-400); overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: .15em; }
 .title-about__links a:hover { color: var(--text-hi); }
+.title-about__hint { margin: .06rem 0 0; color: var(--text-lo); font-size: max(.16rem, 13px); line-height: 1.6; }
+.title-about__disclaimer { margin-top: .28rem; padding-top: .18rem; border-top: 1px solid var(--line); }
+.title-about__disclaimer h3 { margin: 0 0 .08rem; color: var(--text-lo); font-size: max(.16rem, 13px); font-weight: 700; }
+.title-about__disclaimer p { margin: 0; color: var(--text-md); font-size: max(.16rem, 13px); line-height: 1.7; }
 
 /* ---- offline resource preload (docs/ASSETS.md「Preload」): the home screen's own way in ---------------- */
 .title-preload { position: absolute; z-index: 3; right: .44rem; bottom: .86rem; }

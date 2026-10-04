@@ -7,8 +7,10 @@
 //
 // Left: roster of the 112 visible chess (tier / class / bond filters, search, 仅看已调整) — each card shows the equipped
 // skill (S1–S3) and, when changed, the elite's module badge. Right: the selected chess — skills (icon, name, 默认,
-// SP recovery, 初始 / 消耗 SP, duration, description at 普通 Lv.4 or 精锐 Lv.7) and the elite's modules (不装备 / X / Y …
-// with the stat bonus, the trait upgrade and the talent changes), 恢复默认; 全部恢复默认 in the top bar.
+// SP recovery, 初始 / 消耗 SP, duration, description at 普通 Lv.4 or 精锐 Lv.7), 局内数值 (the stats, 攻击范围, 特性 and
+// 天赋 the chosen variant — 精锐 first, 普通 on the toggle — fights with under the chosen skill and module: the detail
+// card's own block and pure functions, GitHub issue #64) and the elite's modules (不装备 / X / Y … with the stat bonus,
+// the trait upgrade and the talent changes), 恢复默认; 全部恢复默认 in the top bar.
 // The loadout lives in ui/loadoutSync.js (localStorage + room.loadout); the model is ui/loadoutModel.js.
 // Keyboard: Esc closes, ←/→ move through the (filtered) roster when focus is not in the search field.
 
@@ -16,6 +18,8 @@ import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.
 import { html, Icon, MicroLabel, Button, TierChip, TextField, Countdown, Spinner, confirmDialog, hasDeadline } from '../ui/components.js';
 import { Img, RichText, UnitThumb } from '../ui/gameComponents.js';
 import { chessAvatarUrl, chessPortraitUrl, subProfIconUrl, bondIconUrl, moduleTypeIconUrl } from '../ui/assetUrls.js';
+import { chessStatsBlock, traitText, chessTalents } from '../ui/detailPanel.js';
+import { chessLoadout } from '../ui/gameLogic.js';
 import { data, useData, localAsset } from '../data.js';
 import { useStore } from '../store.js';
 import { PHASE } from '../../../shared/constants.js';
@@ -172,8 +176,60 @@ function ModuleInfo({ m, golden, opt }) {
   </div>`;
 }
 
+const getChessRec = (id) => data.lookup('chess', id);
+
+/**
+ * What 局内数值 shows (GitHub issue #64): the chess variant — the 精锐 record when asked for and the chess has one, else
+ * the normal one — as the stored loadout makes it. chessLoadout (ui/gameLogic.js) resolves the skill and module the way
+ * the in-match detail card and the sim do (shared/loadoutRecord.js): the elite's chosen module's stats / 特性 / talents
+ * (不装备: the base ones), the chosen skill's passive range; a normal chess has no module, the skill does not change its
+ * stats. Nothing is recomputed here.
+ * @param {any} base normal chess record @param {any} golden its elite record or null
+ * @param {Record<string, any>} entries the stored loadout @param {'normal'|'elite'} level
+ * @param {(id: string) => any} getChess
+ * @returns {{ elite: boolean, chess: any, lo: any, record: any, trait: string, talents: any[] } | null} null without a record
+ */
+export function statsPreview(base, golden, entries, level, getChess) {
+  const elite = level === 'elite' && !!golden;
+  const chess = elite ? golden : base;
+  if (!chess) return null;
+  const lo = chessLoadout(chess, entries, getChess);
+  const record = lo?.record || chess;
+  // (the card's own rule: the 特性 line exists when the chess has one; its text follows the chosen module)
+  return { elite, chess, lo, record, trait: chess.trait?.desc ? traitText(chess, !!chess.isGolden, lo) || '' : '', talents: chessTalents(record) };
+}
+
+/**
+ * 局内数值: the stats, 攻击范围, 特性 and 天赋 of the selected chess under its chosen skill and module — the detail
+ * card's stats block (ui/detailPanel.js chessStatsBlock) without live numbers, so what a player reads here is what the
+ * shop / board card shows before a battle (not the equipment, bond or skill-cast changes of a running match). The
+ * toggle picks the 普通 or the 精锐 record; 精锐 is the default because the module only exists there.
+ * @param {{ base: any, golden: any, entries: Record<string, any>, level: 'normal'|'elite', onLevel: (l: 'normal'|'elite') => void, getChess?: (id: string) => any }} props
+ */
+export function LoadoutStats({ base, golden, entries, level, onLevel, getChess = getChessRec }) {
+  const pv = statsPreview(base, golden, entries, level, getChess);
+  if (!pv) return null;
+  return html`<section class="lo-sec lo-sec--stats" aria-label="局内数值" data-variant=${pv.elite ? 'elite' : 'normal'}>
+    <header class="lo-sec__head">
+      <h3>局内数值<${MicroLabel}>STATS<//></h3>
+      <div class="lo-seg" role="tablist" aria-label="数值版本">
+        <button type="button" role="tab" aria-selected=${pv.elite ? 'false' : 'true'} class=${cx(!pv.elite && 'is-on')} data-variant="normal" onClick=${() => onLevel('normal')}>普通</button>
+        <button type="button" role="tab" aria-selected=${pv.elite ? 'true' : 'false'} class=${cx(pv.elite && 'is-on')} data-variant="elite" disabled=${!golden} onClick=${() => onLevel('elite')}>精锐</button>
+      </div>
+    </header>
+    ${chessStatsBlock({ rec: pv.record, chess: pv.chess })}
+    ${pv.trait || pv.talents.length ? html`<div class="lo-minfo lo-minfo--kit">
+      ${pv.trait ? html`<div class="lo-minfo__row"><span class="lo-minfo__k">特性</span><${RichText} class="lo-minfo__v" text=${pv.trait} /></div>` : null}
+      ${pv.talents.map((t, i) => html`<div key=${i} class="lo-minfo__row"><span class="lo-minfo__k">天赋</span>
+        <span class="lo-minfo__v"><b class="lo-minfo__tname">${t.name}</b><${RichText} text=${t.descRaw || t.desc || ''} /></span></div>`)}
+    </div>` : null}
+    <p class="lo-stats__cap">${pv.elite ? '数值含所选模组；' : golden ? '普通干员没有模组，所选模组在「精锐」中生效；' : ''}不含技能发动、装备、盟约等局内加成</p>
+  </section>`;
+}
+
 function Detail({ m, chess, golden, entries, onChange, onReset, locked }) {
   const [level, setLevel] = useState('normal');
+  const [statLevel, setStatLevel] = useState('elite'); // 局内数值: the 精锐 shows the chosen module's effect
   const bodyRef = useRef(null);
   useEffect(() => { if (bodyRef.current) bodyRef.current.scrollTop = 0; }, [chess?.chessId]);
   if (!chess) return html`<aside class="lo-detail lo-detail--empty"><p class="t-dim">没有符合条件的干员</p></aside>`;
@@ -214,6 +270,7 @@ function Detail({ m, chess, golden, entries, onChange, onReset, locked }) {
             onPick=${(i) => onChange({ skill: i })} />`)}
         </div>
       </section>
+      <${LoadoutStats} base=${chess} golden=${golden} entries=${entries} level=${statLevel} onLevel=${setStatLevel} />
       ${golden ? html`<section class="lo-sec lo-sec--mod">
         <header class="lo-sec__head">
           <h3>模组<${MicroLabel}>MODULE<//></h3>

@@ -10,7 +10,7 @@
 
 import { useMemo, useState } from '../../vendor/hooks.module.js';
 import { NAME_MAX_LEN, APP_VERSION } from '../../../shared/constants.js';
-import { html, Button, Icon, MicroLabel, TextField, PingPill } from '../ui/components.js';
+import { html, Button, Icon, MicroLabel, TextField, PingPill, Modal } from '../ui/components.js';
 import { GuideButton } from '../ui/guide.js';
 import { toast } from '../ui/toasts.js';
 import { net, identity } from '../net.js';
@@ -186,6 +186,7 @@ export function TitleScreen() {
   const pendingJoin = useStore((s) => s.ui.pendingJoin);
   const settings = useSettings();
   const [name, setName] = useState(() => store.get().me.name || identity.loadName() || '');
+  const [aboutOpen, setAboutOpen] = useState(false);
   const assetsSettled = useData('assets');
   const assets = data.get('assets');
   const backdrop = findUiAsset(assets, BACKDROP_KEYS);
@@ -270,7 +271,23 @@ export function TitleScreen() {
 
     <footer class="title-foot">
       <span>非官方同人复刻 · 游戏素材版权归 上海鹰角网络 / Yostar 所有</span>
+      <${Button} variant="ghost" size="sm" class="title-about-button" aria-haspopup="dialog"
+        onClick=${() => setAboutOpen(true)}>关于<//>
       <${MicroLabel}>v${APP_VERSION} · WEB SIMULATION<//>
     </footer>
+    <${Modal} open=${aboutOpen} title="关于本站" class="title-about" width="min(7.4rem, 94vw)"
+      onClose=${() => setAboutOpen(false)}
+      actions=${html`<${Button} variant="primary" data-autofocus onClick=${() => setAboutOpen(false)}>关闭<//>`}>
+      <dl class="title-about__links">
+        <div>
+          <dt>联系邮箱</dt>
+          <dd><a href="mailto:linxia@fastmail.com">linxia@fastmail.com</a></dd>
+        </div>
+        <div>
+          <dt>GitHub 仓库</dt>
+          <dd><a href="https://github.com/xinhai-ai/Stronghold-Protocol" target="_blank" rel="noopener noreferrer">https://github.com/xinhai-ai/Stronghold-Protocol</a></dd>
+        </div>
+      </dl>
+    <//>
   </div>`;
 }

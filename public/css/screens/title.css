@@ -247,10 +247,20 @@
   bottom: .3rem;
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
+  align-items: center;
+  gap: .18rem;
   font-size: .13rem;
   color: var(--text-dim);
 }
+
+.title-about-button { flex: none; height: max(.4rem, 28px); font-size: max(.16rem, 12px); }
+.title-about .modal__title { font-size: max(.26rem, 18px); }
+.title-about .modal__actions .btn { height: max(.48rem, 32px); font-size: max(.18rem, 13px); }
+.title-about__links { display: flex; flex-direction: column; gap: .24rem; margin: 0; }
+.title-about__links dt { margin-bottom: .08rem; font-size: max(.16rem, 13px); color: var(--text-lo); }
+.title-about__links dd { margin: 0; font-size: max(.2rem, 14px); line-height: 1.7; }
+.title-about__links a { color: var(--mint-400); overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: .15em; }
+.title-about__links a:hover { color: var(--text-hi); }
 
 /* ---- offline resource preload (docs/ASSETS.md「Preload」): the home screen's own way in ---------------- */
 .title-preload { position: absolute; z-index: 3; right: .44rem; bottom: .86rem; }

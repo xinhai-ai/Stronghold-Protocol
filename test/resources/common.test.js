@@ -5,10 +5,11 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  CACHE_NAME, CACHE_PREFIX, HASH_RE, INDEX_PATH, MAX_FILE_BYTES, RESOURCES_FORMAT, TIER_ESSENTIAL, TIER_REST, cacheName,
-  absoluteUrl, formatBytes, indexUrl, isQuotaError, isResourcePath, isResourceUrl, resourceType, validateManifest,
-  rangeResponse, checkAbort, abortError,
+  CACHE_NAME, CACHE_PREFIX, HASH_RE, INDEX_PATH, MAX_FILE_BYTES, MEDIA_PREFIX, AUDIO_EXTS, RESOURCES_FORMAT,
+  TIER_ESSENTIAL, TIER_REST, cacheName, absoluteUrl, formatBytes, indexUrl, isQuotaError, isResourcePath, isResourceUrl,
+  mediaCandidates, resourceType, validateManifest, rangeResponse, checkAbort, abortError,
 } from '../../public/js/resources/common.js';
+import { MEDIA_PREFIX as SHARED_MEDIA_PREFIX, AUDIO_EXTS as SHARED_AUDIO_EXTS } from '../../shared/media.js';
 
 describe('resource manifest validation', () => {
   test('a well-formed manifest passes and is returned as is', () => {
@@ -78,6 +79,28 @@ describe('resource manifest validation', () => {
     assert.equal(absoluteUrl('https://cdn.example/assets/x.png', 'https://site.example'), 'https://cdn.example/assets/x.png');
     assert.equal(absoluteUrl('::::', 'https://site.example'), 'https://site.example/::::', 'a relative string resolves');
     assert.equal(absoluteUrl('/assets/x.png', 'not a url'), null);
+  });
+
+  test('the extension-less audio route: shared/media.js values, and the canonical files a request resolves to', () => {
+    // One list per side is one list too many: the browser rewrites URLs with shared/media.js, the worker resolves them
+    // back with these, and the server resolves them again with the same values (server/index.js serveMedia).
+    assert.equal(MEDIA_PREFIX, SHARED_MEDIA_PREFIX, 'the route prefix matches shared/media.js');
+    assert.deepEqual([...AUDIO_EXTS], [...SHARED_AUDIO_EXTS], 'the extension list matches shared/media.js, in order');
+    assert.equal(isResourcePath('/media/bgm/act1'), true, 'the worker may answer the audio route from the cache');
+    assert.equal(isResourcePath('/media'), false);
+    assert.equal(isResourceUrl('/media/bgm/act1.mp3'), false, 'the manifest keeps the canonical /assets/audio/… URLs');
+
+    assert.deepEqual(mediaCandidates('/media/bgm/act1'), AUDIO_EXTS.map((e) => `/assets/audio/bgm/act1${e}`));
+    // An explicit extension wins, exactly as in serveMedia (a `.ogg` file is found even though `.mp3` is tried first).
+    assert.deepEqual(mediaCandidates('/media/bgm/act1.ogg'), ['.ogg', ...AUDIO_EXTS.filter((e) => e !== '.ogg')].map((e) => `/assets/audio/bgm/act1${e}`));
+    assert.deepEqual(mediaCandidates('/media/act1.MP3'), AUDIO_EXTS.map((e) => `/assets/audio/act1${e}`), 'the extension is matched case-insensitively');
+    assert.deepEqual(mediaCandidates('/media/a/b/c'), ['.mp3', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.wav'].map((e) => `/assets/audio/a/b/c${e}`), 'subdirectories resolve');
+    for (const no of ['/media/', '/media', '/media/bgm/', '/assets/audio/x.mp3', '/data/assets.json', '/js/main.js', '', null, undefined]) {
+      assert.deepEqual(mediaCandidates(no), [], String(no));
+    }
+    for (const dot of ['/media/../x', '/media/./x', '/media/.hidden', '/media/x/.', '/media/bgm/..', '/media/.ogg']) {
+      assert.deepEqual(mediaCandidates(dot), [], `refused like serveMedia does: ${dot}`);
+    }
   });
 
   test('byte text and abort helpers', () => {

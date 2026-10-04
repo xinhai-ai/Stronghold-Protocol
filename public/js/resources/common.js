@@ -24,6 +24,13 @@ export const TIER_REST = 2;
 export const MANIFEST_URL = '/data/resource-manifest.json';
 export const SW_URL = '/resource-sw.js';
 
+/** The extension-less audio route the game asks audio through (`shared/media.js`; a test keeps the two lists identical).
+ * The manifest keeps the real `/assets/audio/….mp3` URLs — a plain static host (the CDN) cannot resolve `/media/…` — and
+ * the worker maps a `/media/…` request back to the entry it stored (`mediaCandidates`). */
+export const MEDIA_PREFIX = '/media/';
+/** Extensions a `/media/…` request may resolve to, in the order the server tries them (`shared/media.js AUDIO_EXTS`). */
+export const AUDIO_EXTS = Object.freeze(['.mp3', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.wav']);
+
 /** Extension → MIME type (mirrors server/resources.js; used to validate URLs, responses carry their own type). */
 export const RESOURCE_MIME = Object.freeze({
   png: 'image/png',
@@ -54,9 +61,34 @@ export function resourceType(url) {
   return m ? RESOURCE_MIME[m[1].toLowerCase()] || null : null;
 }
 
-/** Whether a request path belongs to the trees the preload may answer from the cache. */
+/** Whether a request path belongs to the trees the preload may answer from the cache: the asset/font trees and the
+ * extension-less audio route (answered from the stored `/assets/audio/…` entry — `mediaCandidates`). */
 export function isResourcePath(pathname) {
-  return /\/(?:assets|fonts)\//.test(String(pathname || ''));
+  const p = String(pathname || '');
+  return /\/(?:assets|fonts)\//.test(p) || p.startsWith(MEDIA_PREFIX);
+}
+
+/**
+ * The canonical files a `/media/…` request may resolve to, as site paths: `/media/bgm/act1` → `/assets/audio/bgm/act1.mp3`
+ * (then `.m4a`, …), and `/media/bgm/act1.ogg` → only that one. Mirrors `serveMedia()` in server/index.js, which refuses
+ * dot segments and dot-leading or dot-trailing names, so those yield nothing here either.
+ * @param {string} pathname
+ * @returns {string[]} empty when the path is not that route
+ */
+export function mediaCandidates(pathname) {
+  const p = String(pathname || '');
+  if (!p.startsWith(MEDIA_PREFIX)) return [];
+  const rest = p.slice(MEDIA_PREFIX.length);
+  if (!rest || rest.endsWith('/')) return [];
+  const segments = rest.split('/').filter((s) => s.length > 0);
+  if (!segments.length || segments.some((s) => s === '.' || s === '..' || s.startsWith('.') || s.endsWith('.'))) return [];
+  const last = segments[segments.length - 1];
+  const given = AUDIO_EXTS.find((e) => last.toLowerCase().endsWith(e)) || '';
+  const stem = given ? last.slice(0, -given.length) : last;
+  if (!stem) return [];
+  const name = [...segments.slice(0, -1), stem].join('/');
+  const order = given ? [given, ...AUDIO_EXTS.filter((e) => e !== given)] : AUDIO_EXTS;
+  return order.map((ext) => `/assets/audio/${name}${ext}`);
 }
 
 /** A file this client may request and cache: a site path or an absolute http(s) CDN URL with a known extension. */
@@ -68,6 +100,9 @@ export function isResourceUrl(url) {
     if (!/^https?:\/\//i.test(url)) return false;
     try { pathname = new URL(url).pathname; } catch { return false; }
   }
+  // The manifest never carries `/media/…` URLs (the worker maps them to these instead): they name no file a static host
+  // can serve, so an entry listing one is a manifest this client will not chase 4 000 times.
+  if (pathname.startsWith(MEDIA_PREFIX)) return false;
   return isResourcePath(pathname) && !!resourceType(pathname);
 }
 

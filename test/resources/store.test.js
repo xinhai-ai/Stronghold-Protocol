@@ -414,6 +414,26 @@ describe('the Service Worker handler', () => {
     assert.equal(await res.text(), 'fresh');
   });
 
+  test('the extension-less audio route is answered from the canonical file the manifest lists', async () => {
+    const caches = new MemoryCaches();
+    await (await caches.open(CACHE_NAME)).put(`${ORIGIN}/assets/audio/bgm/act1.mp3`, new Response('mp3-bytes', { headers: { 'Content-Type': 'audio/mpeg' } }));
+    // Since 0.1.2 the game asks for audio as /media/bgm/act1 (download managers hijack *.mp3 requests, shared/media.js);
+    // what the preload stored is the canonical /assets/audio/bgm/act1.mp3 the manifest lists.
+    const res = await handleResourceRequest(new Request(`${ORIGIN}/media/bgm/act1`), { caches });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'audio/mpeg', 'the stored type is what Web Audio sniffs');
+    assert.equal(await res.text(), 'mp3-bytes');
+  });
+
+  test('the audio route tries the extensions in the server order, and gives up like the server does', async () => {
+    const caches = new MemoryCaches();
+    await (await caches.open(CACHE_NAME)).put(`${ORIGIN}/assets/audio/bgm/act1.ogg`, new Response('ogg-bytes'));
+    assert.equal(await (await handleResourceRequest(new Request(`${ORIGIN}/media/bgm/act1`), { caches })).text(), 'ogg-bytes', 'a later candidate still hits');
+    assert.equal(await handleResourceRequest(new Request(`${ORIGIN}/media/bgm/act2`), { caches }), null, 'nothing stored → the network answers');
+    assert.equal(await handleResourceRequest(new Request(`${ORIGIN}/media/../data/assets.json`), { caches }), null, 'a dot segment is refused, as serveMedia refuses it');
+    assert.equal(await handleResourceRequest(new Request(`${ORIGIN}/media/bgm/act1.png`), { caches }), null, 'not an audio extension: the name keeps its tail, so no entry matches');
+  });
+
   test('anything that is not a cached resource is left to the network (null)', async () => {
     const caches = await cached();
     assert.equal(await handleResourceRequest(new Request(`${ORIGIN}/assets/missing.png`), { caches }), null);

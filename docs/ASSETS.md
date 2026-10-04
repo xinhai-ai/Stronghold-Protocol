@@ -38,9 +38,10 @@ is used.
   rewritten the same way, so a CDN install preloads *from the CDN* (`server/resources.js`). Every entry carries a
   `hash` — the first 12 hex of the SHA-1 of the file's bytes, written by `tools/asset-hashes.mjs` (fetched assets) and
   `tools/local-extract/extract.py` (local-client art) — plus a `tier`:
-  **tier 1 (`essential`)** — fonts, UI sprites, profession / bond / band / item / skill icons, enemy icons, operator and
-  token avatars, audio: what a screen needs in its first second; **tier 2** — portraits, every Spine model
-  (skel/atlas/textures) and the local-client art that is not the board (the bulk of the ~310 MiB). Sizes are included
+  **tier 1 (`essential`)** — fonts, UI sprites (the 36 battle emotes included), profession / bond / band / item / skill
+  icons, enemy icons, operator and token avatars, audio: what a screen needs in its first second; **tier 2** — portraits,
+  every Spine model (skel/atlas/textures), the 19 玩法说明 pages and the local-client art that is not the board (the bulk
+  of the ~330 MiB). Sizes are included
   for the files this install has on disk; a CDN-only install omits them and the client reports progress in files
   instead of bytes. A file without a recorded hash falls back to a synthetic one derived from its source manifest, so
   such a manifest keeps the old "any rebuild invalidates the set" rule.
@@ -58,9 +59,12 @@ is used.
   report what is already cached and re-check when the player returns to them. A single failure is collected and retried next
   time, a quota failure stops the run and says so, and a file above 24 MiB is skipped instead of cached. Downloads run
   in the page (plain `fetch` + `cache.put`, `cache: 'no-store'` so nothing is stored twice).
-- `public/resource-sw.js` (a module Service Worker, registered with `updateViaCache: 'none'`) answers `/assets/**` and
-  `/fonts/**` from that cache — byte ranges included, so audio can seek — and passes everything else (code, `/data/`,
-  API, WebSocket) straight to the network. It needs HTTPS (or localhost); on plain HTTP the switch says why it cannot be
+- `public/resource-sw.js` (a module Service Worker, registered with `updateViaCache: 'none'`) answers `/assets/**`,
+  `/fonts/**` and the extension-less `/media/**` audio route from that cache — byte ranges included, so audio can seek —
+  and passes everything else (code, `/data/`, API, WebSocket) straight to the network. A `/media/bgm/act1` request is
+  resolved to the `/assets/audio/bgm/act1.mp3` entry the manifest lists, trying the extensions in the server's order
+  (`mediaCandidates`, `shared/media.js`); the manifest itself always names the real file, because a plain static host
+  (the CDN) cannot resolve `/media/…`. It needs HTTPS (or localhost); on plain HTTP the switch says why it cannot be
   used instead of failing silently. `updateViaCache: 'none'` matters: it is what makes a new worker (and its module
   imports) reach the browser on the next reload instead of being served from the HTTP cache.
 - 「清理缓存」 deletes every cache the app owns; turning the switch off stops the downloads and keeps what is cached

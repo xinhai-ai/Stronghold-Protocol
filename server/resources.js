@@ -94,14 +94,18 @@ const TIER_ESSENTIAL_SECTIONS = new Set(['ui', 'prof', 'bonds', 'items', 'bands'
 /**
  * Preload tier of a manifest entry, from its key path (`chars.char_002_amiya.spine.front.skel`). Operators, tokens and
  * enemies are split by role — their avatars/icons are essential, portraits and Spine models are the bulk; local-client
- * art is essential only for the board (`map`), everything else is background. Unknown sections default to the
- * background tier: the fast path must stay fast even if the manifest grows a new section.
+ * art is essential only for the board (`map`), and the 玩法说明 pages are background whatever screen they hang off.
+ * Everything else in an unknown section defaults to the background tier: the fast path must stay fast even if the
+ * manifest grows a new section.
  */
 export function tierForPath(keyPath) {
   const p = String(keyPath || '');
   const head = p.split('.')[0];
   if (head === 'chars' || head === 'tokens' || head === 'enemies') return /(^|\.)(?:spine|portrait)/.test(p) ? TIER_REST : TIER_ESSENTIAL;
   if (head === 'local') return /(^|\.)map(\.|$)/.test(p) ? TIER_ESSENTIAL : TIER_REST;
+  // The 19 玩法说明 pages (ui.guide/…) are full screenshots behind their own screen: the fast path is what a battle needs
+  // in its first second. The battle emotes (ui.emoticon/…) are part of the match UI and stay essential with the rest of ui.
+  if (/^ui\.guide(?:\/|\.|$)/.test(p)) return TIER_REST;
   return TIER_ESSENTIAL_SECTIONS.has(head) ? TIER_ESSENTIAL : TIER_REST;
 }
 

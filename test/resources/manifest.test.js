@@ -99,6 +99,7 @@ describe('resource manifest building', () => {
     }
     assert.equal(isResourcePath('/assets/x.png'), true);
     assert.equal(isResourcePath('/data/x.json'), false);
+    assert.equal(validateResourceUrl('/media/bgm/act1.mp3'), false, 'the manifest never lists the /media route (a CDN cannot resolve it)');
     assert.equal(resourceType('/assets/x.atlas'), 'text/plain; charset=utf-8');
     assert.equal(localPathFor('/assets/x.png', '/srv/public'), path.join(path.resolve('/srv/public'), 'assets/x.png'));
     assert.equal(localPathFor('https://cdn.example.com/base/assets/x.png', '/srv/public', 'https://cdn.example.com/base'), path.join(path.resolve('/srv/public'), 'assets/x.png'));
@@ -118,6 +119,11 @@ describe('resource manifest building', () => {
     assert.equal(tierForPath('tokens.token_a.spine.skel'), TIER_REST);
     assert.equal(tierForPath('local.groups.map.TX_autochessi_D.path'), TIER_ESSENTIAL);
     assert.equal(tierForPath('local.groups.emoticon.e1.path'), TIER_REST);
+    // 0.1.2 moved the battle emotes and the 19 玩法说明 pages into the mirror download: the emotes are match UI, the
+    // tutorial pages are full screenshots behind their own screen and wait for the background pass.
+    assert.equal(tierForPath('ui.emoticon/basic/pic_happy_battle'), TIER_ESSENTIAL);
+    assert.equal(tierForPath('ui.guide/autochess_home_1'), TIER_REST);
+    assert.equal(tierForPath('ui.guide'), TIER_REST);
     assert.equal(tierForPath('somethingNew.a/b.png'), TIER_REST, 'unknown sections stay out of the fast path');
   });
 

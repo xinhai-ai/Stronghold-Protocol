@@ -131,7 +131,7 @@ function backToLobby() {
   const s = store.get();
   if (s.room || s.match.public) closeAllDialogs();
   store.set({ room: null, match: emptyMatch(), ticker: [], emotes: [] });
-  store.patch('ui', { restoring: false });
+  store.patch('ui', { restoring: false, matchQueue: null });
 }
 
 function onWelcome(msg) {
@@ -209,6 +209,13 @@ function wireNet() {
   net.on('room.closed', (msg) => {
     backToLobby();
     toast(CLOSE_REASON[msg.reason] || (typeof msg.reason === 'string' && msg.reason.length < 60 ? `同盟已关闭：${msg.reason}` : '同盟已关闭'), 'warn');
+  });
+  net.on('match.queue', (msg) => {
+    if (msg.status === 'queued') store.patch('ui', { matchQueue: payload(msg) });
+    else {
+      store.patch('ui', { matchQueue: null });
+      if (msg.status === 'cancelled' && msg.reason !== 'disconnect' && msg.reason !== 'expired') toast('已退出匹配', 'info');
+    }
   });
   net.on('m.public', (msg) => { matchAt = Date.now(); store.patch('match', { public: payload(msg) }); maybeFinishRestore(); });
   net.on('m.private', (msg) => { matchAt = Date.now(); store.patch('match', { private: payload(msg) }); });

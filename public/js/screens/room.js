@@ -190,9 +190,16 @@ export function RoomScreen() {
   const me = useStore((s) => s.me, shallowEqual);
   const conn = useStore((s) => s.connection, shallowEqual);
   const [busy, setBusy] = useState(null);
+  const [fillBots, setFillBots] = useState(true);
+  const [, tickMatchClock] = useState(0);
   const alive = useRef(true);
   const inFlight = useRef(false); // synchronous guard against double clicks (state updates are async)
   useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    if (!room?.matching) return undefined;
+    const id = setInterval(() => tickMatchClock((n) => n + 1), 250);
+    return () => clearInterval(id);
+  }, [room?.matching?.queueId]);
 
   if (!room) return null;
   const online = conn.status === 'online';
@@ -214,6 +221,8 @@ export function RoomScreen() {
 
   const toggleReady = () => run('ready', () => net.request('room.ready', { ready: !myReady }));
   const start = () => run('start', () => net.request('room.start', {}));
+  const queue = () => run('match', () => net.request('match.join', { mode: 'coop', difficulty: room.difficulty, fillBots }));
+  const cancelQueue = () => run('cancel-match', () => net.request('match.leave', {}));
   const addBot = () => run('add', () => net.request('room.addBot', {}));
   const removeBot = (seat) => run(`rm${seat}`, () => net.request('room.removeBot', { seat }));
   const setDifficulty = (difficulty) => run('diff', () => net.request('room.setDifficulty', { difficulty }));
@@ -304,9 +313,15 @@ export function RoomScreen() {
       <div class="room-bar__right">
         <${LoadoutButton} from="room" size="lg" class="room-loadout" />
         ${facts.isHost
-          ? html`<${Tooltip} text=${facts.canStart ? null : '仍有博士未准备就绪'}>
-              <${Button} variant="primary" size="xl" icon="play" loading=${busy === 'start'} disabled=${!facts.canStart || !online} onClick=${start}>开始模拟<//>
-            <//>`
+          ? room.matching
+            ? html`<div class="room-match-actions"><span class="room-match-state"><${Icon} name="signal" />正在匹配队友 <b class="num">${Math.max(0, Math.ceil((Number(room.matching.deadlineAt) - Date.now()) / 1000))}s</b></span><${Button} variant="danger" size="lg" icon="close" loading=${busy === 'cancel-match'} onClick=${cancelQueue}>取消匹配<//></div>`
+            : html`<div class="room-match-actions">
+              <label class="fill-bots"><input type="checkbox" checked=${fillBots} onChange=${(e) => setFillBots(e.currentTarget.checked)} /><span>60 秒后 AI 补齐</span></label>
+              <${Button} variant="secondary" size="lg" icon="users" loading=${busy === 'match'} disabled=${!online} onClick=${queue}>匹配队友<//>
+              <${Tooltip} text=${facts.canStart ? null : '仍有博士未准备就绪'}>
+                <${Button} variant="primary" size="xl" icon="play" loading=${busy === 'start'} disabled=${!facts.canStart || !online} onClick=${start}>立即开始<//>
+              <//>
+            </div>`
           : html`<${Button} variant=${myReady ? 'primary' : 'secondary'} size="xl" icon=${myReady ? 'check' : 'hourglass'} active=${myReady}
               loading=${busy === 'ready'} disabled=${!online || !facts.mine} onClick=${toggleReady}>${myReady ? '已就绪' : '准备就绪'}<//>`}
       </div>

@@ -80,6 +80,8 @@ export const LOBBY_DEFAULTS = Object.freeze({
   maxMatchesPerAddr: 8,   // matches started from one client network that may run at once (0 = unlimited)
   resyncMinGapMs: 1000,   // heavy resyncs (match state / result replay) per session at most this often on repeated hellos
   soloReconnectWindowMs: null, // a dropped solo run stays resumable this long (null = data singleReconnectTime, 24 h)
+  matchmakingWaitMs: 60_000,   // queue wait before an AI teammate is added
+  matchmakingTickMs: 1_000,    // queue scheduling cadence
 });
 
 /** Official `singleReconnectTime` (s) when the data lacks it (constData, research 01 §1). */
@@ -131,6 +133,8 @@ export class Room {
     this.ownerKey = null;
     /** @type {string | null} per-network limit key of whoever started the running match */
     this.matchKey = null;
+    /** @type {{ queueId: string, queuedAt: number, deadlineAt: number, fillBots: boolean } | null} */
+    this.matching = null;
     this.createdAt = now;
     this.disposed = false;
   }
@@ -156,6 +160,7 @@ export class Room {
       mode: this.mode,
       difficulty: this.difficulty,
       inMatch: !!this.match,
+      matching: this.matching ? { ...this.matching } : null,
       seats: this.seats.map((s) => (s
         ? { seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, ready: s.ready, connected: s.connected && !s.left }
         : null)),
@@ -194,6 +199,13 @@ export class Lobby {
     this.resyncTimers = new Map();
     /** per-network limit warnings: at most one log line per 10 s (the rest are counted) */
     this.limitLog = { at: -Infinity, suppressed: 0 };
+    /** @type {Map<string, any[]>} queue buckets keyed by mode + difficulty */
+    this.matchQueues = new Map();
+    /** @type {Map<string, any>} one active queue entry per human player */
+    this.queueByPlayer = new Map();
+    this.queueSeq = 0;
+    this.matchQueueTimer = setInterval(() => this.processMatchQueues(), Math.max(100, Number(this.opts.matchmakingTickMs) || 1000));
+    this.matchQueueTimer.unref?.();
   }
 
   /** @param {string} code @returns {Room | null} */
@@ -204,11 +216,14 @@ export class Lobby {
     let matches = 0;
     let humans = 0;
     let bots = 0;
+    let queued = 0;
     for (const r of this.rooms.values()) {
       if (r.match) matches++;
       for (const s of r.seats) if (s && !s.left) (s.isBot ? bots++ : humans++);
     }
-    return { rooms: this.rooms.size, matches, humans, bots };
+    const entries = new Set(this.queueByPlayer.values());
+    queued = entries.size;
+    return { rooms: this.rooms.size, matches, humans, bots, queued };
   }
 
   /**
@@ -255,7 +270,12 @@ export class Lobby {
   onHello(session, { resumed, repeat }) {
     if (!resumed && !repeat) return;
     const room = this.roomOf(session);
+    const active = this.activeMatchOf(session);
     if (!room) {
+      if (active && active.match && !active.ended) {
+        this.callMatchContext(active, 'onReconnect', session.playerId);
+        return;
+      }
       if (session.notice) {
         sendSession(session, { t: 'room.closed', reason: session.notice });
         session.notice = null;
@@ -298,6 +318,8 @@ export class Lobby {
       case 'room.removeBot': return this.removeBot(session, msg);
       case 'room.start': return this.start(session);
       case 'room.loadout': return this.loadout(session, msg);
+      case 'match.join': return this.matchJoin(session, msg);
+      case 'match.leave': return this.matchLeave(session);
       default:
         if (typeof msg.t === 'string' && msg.t.startsWith('g.')) return this.routeGame(session, msg);
         return fail(ERR.BAD_MSG, `unhandled type ${String(msg.t).slice(0, 32)}`);
@@ -307,13 +329,20 @@ export class Lobby {
   /** The session's socket closed. @param {import('./net.js').Session} session */
   onDisconnect(session) {
     this.clearResync(session.playerId); // the next resume resyncs immediately
+    const queued = this.queueByPlayer.get(session.playerId);
+    if (queued) this.cancelMatchQueue(queued, 'disconnect');
     const room = this.roomOf(session);
     // a solo run may be resumed within singleReconnectTime (24 h); everything else keeps the registry's window
     session.resumeWindowMs = room && room.match && room.mode === 'solo' ? this.soloResumeWindowMs() : null;
-    if (!room) return;
+    const active = this.activeMatchOf(session);
+    if (!room && !active) return;
+    if (!room && active) {
+      this.callMatchContext(active, 'onDisconnect', session.playerId);
+      return;
+    }
     const seat = room.seatOf(session.playerId);
     seat.connected = false;
-    if (room.match) this.callMatch(room, 'onDisconnect', session.playerId);
+    if (active || room.match) this.callMatchContext(active || room.matchCtx, 'onDisconnect', session.playerId);
     else this.startGrace(room, seat);
     this.broadcastState(room);
   }
@@ -323,6 +352,14 @@ export class Lobby {
     session.notice = null;
     session.pendingResult = null;
     this.clearResync(session.playerId);
+    const queued = this.queueByPlayer.get(session.playerId);
+    if (queued) this.cancelMatchQueue(queued, 'expired');
+    const active = this.activeMatchOf(session);
+    const roomCode = session.roomCode;
+    if (active && !roomCode && !active.ended) {
+      this.callMatchContext(active, 'onLeave', session.playerId);
+      if (session.activeMatchCtx === active) session.activeMatchCtx = null;
+    }
     const code = session.roomCode;
     session.roomCode = null;
     const room = code ? this.rooms.get(code) : null;
@@ -334,6 +371,8 @@ export class Lobby {
    * @param {string} [reason]
    */
   shutdown(reason = 'shutdown') {
+    if (this.matchQueueTimer) { clearInterval(this.matchQueueTimer); this.matchQueueTimer = null; }
+    for (const entry of [...new Set(this.queueByPlayer.values())]) this.cancelMatchQueue(entry, reason);
     for (const room of [...this.rooms.values()]) this.disposeRoom(room, reason);
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
@@ -414,7 +453,157 @@ export class Lobby {
   // room.* handlers
   // ---------------------------------------------------------------------------------------------------
 
+  /**
+   * Join the shared matchmaking pool. A player outside a room contributes one seat; a room host contributes the
+   * whole connected party. `fillBots` controls whether other queued parties may be combined, while the 60 s deadline
+   * always fills the remaining seats with AI as required by the game flow.
+   */
+  matchJoin(session, { mode, difficulty, fillBots = true }) {
+    const room = this.roomOf(session);
+    const active = this.activeMatchOf(session);
+    if (active) return fail(ERR.ROOM_STARTED, 'match already running');
+    if (this.queueByPlayer.has(session.playerId)) return fail(ERR.MATCHING);
+    if (mode === 'solo') {
+      if (room) return fail(ERR.MATCHING, 'leave the room before solo matchmaking');
+      // A solo operator is a one-person party in the four-seat co-op pool. The selected lobby mode describes the
+      // entry path; the actual match remains the shared four-player ruleset so three AI/queued seats can fill it.
+      const entry = this.makeQueueEntry({ mode: 'coop', difficulty, fillBots: true, room: null,
+        players: [{ seat: 0, playerId: session.playerId, name: session.name, isBot: false, connected: session.connected, loadout: session.loadout || null }] });
+      this.enqueueMatchEntry(entry);
+      this.sendQueueState(entry);
+      this.processMatchQueues();
+      return OK;
+    }
+    if (room) {
+      if (room.match || room.matching) return fail(room.match ? ERR.ROOM_STARTED : ERR.MATCHING);
+      if (room.mode !== 'coop') return fail(ERR.BAD_MSG, 'solo rooms cannot join co-op matchmaking');
+      if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+      const humans = room.activeHumans();
+      if (!humans.length || humans.some((s) => !s.connected)) return fail(ERR.NOT_READY, 'all party members must be connected');
+      if (humans.some((s) => this.queueByPlayer.has(s.playerId))) return fail(ERR.MATCHING);
+      const players = room.seats.filter(Boolean).map((s) => ({ seat: s.seat, playerId: s.playerId, name: s.name,
+        isBot: !!s.isBot, connected: s.connected !== false, loadout: s.isBot ? null : s.loadout || null }));
+      const entry = this.makeQueueEntry({ mode, difficulty: room.difficulty, fillBots: !!fillBots, room, players });
+      this.enqueueMatchEntry(entry);
+      this.broadcastState(room);
+      this.sendQueueState(entry);
+      this.processMatchQueues();
+      return OK;
+    }
+    const entry = this.makeQueueEntry({ mode, difficulty, fillBots: true, room: null,
+      players: [{ seat: 0, playerId: session.playerId, name: session.name, isBot: false, connected: session.connected, loadout: session.loadout || null }] });
+    this.enqueueMatchEntry(entry);
+    this.sendQueueState(entry);
+    this.processMatchQueues();
+    return OK;
+  }
+
+  matchLeave(session) {
+    const entry = this.queueByPlayer.get(session.playerId);
+    if (!entry) return fail(ERR.NOT_MATCHING);
+    this.cancelMatchQueue(entry, 'cancelled');
+    return OK;
+  }
+
+  makeQueueEntry({ mode, difficulty, fillBots, room, players }) {
+    const now = this.now();
+    const entry = {
+      queueId: `Q${(++this.queueSeq).toString(36).toUpperCase()}`,
+      mode, difficulty, fillBots: !!fillBots, room: room || null, players: players.map((p) => ({ ...p })),
+      queuedAt: now, deadlineAt: now + Math.max(1000, Number(this.opts.matchmakingWaitMs) || 60_000),
+      removed: false,
+    };
+    return entry;
+  }
+
+  enqueueMatchEntry(entry) {
+    const key = `${entry.mode}:${entry.difficulty}`;
+    const bucket = this.matchQueues.get(key) || [];
+    bucket.push(entry);
+    this.matchQueues.set(key, bucket);
+    for (const p of entry.players) if (!p.isBot) {
+      const session = this.registry.byId(p.playerId);
+      if (session) session.matchQueue = entry;
+      this.queueByPlayer.set(p.playerId, entry);
+    }
+    if (entry.room) {
+      entry.room.matching = { queueId: entry.queueId, queuedAt: entry.queuedAt, deadlineAt: entry.deadlineAt, fillBots: entry.fillBots };
+    }
+  }
+
+  /** Process each bucket oldest-first. A complete four-person party starts immediately; the oldest incomplete ticket
+   * receives AI at its deadline, so a quiet server never leaves an operator waiting indefinitely. */
+  processMatchQueues() {
+    const now = this.now();
+    for (const [key, bucket] of this.matchQueues) {
+      while (bucket.length) {
+        const first = bucket[0];
+        if (!first || first.removed) { bucket.shift(); continue; }
+        const selected = [first];
+        let total = first.players.length;
+        if (first.fillBots) {
+          for (let i = 1; i < bucket.length && total < MAX_SEATS; i++) {
+            const next = bucket[i];
+            if (!next || next.removed || !next.fillBots || total + next.players.length > MAX_SEATS) continue;
+            selected.push(next);
+            total += next.players.length;
+          }
+        }
+        if (total < MAX_SEATS && now < first.deadlineAt) break;
+        for (const entry of selected) {
+          const idx = bucket.indexOf(entry);
+          if (idx >= 0) bucket.splice(idx, 1);
+          this.removeQueueReferences(entry);
+        }
+        const players = selected.flatMap((entry) => entry.players.map((p) => ({ ...p })));
+        while (players.length < MAX_SEATS) {
+          const seat = players.length;
+          players.push({ seat, playerId: `ai_${randomBytes(4).toString('hex')}`, name: BOT_NAMES[seat % BOT_NAMES.length],
+            isBot: true, connected: true, loadout: null });
+        }
+        const owner = selected.find((entry) => entry.room) || first;
+        this.startQueuedMatch(owner, players, selected);
+      }
+      if (!bucket.length) this.matchQueues.delete(key);
+    }
+  }
+
+  removeQueueReferences(entry) {
+    if (!entry || entry.removed) return;
+    entry.removed = true;
+    for (const p of entry.players) if (!p.isBot) {
+      if (this.queueByPlayer.get(p.playerId) === entry) this.queueByPlayer.delete(p.playerId);
+      const session = this.registry.byId(p.playerId);
+      if (session?.matchQueue === entry) session.matchQueue = null;
+    }
+    if (entry.room && entry.room.matching?.queueId === entry.queueId) entry.room.matching = null;
+  }
+
+  cancelMatchQueue(entry, reason = 'cancelled') {
+    if (!entry || entry.removed) return;
+    const bucket = this.matchQueues.get(`${entry.mode}:${entry.difficulty}`);
+    if (bucket) {
+      const i = bucket.indexOf(entry);
+      if (i >= 0) bucket.splice(i, 1);
+      if (!bucket.length) this.matchQueues.delete(`${entry.mode}:${entry.difficulty}`);
+    }
+    this.removeQueueReferences(entry);
+    this.sendQueueState(entry, reason === 'cancelled' ? 'cancelled' : 'closed', reason);
+    if (entry.room && !entry.room.disposed) this.broadcastState(entry.room);
+  }
+
+  sendQueueState(entry, status = 'queued', reason = null) {
+    const msg = { t: 'match.queue', status, queueId: entry.queueId, mode: entry.mode, difficulty: entry.difficulty,
+      count: entry.players.filter((p) => !p.isBot).length, capacity: MAX_SEATS, queuedAt: entry.queuedAt,
+      deadlineAt: entry.deadlineAt, fillBots: entry.fillBots, ...(reason ? { reason } : {}) };
+    for (const p of entry.players) if (!p.isBot) {
+      const session = this.registry.byId(p.playerId);
+      if (session?.connected) sendSession(session, msg);
+    }
+  }
+
   create(session, { mode, difficulty }) {
+    if (this.queueByPlayer.has(session.playerId)) return fail(ERR.MATCHING);
     const cur = this.roomOf(session);
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
     if (this.rooms.size >= this.opts.maxRooms) {
@@ -448,6 +637,7 @@ export class Lobby {
   }
 
   join(session, { code }) {
+    if (this.queueByPlayer.has(session.playerId)) return fail(ERR.MATCHING);
     const norm = String(code).trim().toUpperCase();
     const room = norm.length === ROOM_CODE_LEN ? this.rooms.get(norm) : undefined;
     if (!room) return fail(ERR.ROOM_NOT_FOUND);
@@ -469,6 +659,12 @@ export class Lobby {
   }
 
   leave(session) {
+    const queued = this.queueByPlayer.get(session.playerId);
+    if (queued) {
+      this.cancelMatchQueue(queued, 'cancelled');
+      if (queued.room) this.removeMember(queued.room, session.playerId);
+      return OK;
+    }
     const room = this.roomOf(session);
     if (!room) return fail(ERR.NOT_IN_ROOM);
     this.removeMember(room, session.playerId);
@@ -479,6 +675,7 @@ export class Lobby {
     const room = this.roomOf(session);
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matching) return fail(ERR.MATCHING);
     this.dropReplay(room, session.playerId);
     const seat = room.seatOf(session.playerId);
     if (seat.ready !== ready) {
@@ -493,6 +690,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matching) return fail(ERR.MATCHING);
     this.dropReplay(room, session.playerId);
     if (room.difficulty !== difficulty) {
       room.difficulty = difficulty;
@@ -507,6 +705,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matching) return fail(ERR.MATCHING);
     this.dropReplay(room, session.playerId);
     if (room.mode === 'solo') return fail(ERR.ROOM_FULL, 'solo rooms cannot have AI teammates');
     const idx = room.freeSeat();
@@ -525,6 +724,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matching) return fail(ERR.MATCHING);
     this.dropReplay(room, session.playerId);
     const target = room.seats[seat];
     if (!target || !target.isBot) return fail(ERR.BAD_TARGET, 'seat does not hold an AI');
@@ -538,6 +738,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matching) return fail(ERR.MATCHING);
     const humans = room.activeHumans();
     for (const s of humans) {
       if (s.playerId !== room.hostId && (!s.connected || !s.ready)) return fail(ERR.NOT_READY);
@@ -669,6 +870,109 @@ export class Lobby {
     return OK;
   }
 
+  /** Start a match created by the matchmaking queue. Room members keep their room; individual queue members do not
+   * acquire one, so the result screen returns them to the public lobby. */
+  startQueuedMatch(owner, players, selected = [owner]) {
+    const room = owner?.room || null;
+    if (room && (room.disposed || room.match)) return fail(ERR.ROOM_STARTED);
+    const used = new Set();
+    const seats = players.map((p, i) => {
+      let seat = Number.isInteger(p.seat) && p.seat >= 0 && p.seat < MAX_SEATS && !used.has(p.seat) ? p.seat : -1;
+      if (seat < 0) { for (let j = 0; j < MAX_SEATS; j++) if (!used.has(j)) { seat = j; break; } }
+      used.add(seat);
+      return { ...p, seat, connected: p.isBot ? true : p.connected !== false };
+    }).sort((a, b) => a.seat - b.seat);
+    const allHumanIds = seats.filter((p) => !p.isBot).map((p) => p.playerId);
+    const ctx = { live: true, ended: false, disposed: false, queue: true, match: null, room, members: seats,
+      lastPublic: null, sharedResult: null, results: new Map() };
+    let seed = 0;
+    try { seed = this.seedFn() >>> 0; } catch { seed = randomInt(2 ** 32); }
+    const matchCode = room?.code || `M${randomBytes(3).toString('hex').toUpperCase()}`;
+    try {
+      const match = new this.MatchClass({
+        roomCode: matchCode,
+        mode: owner.mode,
+        difficulty: owner.difficulty,
+        modeId: modeIdFor(owner.mode, owner.difficulty),
+        seats,
+        seed,
+        matchNo: room ? room.matchCount + 1 : 1,
+        data: this.safeData(), workerPool: this.workerPool, log: this.log, now: this.now,
+        send: (playerId, msg) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg) : false),
+        broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
+        onEnd: (summary) => this.onQueuedMatchEnd(ctx, summary),
+      });
+      ctx.match = match;
+      for (const id of allHumanIds) {
+        const session = this.registry.byId(id);
+        if (session) session.activeMatchCtx = ctx;
+      }
+      if (room) {
+        room.match = match;
+        room.matchCtx = ctx;
+        room.matchKey = this.registry.byId(room.hostId)?.limitKey || null;
+        room.matchCount++;
+        room.replay = null;
+        this.broadcastState(room);
+      }
+      for (const entry of selected) this.sendQueueState(entry, 'matched');
+      this.log.info(`[match] ${matchCode} matchmaking start (${owner.mode}/${owner.difficulty}, ${seats.length} seats${room ? `, room ${room.code}` : ''})`);
+      match.start();
+    } catch (e) {
+      this.log.error(`[match] ${matchCode} matchmaking start failed`, e);
+      for (const id of allHumanIds) {
+        const session = this.registry.byId(id);
+        if (session?.activeMatchCtx === ctx) session.activeMatchCtx = null;
+      }
+      if (room && room.matchCtx === ctx) { room.match = null; room.matchCtx = null; room.matchKey = null; this.broadcastState(room); }
+      this.disposeMatchCtx(ctx);
+      return fail(ERR.INTERNAL, 'match failed to start');
+    }
+    return OK;
+  }
+
+  queueMatchSend(ctx, playerId, msg) {
+    if (!ctx || ctx.disposed) return false;
+    const p = ctx.members.find((x) => x.playerId === playerId);
+    if (!p || p.isBot || p.left) return false;
+    const session = this.registry.byId(playerId);
+    if (!session || !session.connected || session.activeMatchCtx !== ctx) return false;
+    if (msg?.t === 'm.result') ctx.results.set(playerId, encode(msg));
+    return sendSession(session, msg);
+  }
+
+  queueMatchBroadcast(ctx, msg) {
+    if (!ctx || ctx.disposed) return null;
+    const data = encode(msg);
+    if (data == null) return null;
+    if (msg?.t === 'm.public') ctx.lastPublic = data;
+    else if (msg?.t === 'm.result') ctx.sharedResult = data;
+    for (const p of ctx.members) if (!p.isBot && !p.left) {
+      const session = this.registry.byId(p.playerId);
+      if (session?.connected && session.activeMatchCtx === ctx) sendRaw(session.ws, data, { droppable: isDroppable(msg) });
+    }
+    return data;
+  }
+
+  onQueuedMatchEnd(ctx, summary) {
+    if (!ctx || ctx.ended || !ctx.live) return;
+    const room = ctx.room;
+    for (const p of ctx.members) if (!p.isBot) {
+      const session = this.registry.byId(p.playerId);
+      if (session?.activeMatchCtx === ctx) session.activeMatchCtx = null;
+      if (!room && session) session.roomCode = null;
+    }
+    if (room) {
+      // onMatchEnd owns the room replay/lobby transition and its exactly-once guard.
+      this.onMatchEnd(room, ctx, summary);
+      return;
+    }
+    ctx.ended = true;
+    ctx.live = false;
+    this.log.info(`[match] standalone matchmaking match ended (${ctx.members.length} seats)`);
+    setImmediate(() => this.disposeMatchCtx(ctx));
+  }
+
   /** onEnd callback: return the room to LOBBY and dispose the match on the next macrotask. */
   onMatchEnd(room, ctx, summary) {
     if (ctx.ended || !ctx.live || room.matchCtx !== ctx || room.disposed) return;
@@ -768,6 +1072,11 @@ export class Lobby {
   runResync(session) {
     if (!session.connected || this.registry.byId(session.playerId) !== session) return;
     const room = this.roomOf(session);
+    const active = this.activeMatchOf(session);
+    if (!room && active?.match) {
+      this.callMatchContext(active, 'onReconnect', session.playerId);
+      return;
+    }
     if (!room) return;
     session.resyncAt = this.now();
     if (room.match) {
@@ -802,18 +1111,21 @@ export class Lobby {
 
   /** Route a 'g.*' intent to the running match. */
   routeGame(session, msg) {
+    const active = this.activeMatchOf(session);
     const room = this.roomOf(session);
-    if (!room) return fail(ERR.NOT_IN_ROOM);
-    if (!room.match) return fail(ERR.WRONG_PHASE, 'no running match');
+    const match = active?.match || room?.match;
+    if (!match) return room ? fail(ERR.WRONG_PHASE, 'no running match') : fail(ERR.NOT_IN_ROOM);
     if (msg.t === 'g.leave') {
-      this.removeMember(room, session.playerId);
+      if (active?.queue && !room) this.leaveQueuedMatchPlayer(active, session.playerId);
+      else if (active?.queue && room) this.removeMember(room, session.playerId);
+      else this.removeMember(room, session.playerId);
       return OK;
     }
     let res;
     try {
-      res = room.match.handle(session.playerId, msg);
+      res = match.handle(session.playerId, msg);
     } catch (e) {
-      this.log.error(`[lobby] ${room.code} match.handle(${msg.t}) threw`, e);
+      this.log.error(`[lobby] ${(room?.code || active?.match?.roomCode || 'queue')} match.handle(${msg.t}) threw`, e);
       return fail(ERR.INTERNAL);
     }
     if (res && typeof res.then === 'function') {
@@ -826,6 +1138,31 @@ export class Lobby {
       return fail(isErrCode(res.error) ? res.error : ERR.INTERNAL, typeof res.detail === 'string' ? res.detail : undefined);
     }
     return OK;
+  }
+
+  /** Match context for both room-bound queue matches and standalone queue matches. */
+  activeMatchOf(session) {
+    const ctx = session?.activeMatchCtx;
+    if (ctx && ctx.match && !ctx.disposed) return ctx;
+    const room = session ? this.roomOf(session) : null;
+    if (room?.match && room.matchCtx) return room.matchCtx;
+    return null;
+  }
+
+  callMatchContext(ctx, method, ...args) {
+    if (!ctx?.match) return undefined;
+    const fn = ctx.match[method] || (method === 'onLeave' ? ctx.match.onDisconnect : null);
+    if (typeof fn !== 'function') return undefined;
+    try { return fn.apply(ctx.match, args); } catch (e) {
+      this.log.error(`[lobby] ${ctx.match.roomCode || 'queue'} ${method} threw`, e);
+      return undefined;
+    }
+  }
+
+  leaveQueuedMatchPlayer(ctx, playerId) {
+    this.callMatchContext(ctx, 'onLeave', playerId);
+    const session = this.registry.byId(playerId);
+    if (session?.activeMatchCtx === ctx) session.activeMatchCtx = null;
   }
 
   /** Call an optional match hook without letting it throw. onLeave falls back to onDisconnect. */
@@ -900,6 +1237,7 @@ export class Lobby {
       seat.connected = false;
       seat.ready = false;
       this.callMatch(room, 'onLeave', playerId);
+      if (session?.activeMatchCtx === room.matchCtx) session.activeMatchCtx = null;
     } else {
       room.seats[seat.seat] = null;
     }

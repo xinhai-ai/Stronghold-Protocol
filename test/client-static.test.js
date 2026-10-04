@@ -546,6 +546,21 @@ describe('net.js', () => {
     assert.equal(net.ping, 40);
   });
 
+  test('site announcement bootstraps server time before hello without overriding a measured clock', async () => {
+    const { net, ws, timers } = await makeNet();
+    net.connect();
+    ws().open();
+    ws().recv({ t: 'site.announcement', serverNow: timers.now() + 5000, announcement: null });
+    assert.equal(net.clockOffset, 5000);
+    net.probe();
+    const ping = ws().last('ping');
+    timers.advance(40);
+    ws().recv({ t: 'pong', c: ping.c, s: ping.c + 20 + 6000 });
+    assert.equal(net.clockOffset, 6000);
+    ws().recv({ t: 'site.announcement', serverNow: timers.now() + 9000, announcement: null });
+    assert.equal(net.clockOffset, 6000);
+  });
+
   test('silent socket is detected and replaced', async () => {
     const { net, sockets, timers } = await quiet(() => onlineNet());
     await quiet(async () => { timers.advance(20000); });

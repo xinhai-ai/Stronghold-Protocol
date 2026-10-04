@@ -51,13 +51,14 @@ import { promisify } from 'node:util';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { Network, SessionRegistry, NET_DEFAULTS } from './net.js';
+import { Network, SessionRegistry, NET_DEFAULTS, send } from './net.js';
 import { Lobby, LOBBY_DEFAULTS } from './lobby.js';
 import { getData, loadData } from './data.js';
 import { parseBotRehearsal, parseCombat, parseVerify } from './match/Match.js';
 import { openStoreFromEnv } from './redis.js';
 import { Persister, restoreServer, SAVE_MS } from './persist.js';
 import { SimulationPool, workerSettings } from './workers/pool.js';
+import { Announcements } from './announcements.js';
 import { createResourceIndex, RESOURCE_MANIFEST_FILE } from './resources.js';
 import { PROTOCOL_VERSION, APP_VERSION } from '../shared/constants.js';
 import { MEDIA_PREFIX, AUDIO_EXTS } from '../shared/media.js';
@@ -697,10 +698,12 @@ function makeLogger(quiet) {
  *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number,
  *   store?: object | null, resume?: boolean, saveMs?: number, assetsCdn?: string,
  *   workers?: number, workerQueue?: number, workerTimeoutMs?: number, workerPool?: SimulationPool | null,
+ *   announcementsFile?: string | null, announcementPollMs?: number,
  * }} [opts]
  * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: WebSocketServer,
  *                     lobby: Lobby, network: Network, registry: SessionRegistry, store: object | null,
- *                     persister: Persister | null, workerPool: SimulationPool | null, close: () => Promise<void> }>}
+ *                     persister: Persister | null, workerPool: SimulationPool | null,
+ *                     announcements: Announcements, close: () => Promise<void> }>}
  */
 export async function startServer(opts = {}) {
   const port = opts.port ?? (process.env.PORT != null && process.env.PORT !== '' ? Number(process.env.PORT) : 3000);
@@ -775,6 +778,11 @@ export async function startServer(opts = {}) {
     }
   }
   const network = new Network({ registry, handler: lobby, log, options: netOptions });
+  const announcementFile = opts.announcementsFile !== undefined ? opts.announcementsFile
+    : (process.env.SP_ANNOUNCEMENTS_FILE || path.join(ROOT, 'config', 'announcements.json'));
+  const announcements = new Announcements({ file: announcementFile ? path.resolve(announcementFile) : null,
+    broadcast: (msg) => network.broadcast(msg), log, pollMs: opts.announcementPollMs });
+  await announcements.start();
   const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log, cdnBase: assetsCdn });
   const startedAt = Date.now();
 
@@ -804,6 +812,7 @@ export async function startServer(opts = {}) {
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
         persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.matchDocs.size } : null,
         workers: workerPool?.stats() || null,
+        announcements: announcements.stats(),
         assetsCdn: assetsCdn || null,
         limits: {
           maxRooms: lobby.opts.maxRooms,
@@ -842,7 +851,11 @@ export async function startServer(opts = {}) {
   });
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD, perMessageDeflate: false, clientTracking: false });
-  wss.on('connection', (ws, req) => network.handleConnection(ws, req));
+  wss.on('connection', (ws, req) => {
+    network.handleConnection(ws, req);
+    announcements.refresh();
+    send(ws, announcements.message());
+  });
   wss.on('error', (e) => log.error('[ws] server error', e));
 
   server.on('upgrade', (req, socket, head) => {
@@ -872,6 +885,7 @@ export async function startServer(opts = {}) {
       server.listen(port, host);
     });
   } catch (e) {
+    await announcements.stop();
     network.close(); // stop heartbeat/sweep timers of the half-built server
     persister?.stop();
     lobby.shutdown('shutdown');
@@ -889,6 +903,7 @@ export async function startServer(opts = {}) {
   async function close() {
     if (closing) return closing;
     closing = (async () => {
+      await announcements.stop();
       // the state (match checkpoints included) is written while the rooms still exist, then the rooms are disposed
       // (room.closed) and only then are the sockets closed (1001: clients should not auto-reconnect)
       if (persister) {
@@ -909,7 +924,7 @@ export async function startServer(opts = {}) {
     return closing;
   }
 
-  return { port: actualPort, host, url, server, wss, lobby, network, registry, store: store || null, persister, workerPool, close };
+  return { port: actualPort, host, url, server, wss, lobby, network, registry, store: store || null, persister, workerPool, announcements, close };
 }
 
 // ---------------------------------------------------------------------------------------------------

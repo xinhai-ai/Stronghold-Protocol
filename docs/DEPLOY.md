@@ -342,6 +342,65 @@ location = /resource-sw.js {
 
 计算池支持单进程利用多个核。多实例部署仍需房间/重连路由和独立存档归属；直接用 PM2 cluster 并共用同一 Redis 存档键会导致路由错误和存档覆盖。
 
+### 3.6 全站临时公告
+
+编辑 `config/announcements.json`，服务器每 2 秒读取一次，修改无需重启。公告在首页、大厅、房间和游戏内的上半屏滚动展示，不显示剩余时间，不拦截游戏操作，到期自动消失。开启系统“减少动态效果”时改为静态换行文本。默认配置为空，`config/announcements.example.json` 提供一个未启用的示例。
+
+```json
+{
+  "announcements": [
+    {
+      "id": "maintenance-20261005",
+      "text": "服务器将在今晚 22:00 进行维护，请提前完成当前对局。",
+      "startAt": "2026-10-05T21:50:00+08:00",
+      "durationSeconds": 60,
+      "level": "warning",
+      "enabled": true
+    }
+  ]
+}
+```
+
+- `id`：唯一标识，1–64 个字母、数字、下划线或短横线。
+- `text`：1–500 字纯文本，HTML 不会执行，换行会合并为空格。
+- `startAt`：带时区的 ISO 日期，必须明确 `+08:00` 或 `Z` 等时区；立即发布可填当前时间，不能使用 `now`（避免重启后重新计时）。
+- `durationSeconds`：持续秒数，1–86400。例子在 21:50:00 开始，21:51:00 结束；21:50:40 进入的玩家只看剩余 20 秒，界面不显示倒计时。
+- `level`：`info`（普通，默认）、`warning`（提醒）或 `urgent`（紧急）。
+- `enabled`：布尔值，默认 true；设为 false、删除该条目或清空数组可撤回。
+
+配置最多 100 条，总文件最多 128 KiB。重叠公告仅显示等级最高的一条；同等级先显示触发时间较早的，同一触发时间按文件顺序。等待中的公告仍按原计划到期，不延长有效期。配置格式有误、文件不可读或保存时暂时缺失时，保留上一份有效配置直到它到期；日志和 `/healthz.announcements.configError` 可定位原因。清空时请写入合法的 `{"announcements": []}`，不要用删除文件代替撤回。
+
+PowerShell 立即发布一条持续 60 秒的通知（会替换现有列表）：
+
+```powershell
+$notice = @{ announcements = @(@{
+  id = 'quick-notice'; text = '服务器即将更新，请留意后续通知。'
+  startAt = [DateTimeOffset]::Now.ToString('o'); durationSeconds = 60
+  level = 'info'; enabled = $true
+}) }
+$notice | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 config/announcements.json
+```
+
+**Docker 支持实时修改。** 镜像包含默认的 `config` 目录；建议挂载整个目录，容器内 `node` 用户只需读取权限：
+
+```bash
+docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
+  --mount type=bind,source="$(pwd)/config",target=/app/config,readonly \
+  -e SP_ANNOUNCEMENTS_FILE=/app/config/announcements.json \
+  stronghold-protocol
+```
+
+在 Docker Compose 服务中加入：
+
+```yaml
+    environment:
+      SP_ANNOUNCEMENTS_FILE: /app/config/announcements.json
+    volumes:
+      - ./config:/app/config:ro
+```
+
+之后修改宿主机 `config/announcements.json` 即可。挂载目录可以识别编辑器通过新文件替换旧文件的保存方式；只挂载单个文件可能看不到这类替换。配置必须在挂载前存在。容器重启读取原来的绝对时间，恢复未到期通知，过期通知不补播。公告由配置文件保存，独立于 Redis；多个实例若使用相同配置，需要保持服务器系统时钟同步。
+
 ## 4. macOS / Linux 常驻
 
 - 临时开服：`scripts/start.sh`（或 `npm start`），保持终端窗口打开。macOS 首次会询问是否允许 node 接受传入连接，选「允许」。

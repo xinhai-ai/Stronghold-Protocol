@@ -537,7 +537,7 @@ export class Net {
       this._onPong(msg);
     } else if (isHelloError) {
       this._onHelloError(msg);
-    } else if (t === 'm.public' && Number.isFinite(msg.serverNow) && !this.clockSynced) {
+    } else if ((t === 'm.public' || t === 'site.announcement') && Number.isFinite(msg.serverNow) && !this.clockSynced) {
       this._addClockSample(msg.serverNow + (this.ping ?? 0) / 2 - this.now(), Infinity);
     }
 

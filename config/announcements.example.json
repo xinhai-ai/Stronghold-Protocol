@@ -1,0 +1,12 @@
+{
+  "announcements": [
+    {
+      "id": "maintenance-example",
+      "text": "服务器将在今晚 22:00 进行维护，请提前完成当前对局。",
+      "startAt": "2026-10-05T21:50:00+08:00",
+      "durationSeconds": 60,
+      "level": "warning",
+      "enabled": false
+    }
+  ]
+}

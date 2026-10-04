@@ -602,6 +602,14 @@ export class Network {
   /** @param {Connection} conn @param {object} msg */
   reply(conn, msg) { return send(conn.ws, msg); }
 
+  /** Global public state, including sockets still showing the title screen. Encode once for all recipients. */
+  broadcast(msg) {
+    if (this.closed) return;
+    const data = encode(msg);
+    if (data == null) return;
+    for (const conn of this.conns.values()) if (!conn.closing) sendRaw(conn.ws, data);
+  }
+
   /** @param {Connection} conn */
   onFrame(conn, data, isBinary) {
     // A socket we are closing (replaced by another tab, hello timeout, flooding, shutdown) may still have

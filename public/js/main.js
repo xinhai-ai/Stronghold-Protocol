@@ -30,6 +30,8 @@ import { render } from '../vendor/preact.module.js';
 import { useErrorBoundary } from '../vendor/hooks.module.js';
 import { html, UiHosts, Button, MicroLabel, closeAllDialogs } from './ui/components.js';
 import { ConnectionBanner } from './ui/connBanner.js';
+import { AnnouncementBanner } from './ui/announcement.js';
+import { announcementFromMessage } from '../../shared/announcements.js';
 import { ToastHost, toast, toastError, describeError } from './ui/toasts.js';
 import { net, identity, NetError } from './net.js';
 import { store, useStore, emptyMatch, selectRoute, sessionResetNotice } from './store.js';
@@ -199,6 +201,7 @@ function wireNet() {
   });
   net.on('clock', (c) => store.set({ clock: { offset: c.offset, rtt: c.rtt, synced: c.synced } }));
   net.on('welcome', onWelcome);
+  net.on('site.announcement', (msg) => store.set({ announcement: announcementFromMessage(msg) }));
   net.on('helloError', (err) => toastError(err));
   net.on('replaced', () => toast('该身份已在其他页面登录，本页已断开', 'warn', { ttl: 6000 }));
   net.on('unhandledError', (err) => toastError(err));
@@ -271,6 +274,7 @@ function App() {
     <div class="app-bg" aria-hidden="true"></div>
     ${error ? html`<${ScreenCrashed} error=${error} reset=${resetError} />` : html`<${Screen} key=${route} />`}
     <${ConnectionBanner} />
+    <${AnnouncementBanner} />
     <${ToastHost} />
     <${UiHosts} />
     <${GuideHost} />

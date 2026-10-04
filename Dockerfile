@@ -18,6 +18,7 @@
 #       SP_REDIS_PREFIX, SP_REDIS_TTL, SP_REDIS_SAVE_MS,
 #       SP_ASSETS_CDN (https://cdn.example.com/stronghold — serve /assets/… from a CDN, docs/DEPLOY.md §3.2), DEBUG
 #       SP_WORKERS (auto, up to 8; 0 disables), SP_WORKER_QUEUE (256), SP_WORKER_TIMEOUT_MS (120000)
+#       SP_ANNOUNCEMENTS_FILE (/app/config/announcements.json; mount /app/config read-only for live edits)
 
 ARG NODE_IMAGE=node:22-alpine
 
@@ -36,6 +37,7 @@ COPY server ./server
 COPY tools ./tools
 COPY data ./data
 COPY public ./public
+COPY config ./config
 COPY docs/research ./docs/research
 RUN node tools/vendor.mjs \
  && if [ "$FETCH_ASSETS" = "1" ]; then \
@@ -55,6 +57,7 @@ COPY --from=build /app/shared ./shared
 COPY --from=build /app/server ./server
 COPY --from=build /app/data ./data
 COPY --from=build /app/public ./public
+COPY --from=build /app/config ./config
 # research tables: read by server/sim/nodeData.js as a fallback
 COPY --from=build /app/docs/research ./docs/research
 

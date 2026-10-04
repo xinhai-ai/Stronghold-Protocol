@@ -889,6 +889,40 @@
 .conn-banner .icon { width: .22rem; height: .22rem; color: var(--orange-hi); }
 .conn-banner__sub { color: var(--text-lo); font-family: var(--font-num); font-size: .15rem; }
 
+/* ---- temporary site announcement: above the battlefield, without capturing player input ------------ */
+.site-notice {
+  --notice-color: var(--mint-400);
+  position: fixed; top: max(calc(1.9rem + var(--sa-t, 0px)), 20vh);
+  left: 50%; right: auto; width: 50%; transform: translateX(-50%);
+  z-index: var(--z-banner); pointer-events: none;
+  display: flex; align-items: center; gap: max(.18rem, 10px);
+  padding: max(.1rem, 8px) max(.2rem, 12px);
+  background: rgba(10, 17, 14, .9);
+  box-shadow: 0 .06rem .2rem rgba(0, 0, 0, .35);
+  color: var(--text-hi); font-size: max(.2rem, 14px); line-height: 1.6;
+}
+.site-notice--warning { --notice-color: var(--amber); }
+.site-notice--urgent { --notice-color: var(--red-premium); }
+.site-notice__label { flex: none; font-weight: 700; color: var(--notice-color); }
+.site-notice__viewport { flex: 1; min-width: 0; overflow: hidden; }
+.site-notice__close { flex: none; pointer-events: auto; display: grid; place-items: center; width: max(.34rem, 24px); height: max(.34rem, 24px); padding: 0; border: 0; background: transparent; color: var(--notice-color); cursor: pointer; }
+.site-notice__close:hover { color: var(--text-hi); }
+.site-notice__close:focus-visible { outline: 2px solid var(--notice-color); outline-offset: 2px; }
+.site-notice__close .icon { width: .2rem; height: .2rem; }
+.site-notice__text {
+  display: block; width: max-content; white-space: nowrap;
+  animation: site-notice-scroll var(--notice-duration) linear infinite;
+}
+.site-notice__accessible { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@keyframes site-notice-scroll { from { transform: translateX(var(--notice-from)); } to { transform: translateX(var(--notice-to)); } }
+@media (prefers-reduced-motion: reduce) {
+  .site-notice { align-items: flex-start; }
+  .site-notice__text { animation: none; transform: none; width: auto; white-space: normal; overflow-wrap: anywhere; }
+}
+@media (max-width: 767px) {
+  .site-notice { width: calc(100% - 16px); }
+}
+
 /* ---- misc shared bits ------------------------------------------------------------------------------ */
 .kv { display: flex; align-items: baseline; gap: .08rem; }
 .kv__k { color: var(--text-lo); font-size: .14rem; }

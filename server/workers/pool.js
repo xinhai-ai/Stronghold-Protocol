@@ -40,7 +40,9 @@ export class SimulationPool {
 
   stats() {
     return { size: this.size, threads: this.slots.size, busy: [...this.slots].filter((s) => s.task).length,
-      queued: this.queue.length, maxQueue: this.maxQueue, timeoutMs: this.timeoutMs, ...this.counters };
+      queued: this.queue.length, maxQueue: this.maxQueue, timeoutMs: this.timeoutMs,
+      avgComputeMs: this.counters.completed > 0 ? this.counters.computeMs / this.counters.completed : 0,
+      ...this.counters };
   }
 
   submit(type, payload, { priority = 0, onProgress = null } = {}) {

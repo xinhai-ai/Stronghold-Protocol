@@ -55,6 +55,8 @@ test('bounded queue, priority, queued cancellation, and thread reuse', async (t)
   assert.deepEqual(order, ['high', 'low']);
   assert.equal(pool.stats().threads, 1);
   assert.equal(pool.stats().completed, 3);
+  assert.ok(pool.stats().avgComputeMs > 0);
+  assert.equal(pool.stats().avgComputeMs, pool.stats().computeMs / pool.stats().completed);
 });
 
 test('worker CPU does not block the parent event loop', async (t) => {
@@ -291,6 +293,7 @@ test('server shares one pool across matches, reports health, and responds over W
   assert.equal(srv.lobby.workerPool, srv.workerPool);
   const health = await (await fetch(`${srv.url}/healthz`)).json();
   assert.equal(health.workers.size, 1);
+  assert.equal(health.workers.avgComputeMs, 0);
   const cpu = fixturePool();
   t.after(() => cpu.close());
   await cpu.submit('burn', {}).promise;

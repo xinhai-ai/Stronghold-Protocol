@@ -111,6 +111,9 @@ npm start          # 启动服务器：http://localhost:3000
 | `HOST` | `0.0.0.0` | 监听地址（`127.0.0.1` = 只允许本机，放在反向代理后面时使用） |
 | `SP_COMBAT` | `client` | `client`：各玩家浏览器模拟自己的战斗（服务器负载极低）；`server`：由服务器模拟并推流 |
 | `SP_VERIFY` | `off` | 服务器复算客户端上报的战斗结果：`off` / `sample`（约 1/8 抽查）/ `all`（全部复算，更耗 CPU） |
+| `SP_WORKERS` | 自动，最多 8 | 固定计算线程数：可用 CPU 数减 2，至少 1；`0` 关闭，支持 1–32。AI 预演、普通/联防战场接管、结果复算使用此池 |
+| `SP_WORKER_QUEUE` | `256` | 等待计算任务的队列上限（不含执行中的任务）；满时必要计算退回分片执行，抽样校验跳过 |
+| `SP_WORKER_TIMEOUT_MS` | `120000` | 单个计算任务的超时，包含排队时间；超时的执行线程会终止并按需重建 |
 | `TRUST_PROXY` | `auto` | 是否信任 `X-Forwarded-For` 等转发头：`auto` 只信任来自本机 / 内网的代理；`1` 总是；`0` 从不 |
 | `SP_REDIS_URL` | 空 | 设置后把会话、房间与对局检查点存入 Redis（容器重启后玩家回到原座位，见 [docs/DEPLOY.md](docs/DEPLOY.md)「断点续玩」）；不设置 = 纯内存、行为与以前完全一致 |
 | `SP_REDIS_PREFIX` | `stronghold:` | Redis 键前缀（多个实例共用一个 Redis 时区分） |

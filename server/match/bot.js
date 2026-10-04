@@ -1035,6 +1035,7 @@ export function* createRehearsalSteps(m, ps, chosen, plans) {
   const cands = distinct.slice(0, m.botRehearsal);
   const byUid = new Map(chosen.map((p) => [p.uid, p]));
   const battles = [];
+  const options = [];
   for (const plan of cands) {
     const saved = [...ps.board.entries()];
     // the candidate's directions are set on the pieces while its input is taken; restored exactly afterwards
@@ -1045,12 +1046,14 @@ export function* createRehearsalSteps(m, ps, chosen, plans) {
       for (const [uid, k] of plan) { const p = byUid.get(uid); if (p) { p.dir = planDir(plan, uid); ps.board.set(k, p); } }
       ps.recompute();
       const spawns = withBounties(m.gd, m.round, wave, ps.bounties, ps.playerId).map((sp) => ({ ...sp, ownerPlayerId: ps.playerId }));
-      battles.push(m.newBattle({
+      const opts = {
         seed: deriveSeed(m.seed, `rehearse:${m.round}:${ps.seat}`), kind: 'normal', modeId: m.modeId, round: m.round,
         stageId: m.stageId, rect: { ...GEO.NORMAL_RECT }, timeLimit: wave.timeLimit, players: [ps.battleInput({ side: 'L', colOffset: 0 })],
         spawns: m._sanitizeSpawns(spawns, ps.playerId), routes: wave.routes, sharedBoss: null,
         flags: { layerGainsEnabled: false, ...m.gd.dp }, fieldId: `r:${ps.playerId}`, enemyOverrides: wave.overrides, waveId: wave.templateId,
-      }));
+      };
+      if (m.workerPool) options.push(structuredClone({ ...opts, content: m.battleContent }));
+      else battles.push(m.newBattle(opts));
     } catch (e) {
       failed = true;
       m.log.warn?.(`[match ${m.roomCode}] bot rehearsal failed: ${e && e.message}`);
@@ -1064,6 +1067,24 @@ export function* createRehearsalSteps(m, ps, chosen, plans) {
     yield;
   }
   const cap = Math.ceil(((wave.timeLimit || 60) + 5) * 30);
+  if (m.workerPool) {
+    let local = null;
+    return {
+      chosen, plans: cands, best: cands[0], done: false,
+      workerPayload: { options, playerId: ps.playerId, cap },
+      run(budgetMs) {
+        local ||= createRehearsalJob(options.map((o) => () => m.newBattle(o)), chosen, cands, ps.playerId, cap, m.log);
+        this.done = local.run(budgetMs);
+        this.best = local.best;
+        return this.done;
+      },
+    };
+  }
+  return createRehearsalJob(battles, chosen, cands, ps.playerId, cap, m.log);
+}
+
+/** The same scoring / early-exit algorithm in production workers and the local deterministic runner. */
+export function createRehearsalJob(battles, chosen, cands, playerId, cap, log) {
   let i = 0;
   let t = 0;
   let bestScore = -Infinity;
@@ -1081,20 +1102,21 @@ export function* createRehearsalSteps(m, ps, chosen, plans) {
         // a candidate that ended mid-slice (finished, cap, or beaten at a 64-tick check that skipped the budget test):
         // check the budget before stepping the next one, so a slice never exceeds 4 ticks past its budget
         if (timed && n > 0 && performance.now() - t0 >= budgetMs) return false;
-        const battle = battles[i];
+        let battle = battles[i];
+        if (typeof battle === 'function') battle = battles[i] = battle(); // lazy local fallback construction
         try {
           let beaten = false;
           while (t < cap && !battle.finished) {
             battle.step();
             t++;
             n++;
-            if ((t & 63) === 0 && bestLeaks < Infinity && countedLeaks(battle, ps.playerId) > bestLeaks) { beaten = true; break; }
+            if ((t & 63) === 0 && bestLeaks < Infinity && countedLeaks(battle, playerId) > bestLeaks) { beaten = true; break; }
             if (timed && (n & 3) === 0 && performance.now() - t0 >= budgetMs) return false;
           }
           if (!beaten) {
             if (!battle.finished) battle.forceEnd('timeout');
             const r = battle.result();
-            const pp = r && !r.synthetic && r.perPlayer && r.perPlayer[ps.playerId];
+            const pp = r && !r.synthetic && r.perPlayer && r.perPlayer[playerId];
             if (pp) {
               const leaks = (pp.leaked || []).filter((l) => l && l.counted !== false).length;
               const score = -leaks * 1000 + (pp.killed || 0) - i * 0.01;
@@ -1102,7 +1124,7 @@ export function* createRehearsalSteps(m, ps, chosen, plans) {
             }
           }
         } catch (e) {
-          m.log.warn?.(`[match ${m.roomCode}] bot rehearsal failed: ${e && e.message}`);
+          log.warn?.(`[rehearsal] failed: ${e && e.message}`);
         }
         battles[i] = null;
         i++;

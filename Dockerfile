@@ -17,6 +17,7 @@
 #       SP_REDIS_URL (redis://redis:6379/0 — keep sessions/rooms/matches across restarts, docs/DEPLOY.md §3.1),
 #       SP_REDIS_PREFIX, SP_REDIS_TTL, SP_REDIS_SAVE_MS,
 #       SP_ASSETS_CDN (https://cdn.example.com/stronghold — serve /assets/… from a CDN, docs/DEPLOY.md §3.2), DEBUG
+#       SP_WORKERS (auto, up to 8; 0 disables), SP_WORKER_QUEUE (256), SP_WORKER_TIMEOUT_MS (120000)
 
 ARG NODE_IMAGE=node:22-alpine
 

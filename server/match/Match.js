@@ -89,6 +89,8 @@
 //   opts.verify        'off' | 'sample' | 'all' (env SP_VERIFY, default 'off'): re-simulate accepted client results
 //                      ('sample': ~1 in 8, in a later callback, mismatches logged; 'all': before accepting — the
 //                      server's result wins on a mismatch)
+//   opts.workerPool    shared process-wide CPU pool (server/workers); production uses it for rehearsal, normal/unite
+//                      headless runs and verification. Virtual schedulers and custom Battle classes stay local.
 //
 // Engine-only extra options (tests / tools; the lobby never passes them):
 //   opts.scheduler     RealScheduler (default, uses opts.now) | VirtualScheduler (./scheduler.js)
@@ -257,6 +259,9 @@ export class Match {
     this.registry = opts.registry || getDefaultRegistry();
     this.dispatcher = new EffectDispatcher(this, this.registry);
     this.BattleClass = typeof opts.BattleClass === 'function' ? opts.BattleClass : Battle;
+    // The pool is owned by startServer. Virtual clocks / custom engines keep their synchronous contract.
+    this.workerPool = !this.sched.virtual && this.BattleClass === Battle ? opts.workerPool || null : null;
+    this._workerTasks = new Set();
     this.battleContent = opts.battleContent || 'full';
     this.timerScale = Number.isFinite(opts.timerScale) && opts.timerScale >= 0 ? opts.timerScale : 1;
     this.gameSpeed = Number.isFinite(opts.combatSpeed) && opts.combatSpeed > 0 ? Math.min(opts.combatSpeed, 200) : GAME_SPEED;
@@ -504,6 +509,8 @@ export class Match {
    * (alive × 25 %). Rounds passed = the rounds the player had survived when leaving.
    */
   _quit(ps) {
+    ps._botWorker?.cancel();
+    ps._botWorker = null;
     this.maybeEndInfo();
     if (!ps.alive) return;
     const phase = this.phase;
@@ -550,6 +557,7 @@ export class Match {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this._cancelWorkerTasks();
     if (this.runner) { try { this.runner.stop(); } catch { /* ignore */ } }
     this._stopClientCombat();
     for (const h of this._timers) { try { this.sched.clearTimeout(h); } catch { /* ignore */ } }
@@ -566,6 +574,28 @@ export class Match {
     if (this.disposed) return;
     try { fn(); } catch (e) { this.reportError('guard', e); }
     try { this.flush(); } catch (e) { this.reportError('flush', e); }
+  }
+
+  /** Track asynchronous CPU work; callbacks may mutate state only while their captured owner is still live. */
+  _submitWorker(type, payload, { valid, complete, failed, progress, priority = 0, fallback = 'using bounded local slices' }) {
+    const task = this.workerPool.submit(type, payload, { priority,
+      onProgress: progress ? (out) => { if (!this.disposed && !this.ended && valid()) this.guard(() => progress(out)); } : null });
+    this._workerTasks.add(task);
+    task.promise.then((out) => {
+      this._workerTasks.delete(task);
+      if (!this.disposed && !this.ended && valid()) this.guard(() => complete(out));
+    }, (err) => {
+      this._workerTasks.delete(task);
+      if (err.code === 'TASK_CANCELLED' || this.disposed || this.ended || !valid()) return;
+      this.log.warn?.(`[match ${this.roomCode}] worker ${type}: ${err.message}; ${fallback}`);
+      this.guard(() => failed(err));
+    });
+    return task;
+  }
+
+  _cancelWorkerTasks() {
+    for (const task of this._workerTasks) task.cancel();
+    this._workerTasks.clear();
   }
 
   reportError(label, e) {
@@ -1020,6 +1050,7 @@ export class Match {
   setAutoplay(ps, on) {
     if (ps.autoplay === on) return OK;
     ps.autoplay = on;
+    if (!on) { ps._botWorker?.cancel(); ps._botWorker = null; }
     this.markPublic();
     if (on) this.kickBot(ps);
     return OK;
@@ -1119,6 +1150,10 @@ export class Match {
       if (f.rearmRelease && f.mode === 'server') this._armRelease(f);
       f.rearmDeadline = false;
       f.rearmRelease = false;
+    }
+    for (const f of this.fields.filter((x) => x.verifying && x.resultSource === 'verified' && x.result)) {
+      f.verifying = false;
+      this._fieldDone(f);
     }
     if (this._bossClockOn && !this._bossClock && (this.phase === PHASE.FINAL_ASSAULT || this.phase === PHASE.HIDDEN_CORE)) {
       this._bossClock = this.later(BOSS_CLOCK_MS, () => this._bossClockTick());
@@ -1626,9 +1661,11 @@ export class Match {
    * (deadline) or a newer schedule for the seat drops the job (a step never leaves a transient board behind).
    */
   scheduleBotPrep(ps, i = 0) {
+    ps._botWorker?.cancel();
+    ps._botWorker = null;
     const round = this.round;
     const token = (ps._botPrepToken = (ps._botPrepToken || 0) + 1);
-    const valid = () => this.phase === PHASE.PREP && this.round === round && ps.alive && !ps.ready && ps.botControlled && ps._botPrepToken === token;
+    const valid = () => !this.disposed && !this.ended && this.phase === PHASE.PREP && this.round === round && ps.alive && !ps.ready && ps.botControlled && ps._botPrepToken === token;
     const bounded = Number.isFinite(this.botSliceMs);
     const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
     /** Step a generator until done or the slice budget is used; `then(value)` once it is done (null on an error). */
@@ -1668,6 +1705,19 @@ export class Match {
           if (done) { if (bounded) this.later(0, () => { if (valid()) end(job); }); else end(job); }
           else this.later(0, slice);
         };
+        if (this.workerPool && job.workerPayload) {
+          ps._botWorker = this._submitWorker('rehearsal', job.workerPayload, {
+            valid,
+            complete: ({ bestIndex }) => {
+              ps._botWorker = null;
+              job.best = job.plans[bestIndex] || job.plans[0];
+              job.done = true;
+              end(job);
+            },
+            failed: () => { ps._botWorker = null; this.later(0, slice); },
+          });
+          return;
+        }
         // bounded slices start in a callback of their own (the economy + default layout above already used this one)
         if (bounded) this.later(0, slice);
         else slice();
@@ -1707,6 +1757,7 @@ export class Match {
 
   endPrep() {
     if (this.phase !== PHASE.PREP) return;
+    for (const ps of this.order) { ps._botWorker?.cancel(); ps._botWorker = null; }
     this.setDeadline(0);
     const alive = this.alivePlayers();
     for (const ps of alive) this.dispatch(ps, 'onPrepEnd', { round: this.round });
@@ -1811,7 +1862,7 @@ export class Match {
   /** Aggregate a finished field's content/engine errors (battle.errors: unique records) for diagnostics. */
   _collectSimErrors(f, res) {
     this.simErrors += Number(res && res.errors) || 0;
-    const list = f && f.battle && Array.isArray(f.battle.errors) ? f.battle.errors : [];
+    const list = f && Array.isArray(f.workerErrors) ? f.workerErrors : f && f.battle && Array.isArray(f.battle.errors) ? f.battle.errors : [];
     for (const e of list) {
       if (!e || typeof e !== 'object') continue;
       const key = `${e.label}|${e.who || ''}|${e.message}`;
@@ -1930,6 +1981,9 @@ export class Match {
 
   _clearFieldTimers(f) {
     if (!f || !f.cc) return;
+    f.workerTask?.cancel();
+    f.workerTask = null;
+    f.verifying = false;
     for (const k of ['deadlineTimer', 'doneTimer', 'waitTimer', 'sliceTimer']) if (f[k]) { this.cancel(f[k]); f[k] = null; }
     f.job = null;
   }
@@ -2137,6 +2191,7 @@ export class Match {
   /** A client field's result deadline: its time limit on the field clock + RESULT_GRACE_MS (then the server takes over). */
   _armDeadline(f) {
     if (f.deadlineTimer) { this.cancel(f.deadlineTimer); f.deadlineTimer = null; }
+    if (f.verifying) return;
     const lim = f.spec.timeLimit > 0 ? f.spec.timeLimit : 60;
     const at = f.startAt + Math.round((lim / this.gameSpeed) * 1000) + RESULT_GRACE_MS;
     f.deadlineTimer = this.later(Math.max(0, at - this.sched.now()), () => {
@@ -2161,7 +2216,10 @@ export class Match {
    * on the field's clock, so the teammates' progress UI and the round pacing stay as if it ran live); boss fields in
    * real time on the pacer (they share the pool), fast-forwarded to the field's clock on a takeover.
    */
-  _runOnServer(f, reason) {
+  _runOnServer(f, reason, { local = false } = {}) {
+    f.workerTask?.cancel();
+    f.workerTask = null;
+    f.verifying = false;
     const prev = f.mode === 'client' ? f.authority : null;
     if (prev) {
       this.verifyStats.takeovers++;
@@ -2173,6 +2231,28 @@ export class Match {
     // the former authority (still online after a timeout / an invalid result) stops reporting and keeps its view
     if (prev) this.sendTo(prev, { t: 'b.end', battleId: f.battleId, fieldId: f.fieldId, reason: 'takeover' });
     if (f.kind === 'boss' || f.kind === 'hidden') { this._bossServerRun(f); return; }
+    if (this.workerPool && !local) {
+      const battleId = f.battleId;
+      f.timeline = [[0, 0, f.progress.total]];
+      const task = this._submitWorker('battle', { spec: f.spec, players: f.players, progress: true }, {
+        priority: 1,
+        valid: () => this.fields.includes(f) && f.battleId === battleId && !f.done && f.workerTask === task,
+        progress: ({ reset, samples }) => { if (reset) f.timeline = samples; else f.timeline.push(...samples); },
+        complete: (out) => {
+          f.workerTask = null;
+          f.result = out.result;
+          f.resultSource = 'server';
+          f.timeline = out.timeline;
+          f.workerErrors = out.errors;
+          f.endGt = out.time;
+          this._armRelease(f);
+        },
+        failed: () => { f.workerTask = null; this._runOnServer(f, reason, { local: true }); },
+      });
+      f.workerTask = task;
+      this._armProgressTicker();
+      return;
+    }
     const job = new HeadlessJob(this._specBattle(f.spec), { onError: (e) => this.reportError(`field ${f.fieldId} step`, e), players: f.players });
     f.job = job;
     f.battle = job.battle;
@@ -2346,7 +2426,7 @@ export class Match {
   _onResult(ps, msg) {
     if (!this.clientCombat) return fail(ERR.WRONG_PHASE, 'server-run combat');
     const f = this._fieldByBattle(msg.battleId);
-    if (!f || f.done || f.heldResult || f.mode !== 'client' || f.authority !== ps.playerId) return OK;
+    if (!f || f.done || f.heldResult || f.verifying || f.mode !== 'client' || f.authority !== ps.playerId) return OK;
     const bossLike = f.kind === 'boss' || f.kind === 'hidden';
     const v = validateClientResult(f.spec, msg.result, { gd: this.gd });
     if (!v.ok) {
@@ -2392,6 +2472,29 @@ export class Match {
       }
       this._bossResultDamage(f, result);
     } else {
+      if (this.workerPool && this.verifyMode === 'all') {
+        // Transport acknowledgement stays synchronous; settlement waits for the authoritative calculation.
+        f.verifying = true;
+        if (f.deadlineTimer) { this.cancel(f.deadlineTimer); f.deadlineTimer = null; }
+        const battleId = f.battleId;
+        const task = this._submitWorker('battle', { spec: f.spec, players: f.players }, {
+          priority: 2,
+          valid: () => this.fields.includes(f) && f.battleId === battleId && !f.done && f.verifying && f.workerTask === task,
+          complete: (out) => {
+            f.workerTask = null;
+            f.result = this._compareVerified(f, result, out.result) || result;
+            f.resultSource = 'verified';
+            f.workerErrors = out.errors;
+            // Pause freezes settlement too; the verified result is released by _resume().
+            if (this.paused) return;
+            f.verifying = false;
+            this._fieldDone(f);
+          },
+          failed: () => { f.workerTask = null; this._runOnServer(f, 'verify-failed', { local: true }); },
+        });
+        f.workerTask = task;
+        return OK;
+      }
       result = this._verifyResult(f, result);
     }
     f.result = result;
@@ -2407,28 +2510,40 @@ export class Match {
   }
 
   /**
-   * SP_VERIFY: re-simulate an accepted client result ('all': now, the server's result wins on a mismatch; 'sample':
-   * ~1 battle in 8 in a later callback, mismatches are only logged).
+   * Local/virtual verification and background worker sampling. Production strict verification waits in _onResult.
    */
   _verifyResult(f, result) {
     if (this.verifyMode === 'off') return result;
     const check = () => {
       const run = runHeadless(this._specBattle(f.spec), { players: f.players });
-      const mine = validateClientResult(f.spec, compactForVerify(run.result), { gd: this.gd });
-      const server = mine.ok ? mine.result : run.result;
-      this.verifyStats.checked++;
-      if (resultDigest(server).hash !== resultDigest(result).hash) {
-        this.verifyStats.mismatches++;
-        this.log.warn?.(`[match ${this.roomCode}] ${f.fieldId}: client result differs from the server's simulation`);
-        return server;
-      }
-      return null;
+      return this._compareVerified(f, result, run.result);
     };
     if (this.verifyMode === 'all') return check() || result;
     let h = 0;
     for (let i = 0; i < f.battleId.length; i++) h = (h * 31 + f.battleId.charCodeAt(i)) >>> 0;
-    if (h % 8 === 0) this.later(0, () => { try { check(); } catch (e) { this.reportError('verify', e); } });
+    if (h % 8 === 0) {
+      if (this.workerPool) {
+        this._submitWorker('battle', { spec: f.spec, players: f.players }, {
+          valid: () => true, // diagnostic only: no settlement or field state is written
+          complete: (out) => { this._compareVerified(f, result, out.result); },
+          failed: () => {}, // sampling is optional; saturation never starts a synchronous full battle
+          fallback: 'sampling skipped',
+        });
+      } else this.later(0, () => { try { check(); } catch (e) { this.reportError('verify', e); } });
+    }
     return result;
+  }
+
+  _compareVerified(f, result, simulated) {
+    const mine = validateClientResult(f.spec, compactForVerify(simulated), { gd: this.gd });
+    const server = mine.ok ? mine.result : simulated;
+    this.verifyStats.checked++;
+    if (resultDigest(server).hash !== resultDigest(result).hash) {
+      this.verifyStats.mismatches++;
+      this.log.warn?.(`[match ${this.roomCode}] ${f.fieldId}: client result differs from the server's simulation`);
+      return server;
+    }
+    return null;
   }
 
   // ---- watching (research 09 §3.1 / §6.3)
@@ -3057,6 +3172,7 @@ export class Match {
   finish({ victory, hiddenCleared = false, reason = 'defeat' }) {
     if (this.ended || this.disposed) return;
     this.ended = true;
+    this._cancelWorkerTasks();
     if (this.runner) { try { this.runner.stop(); } catch { /* ignore */ } this.runner = null; }
     this._stopClientCombat();
     this.cancel(this._phaseTimer);

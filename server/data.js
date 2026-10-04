@@ -93,6 +93,11 @@ export function getData({ dir = DATA_DIR, log = console } = {}) {
   return singleton;
 }
 
+/** Install the owning server's immutable snapshot before a simulation worker imports content modules. */
+export function setData(data) {
+  singleton = deepFreeze(data);
+}
+
 /** Drop the singleton so the next getData() reloads (tests / hot reload). */
 export function resetData() { singleton = null; }
 

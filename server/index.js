@@ -57,6 +57,7 @@ import { getData, loadData } from './data.js';
 import { parseBotRehearsal, parseCombat, parseVerify } from './match/Match.js';
 import { openStoreFromEnv } from './redis.js';
 import { Persister, restoreServer, SAVE_MS } from './persist.js';
+import { SimulationPool, workerSettings } from './workers/pool.js';
 import { createResourceIndex, RESOURCE_MANIFEST_FILE } from './resources.js';
 import { PROTOCOL_VERSION, APP_VERSION } from '../shared/constants.js';
 import { MEDIA_PREFIX, AUDIO_EXTS } from '../shared/media.js';
@@ -695,10 +696,11 @@ function makeLogger(quiet) {
  *   maxConnectionsPerAddr?: number, maxRoomsPerAddr?: number, maxMatchesPerAddr?: number, resyncMinGapMs?: number,
  *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number,
  *   store?: object | null, resume?: boolean, saveMs?: number, assetsCdn?: string,
+ *   workers?: number, workerQueue?: number, workerTimeoutMs?: number, workerPool?: SimulationPool | null,
  * }} [opts]
  * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: WebSocketServer,
  *                     lobby: Lobby, network: Network, registry: SessionRegistry, store: object | null,
- *                     persister: Persister | null, close: () => Promise<void> }>}
+ *                     persister: Persister | null, workerPool: SimulationPool | null, close: () => Promise<void> }>}
  */
 export async function startServer(opts = {}) {
   const port = opts.port ?? (process.env.PORT != null && process.env.PORT !== '' ? Number(process.env.PORT) : 3000);
@@ -720,6 +722,15 @@ export async function startServer(opts = {}) {
 
   // The process-wide singleton serves the default data dir; a custom dir (tests) gets its own copy.
   const data = opts.dataDir ? loadData(dataDir, { log }) : getData({ dir: dataDir, log });
+  const workerConfig = workerSettings();
+  for (const [option, key] of [['workers', 'size'], ['workerQueue', 'maxQueue'], ['workerTimeoutMs', 'timeoutMs']]) {
+    if (opts[option] != null) workerConfig[key] = opts[option];
+  }
+  const ownsWorkerPool = opts.workerPool === undefined;
+  if (!Number.isInteger(workerConfig.size) || workerConfig.size < 0 || workerConfig.size > 32) {
+    throw new RangeError('workers must be 0..32');
+  }
+  const workerPool = ownsWorkerPool ? (workerConfig.size > 0 ? new SimulationPool({ data, ...workerConfig }) : null) : opts.workerPool;
   const netOptions = {};
   for (const k of ['reconnectWindowMs', 'heartbeatMs', 'helloTimeoutMs', 'ratePerSec', 'rateBurst', 'maxConnections', 'abuseDropsPerSec',
     'maxConnectionsPerAddr', 'heavyPerSec', 'heavyBurst', 'trustProxy']) {
@@ -746,7 +757,8 @@ export async function startServer(opts = {}) {
   log.info(`[http] limits: rooms ${lobbyOptions.maxRooms} (${perNetwork(lobbyOptions.maxRoomsPerAddr)}/network), matches ${perNetwork(lobbyOptions.maxMatchesPerAddr)}/network, sockets ${netOptions.maxConnections} (${perNetwork(netOptions.maxConnectionsPerAddr)}/network)`);
   log.info(`[match] tuning: combat ${parseCombat(process.env.SP_COMBAT)}, verify ${parseVerify(process.env.SP_VERIFY)}, bot rehearsal ${parseBotRehearsal(process.env.SP_BOT_REHEARSAL)} (docs/DEPLOY.md §3.4)`);
   const registry = new SessionRegistry({ reconnectWindowMs: netOptions.reconnectWindowMs ?? NET_DEFAULTS.reconnectWindowMs });
-  const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions });
+  log.info(`[workers] ${workerPool ? `${workerPool.size} threads, queue ${workerPool.maxQueue}, timeout ${workerPool.timeoutMs} ms (lazy start)` : 'disabled'}`);
+  const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions, workerPool });
   // Resume the last state before listening: every reconnecting client is recognized by its token right away.
   const persister = store ? new Persister({ store, registry, lobby, log, now: opts.now, saveMs }) : null;
   if (store && opts.resume !== false) {
@@ -791,6 +803,7 @@ export async function startServer(opts = {}) {
         ok: true, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
         persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.matchDocs.size } : null,
+        workers: workerPool?.stats() || null,
         assetsCdn: assetsCdn || null,
         limits: {
           maxRooms: lobby.opts.maxRooms,
@@ -861,6 +874,8 @@ export async function startServer(opts = {}) {
   } catch (e) {
     network.close(); // stop heartbeat/sweep timers of the half-built server
     persister?.stop();
+    lobby.shutdown('shutdown');
+    if (ownsWorkerPool) await workerPool?.close();
     throw e;
   }
   server.on('error', (e) => log.error('[http] server error', e));
@@ -882,6 +897,7 @@ export async function startServer(opts = {}) {
       }
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       network.close();
+      if (ownsWorkerPool) await workerPool?.close();
       await new Promise((resolve) => {
         server.close(() => resolve());
         server.closeIdleConnections?.();
@@ -893,7 +909,7 @@ export async function startServer(opts = {}) {
     return closing;
   }
 
-  return { port: actualPort, host, url, server, wss, lobby, network, registry, store: store || null, persister, close };
+  return { port: actualPort, host, url, server, wss, lobby, network, registry, store: store || null, persister, workerPool, close };
 }
 
 // ---------------------------------------------------------------------------------------------------

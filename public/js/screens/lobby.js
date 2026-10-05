@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, modeIdFor } from '../../../shared/constants.js';
-import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
+import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, OnlineCount, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
 import { LoadoutButton } from './loadout.js';
@@ -211,10 +211,28 @@ function DifficultyCard({ roomMode, difficulty, selected, onSelect }) {
   </button>`;
 }
 
+function MatchQueuePanel({ queue, onCancel }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, []);
+  if (!queue) return null;
+  const left = Math.max(0, Math.ceil((Number(queue.deadlineAt) - now) / 1000));
+  return html`<section class="match-queue brackets" aria-live="polite">
+    <div class="match-queue__scan" aria-hidden="true"></div>
+    <div class="match-queue__head"><${Icon} name="signal" /><div><${MicroLabel} tone="mint">MATCHMAKING QUEUE<//><strong>正在寻找同盟队友</strong></div><span class="match-queue__count num">${queue.count}/${queue.capacity}</span></div>
+    <div class="match-queue__meta"><span>已等待 <b class="num">${left}s</b></span><span>${queue.fillBots ? '60 秒后由 AI 补齐空位' : '仅匹配真实队友'}</span></div>
+    <${Button} variant="danger" size="sm" icon="close" onClick=${onCancel}>退出匹配<//>
+  </section>`;
+}
+
 /** Lobby screen component. */
 export function LobbyScreen() {
   const me = useStore((s) => s.me, shallowEqual);
   const conn = useStore((s) => s.connection, shallowEqual);
+  const presence = useStore((s) => s.presence, shallowEqual);
+  const matchQueue = useStore((s) => s.ui.matchQueue);
   useData('config');
   const [roomMode, setRoomMode] = useState(() => (loadPref('lobby.mode', 'coop') === 'solo' ? 'solo' : 'coop'));
   const [difficulty, setDifficulty] = useState(() => {
@@ -245,6 +263,8 @@ export function LobbyScreen() {
     }
   };
   const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty }));
+  const matchmaking = () => run('match', () => net.request('match.join', { mode: roomMode, difficulty, fillBots: true }));
+  const cancelMatchmaking = () => run('cancel-match', () => net.request('match.leave', {}));
   const join = (c = code) => {
     const k = normalizeCode(c);
     if (!CODE_RE.test(k)) { toast(`同盟密钥为 ${ROOM_CODE_LEN} 位字母或数字`, 'warn'); return; }
@@ -266,6 +286,7 @@ export function LobbyScreen() {
         <h1 class="topbar__title">选择模拟协议</h1>
       </div>
       <div class="topbar__right">
+        <${OnlineCount} online=${presence.online} />
         <${GuideButton} class="lobby-guide" variant="secondary" />
         <${LoadoutButton} from="lobby" size="sm" class="lobby-loadout" />
         <div class="me-chip">
@@ -299,6 +320,7 @@ export function LobbyScreen() {
           </div>
         <//>
         <${TipsPanel} />
+        <${MatchQueuePanel} queue=${matchQueue} onCancel=${cancelMatchmaking} />
       </section>
 
       <section class="lobby-right">
@@ -308,13 +330,13 @@ export function LobbyScreen() {
         </div>
         <div class="create-box">
           <${Tooltip} block=${true} text=${online ? null : '正在连接服务器…'}>
-            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
-              ${roomMode === 'solo' ? '开始独立模拟' : '创建同盟'}
+            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === (roomMode === 'solo' ? 'match' : 'create')} disabled=${!online || !!matchQueue} onClick=${roomMode === 'solo' ? matchmaking : create}>
+              ${roomMode === 'solo' ? '开始匹配' : '创建同盟'}
             <//>
           <//>
           <div class="create-box__hint">
             ${online
-              ? html`<span>${roomMode === 'solo' ? '创建后即可开始模拟' : '创建后可邀请好友或添加 AI 队友'}</span>`
+              ? html`<span>${roomMode === 'solo' ? '直接加入匹配池，满 4 人后进入准备页面' : '创建后可邀请好友或添加 AI 队友'}</span>`
               : html`<${Spinner} size="sm" label="CONNECTING" />`}
           </div>
         </div>

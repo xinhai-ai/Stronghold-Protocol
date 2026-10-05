@@ -757,6 +757,15 @@ export function PingPill({ ms, online = true, class: cls }) {
   </span>`;
 }
 
+/** Live authenticated-player count delivered by the WebSocket presence stream. */
+export function OnlineCount({ online, class: cls }) {
+  const value = Number.isInteger(online) && online >= 0 ? online : '--';
+  return html`<span class=${cx('online-count', cls)} title="当前在线人数">
+    <${Icon} name="users" class="online-count__icon" />
+    <span class="online-count__value num">${value}</span><span class="online-count__label">在线</span>
+  </span>`;
+}
+
 /**
  * Official difficulty glyph (data/assets.json `ui['modeIcon/mode_<difficulty>_icon']`: rook, rook +
  * swords, castle + swords, castle + warning) — the SVG rook while assets are missing or fail to load.

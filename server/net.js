@@ -540,6 +540,7 @@ export class Network {
     this.conns = new Map();
     /** @type {Map<string, number>} open sockets per client network key */
     this.connsPerKey = new Map();
+    this.lastPresenceCount = 0;
     this.closed = false;
     this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
     this.heartbeatTimer.unref?.();
@@ -550,6 +551,29 @@ export class Network {
 
   /** Number of open sockets. */
   get connectionCount() { return this.conns.size; }
+
+  /** Number of authenticated sessions currently bound to a live socket. */
+  get onlineCount() {
+    let n = 0;
+    for (const conn of this.conns.values()) {
+      if (conn.session?.connected && conn.session.ws === conn.ws) n++;
+    }
+    return n;
+  }
+
+  /** Broadcast an online-count change to existing clients. The new socket receives it in `welcome`. */
+  broadcastPresence(excludeWs = null) {
+    if (this.closed) return;
+    const online = this.onlineCount;
+    if (online === this.lastPresenceCount) return;
+    this.lastPresenceCount = online;
+    const data = encode({ t: 'presence', online, serverNow: this.now() });
+    if (data == null) return;
+    for (const conn of this.conns.values()) {
+      if (conn.ws === excludeWs || conn.closing) continue;
+      sendRaw(conn.ws, data);
+    }
+  }
 
   /**
    * Aggregate per-network socket usage for /healthz (docs/DEPLOY.md §3.4). Deliberately no addresses: /healthz is a
@@ -704,7 +728,7 @@ export class Network {
     session.addr = conn.ip;
     session.limitKey = conn.key;
 
-    const welcome = { t: 'welcome', playerId: session.playerId, token: session.token, name: session.name, serverNow: now, version: PROTOCOL_VERSION, resumed };
+    const welcome = { t: 'welcome', playerId: session.playerId, token: session.token, name: session.name, serverNow: now, version: PROTOCOL_VERSION, resumed, online: this.onlineCount };
     if (validRid(rid)) welcome.rid = rid;
     this.reply(conn, welcome);
     try {
@@ -712,6 +736,7 @@ export class Network {
     } catch (e) {
       this.log.error('[net] onHello crashed', e);
     }
+    this.broadcastPresence(conn.ws);
   }
 
   /** The session moved to a new socket: unbind and close the old one without firing a disconnect. */
@@ -740,6 +765,7 @@ export class Network {
     s.disconnectedAt = this.now();
     if (this.closed) return;
     try { this.handler.onDisconnect?.(s); } catch (e) { this.log.error('[net] onDisconnect crashed', e); }
+    this.broadcastPresence();
   }
 
   /** Ping every socket; terminate the ones that did not answer since the previous heartbeat. */

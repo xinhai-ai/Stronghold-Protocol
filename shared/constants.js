@@ -134,6 +134,8 @@ export const ERR = Object.freeze({
   TEMP_NOT_EMPTY: 'TEMP_NOT_EMPTY',
   ELIMINATED: 'ELIMINATED',
   INTERNAL: 'INTERNAL',
+  MATCHING: 'MATCHING',             // already waiting in the matchmaking queue
+  NOT_MATCHING: 'NOT_MATCHING',     // no matchmaking ticket to cancel
 });
 
 export const ERR_TEXT = {
@@ -143,6 +145,7 @@ export const ERR_TEXT = {
   BAD_TILE: '无法部署在该位置', BAD_TARGET: '无效的目标', SOLD_OUT: '已售出', MAX_LEVEL: '调度中心已达最高等级',
   NOT_YOUR_TURN: '尚未轮到你', ALREADY: '已完成该操作', TEMP_NOT_EMPTY: '临时整备区不为空', ELIMINATED: '你已被淘汰',
   INTERNAL: '服务器内部错误',
+  MATCHING: '正在匹配中', NOT_MATCHING: '当前没有进行中的匹配',
 };
 
 // ---- Emotes (交流, research 09 §4) -----------------------------------------------------------------------------

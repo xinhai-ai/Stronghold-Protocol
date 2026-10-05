@@ -3,6 +3,11 @@
    ========================================================================================== */
 
 .room-screen .topbar { height: 1.36rem; }
+.room-match-actions { display: flex; align-items: center; justify-content: flex-end; gap: .12rem; flex-wrap: wrap; }
+.room-match-state { display: inline-flex; align-items: center; gap: .06rem; color: var(--mint-400); font-size: .15rem; }
+.room-match-state .icon { width: .18rem; height: .18rem; }
+.fill-bots { display: inline-flex; align-items: center; gap: .06rem; color: var(--text-lo); font-size: .14rem; cursor: pointer; }
+.fill-bots input { accent-color: var(--mint-500); width: .18rem; height: .18rem; }
 .room-ping { display: flex; flex-direction: column; align-items: flex-start; gap: .04rem; }
 
 /* ---- invite key ---------------------------------------------------------------------------------------- */

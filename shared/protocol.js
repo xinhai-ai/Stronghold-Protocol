@@ -246,6 +246,14 @@ export const C2S = {
   'room.addBot': {},
   'room.removeBot': { seat: (v) => isInt(v, 0, MAX_SEATS - 1) },
   'room.start': {},
+  // matchmaking: a solo operator joins the shared co-op pool; a room host queues the whole party.
+  'match.join': {
+    mode: (v) => v === 'coop' || v === 'solo',
+    difficulty: (v) => DIFFICULTIES.includes(v),
+    fillBots: isBool,
+    $optional: ['fillBots'],
+  },
+  'match.leave': {},
   // operator loadout (DESIGN §16): stored per session/seat; accepted until the match leaves INFO_CHECK
   'room.loadout': { entries: isLoadoutEntries },
 
@@ -297,9 +305,9 @@ export const C2S = {
 
 // Server → client message types (documentation + client dispatch table keys).
 export const S2C = [
-  'welcome', 'ok', 'error', 'pong',
+  'welcome', 'ok', 'error', 'pong', 'presence',
   'site.announcement', // { serverNow, announcement: { id, text, level, startAt, endAt } | null } — global temporary notice
-  'room.state', 'room.closed',
+  'room.state', 'room.closed', 'match.queue',
   'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.result',
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)
   'm.unitStats',

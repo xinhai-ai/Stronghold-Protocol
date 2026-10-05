@@ -14,7 +14,8 @@
 //   ticker      – recent `m.ticker` lines, emotes – recent `m.emote` events
 //   announcement – active site-wide temporary notice (absolute server start / end), independent of match resets
 //   clock       – { offset, rtt } server clock correction: serverNow ≈ Date.now() + offset
-//   ui          – small bits of local UI state shared between screens
+//   presence    – { online, serverNow } authenticated WebSocket player count
+//   ui          – small bits of local UI state shared between screens, including matchmaking status
 //
 // The store is framework-agnostic (get/set/subscribe); `useStore(selector)` binds it to Preact.
 // Updates are immutable at the top level: `set` shallow-merges a patch object, `patch(key, obj)`
@@ -84,7 +85,8 @@ export const initialState = Object.freeze({
   emotes: [],
   announcement: null,
   clock: { offset: 0, rtt: null, synced: false },
-  ui: { pendingJoin: null, restoring: false },
+  presence: { online: null, serverNow: null },
+  ui: { pendingJoin: null, restoring: false, matchQueue: null },
 });
 
 /** The app-wide store singleton. */

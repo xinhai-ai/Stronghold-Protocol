@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { setData } from '../data.js';
+import { memorySample } from './memory.js';
 
 // Content imports getData() too: never read a different on-disk version when this thread starts later.
 setData(workerData.data);
@@ -38,8 +39,8 @@ parentPort.on('message', ({ id, type, payload, cancel }) => {
       while (!job.run(4)) if (cancelled()) throw new Error('cancelled');
       value = { bestIndex: job.best };
     } else throw new Error(`unknown simulation task: ${type}`);
-    parentPort.postMessage({ id, value });
+    parentPort.postMessage({ id, value, memory: memorySample() });
   } catch (err) {
-    parentPort.postMessage({ id, error: err.message });
+    parentPort.postMessage({ id, error: err.message, memory: memorySample() });
   }
 });

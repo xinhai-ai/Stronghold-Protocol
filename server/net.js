@@ -592,6 +592,16 @@ export class Network {
     return { networks: this.connsPerKey.size, worstSockets, overSockets };
   }
 
+  bufferedBytes() {
+    let total = 0, max = 0;
+    for (const { ws } of this.conns.values()) {
+      const bytes = ws.bufferedAmount || 0;
+      total += bytes;
+      max = Math.max(max, bytes);
+    }
+    return { total, max };
+  }
+
   /**
    * Upgrade-time admission check (server/index.js): null to accept, otherwise the reason to refuse.
    * @param {import('node:http').IncomingMessage} req

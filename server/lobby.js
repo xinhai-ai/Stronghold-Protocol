@@ -256,7 +256,11 @@ export class Lobby {
     }
     const entries = new Set(this.queueByPlayer.values());
     queued = entries.size;
-    return { rooms: this.rooms.size, matches, humans, bots, spectators, queued };
+    const roomMatches = matches;
+    let standaloneMatches = 0;
+    for (const ctx of this.activeQueueMatches) if (!ctx.room && !ctx.disposed && !ctx.ended) standaloneMatches++;
+    matches += standaloneMatches;
+    return { rooms: this.rooms.size, matches, roomMatches, standaloneMatches, humans, bots, spectators, queued };
   }
 
   /**
@@ -416,6 +420,7 @@ export class Lobby {
     if (this.matchQueueTimer) { clearInterval(this.matchQueueTimer); this.matchQueueTimer = null; }
     for (const entry of [...new Set(this.queueByPlayer.values())]) this.cancelMatchQueue(entry, reason);
     for (const room of [...this.rooms.values()]) this.disposeRoom(room, reason);
+    for (const ctx of [...this.activeQueueMatches]) this.disposeMatchCtx(ctx);
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
     for (const t of this.resyncTimers.values()) clearTimeout(t);
@@ -1422,6 +1427,11 @@ export class Lobby {
     ctx.disposed = true;
     ctx.live = false;
     this.activeQueueMatches.delete(ctx);
+    // A room can close without onQueuedMatchEnd (empty, shutdown, failure). Surviving sessions must not own its
+    // disposed Match/fields through activeMatchCtx, including guests matched from another party.
+    for (const session of this.registry.all()) {
+      if (session.activeMatchCtx === ctx) session.activeMatchCtx = null;
+    }
     try { ctx.match?.dispose?.(); } catch (e) { this.log.error('[lobby] match.dispose threw', e); }
   }
 

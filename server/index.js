@@ -439,7 +439,7 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
   const shimTag = `"shim-${shimBody.length.toString(16)}"`;
   const gzipCache = new GzipCache();
 
-  return async function serveStatic(req, res, rawPath, query) {
+  const serveStatic = async function (req, res, rawPath, query) {
     let decoded;
     try { decoded = decodeURIComponent(rawPath); } catch { sendError(req, res, 400, '请求地址无效 · Bad request'); return; }
     if (!decoded.startsWith('/') || decoded.includes('\0') || decoded.includes('\\')) {
@@ -562,6 +562,9 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
     }
     await serveFile(req, res, absPath, stat, mount.name, segments, query, gzipCache, log);
   };
+  serveStatic.cacheStats = () => ({ gzipBytes: gzipCache.total, gzipEntries: gzipCache.map.size,
+    gzipLimitBytes: gzipCache.maxTotal, gzipInflight: gzipCache.inflight.size });
+  return serveStatic;
 }
 
 /** `0` (or a missing value) means "no per-network cap": say so instead of printing a pointless 0. */
@@ -891,9 +894,14 @@ export async function startServer(opts = {}) {
         // older than this reloads itself, so a deploy reaches clients that never reload
         build: buildTag(),
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
-        persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.checkpointKeys.size } : null,
+        persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.checkpointKeys.size,
+          snapshotBytes: persister.encoder.seed?.bytes.byteLength || 0, workerMemory: persister.encoder.memory } : null,
         workers: workerPool?.stats() || null,
         announcements: announcements.stats(),
+        // rss is process-wide (all Workers); other counters describe this main thread, in bytes.
+        memory: process.memoryUsage(),
+        staticCache: serveStatic.cacheStats(),
+        socketBuffers: network.bufferedBytes(),
         websocket: { compression: wsCompression, threshold: WS_DEFLATE_THRESHOLD },
         assetsCdn: assetsCdn || null,
         limits: {

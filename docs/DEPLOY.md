@@ -347,6 +347,12 @@ location = /resource-sw.js {
 
 本机基准：`node tools/workerbench.mjs --workers 4 --battles 24`。工具先预热，再比较相同战斗的同步执行和 Worker 池执行，输出结果摘要一致性、吞吐及主线程定时器最大延迟。它不包含真实 WebSocket 流量、Redis 写入或完整对局，不能作为在线玩家容量承诺。
 
+**内存诊断**：Docker 的 `MEM USAGE` 是容器总内存。`/healthz.memory.rss` 是整个 Node 进程的驻留内存（含所有 Worker）；同一对象的 `heapUsed` / `heapTotal` / `external` / `arrayBuffers` 是主线程计数，单位均为字节，`arrayBuffers` 已包含在 `external` 中，不能再相加。`workers.memory[].sample` 与 `persist.workerMemory` 是各线程最近完成任务时的采样，`sampledAt` 是采样时间，包含尚未 GC 的临时对象，不是当前实时堆。
+
+模拟 Worker 各有独立 JS 堆和游戏数据副本，启动后为复用而保持存活。`SP_WORKERS=4` 比默认最多 8 个线程节省内存，但会减少计算并发度，调低后应观察任务队列和超时。静态 gzip 缓存按字节淘汰，上限 96 MiB，实际占用见 `staticCache.gzipBytes`；WebSocket 发送积压见 `socketBuffers.total` / `max`；`persist.snapshotBytes` 是最近保存的 JSON 字节数。房间数不等于活跃对局数，`matches` 包含所有运行对局，`roomMatches` / `standaloneMatches` 区分房间与无房间匹配。
+
+本地检查可运行 `node --expose-gc tools/memorybench.mjs`：比较 276 个信息确认阶段房间创建 / 销毁前后的主线程堆，以及 1 / 4 / 8 个 Worker 完成真实战斗后的进程 RSS。仅对主线程显式 GC，不采集生产环境，也不模拟 276 场同时战斗，不能当作生产内存上限。房间 / 对局销毁后主线程已用堆下降，而 RSS 不马上下降，可能是其他线程、V8 保留的堆或原生分配器的高水位；应结合持续采样判断是否泄漏，不能只凭一个 Docker 数值定性。
+
 计算池支持单进程利用多个核。多实例部署仍需房间/重连路由和独立存档归属；直接用 PM2 cluster 并共用同一 Redis 存档键会导致路由错误和存档覆盖。
 
 ### 3.6 全站临时公告

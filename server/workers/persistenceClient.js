@@ -9,6 +9,7 @@ export class PersistenceWorker {
     this.nextId = 0;
     this.closed = false;
     this.seed = null;
+    this.memory = null;
     this.stopping = new Set();
   }
 
@@ -20,6 +21,7 @@ export class PersistenceWorker {
       const worker = new Worker(new URL('./persistence.js', import.meta.url), { workerData: { seed: this.seed } });
       this.worker = worker;
       worker.on('message', ({ id, error, ...value }) => {
+        if (value.memory) this.memory = value.memory;
         const task = this.pending.get(id);
         if (!task) return;
         this.pending.delete(id);
@@ -62,5 +64,7 @@ export class PersistenceWorker {
     this.closed = true;
     if (this.worker) this.drop(this.worker, new Error('persistence worker closed'));
     await Promise.all([...this.stopping]);
+    this.seed = null;
+    this.memory = null;
   }
 }

@@ -4,7 +4,8 @@
 //   * Sessions — playerId, secret token, nickname, operator loadout, the room they are in and their reconnect window.
 //     A client that reconnects with its token after a restart is the same player, with the same seat.
 //   * Rooms — code, mode, difficulty, host, seats (humans + AI), who is ready, the room's match counter.
-//   * Running matches — via server/match/snapshot.js: the *last checkpoint*, which is only taken in the phases whose
+//   * Running matches (including standalone and room-bound matchmaking matches) — via server/match/snapshot.js: the
+//     *last checkpoint*, which is only taken in the phases whose
 //     state is fully serializable (INFO_CHECK / BAND_DRAFT / SP_DRAFT / ROUND_START / PREP). A match interrupted during
 //     a battle therefore resumes at the start of the round it was in: same round, operators, items, economy, LP and
 //     pool, with the round's battle fought again. A match that never reached a checkpoint (it started during the last
@@ -146,6 +147,11 @@ export function restoreServer({ doc, registry, lobby, now = Date.now(), log = no
     if (lobby.restoreMatch(room, checkpoint)) stats.matches++;
     else log.warn?.(`[persist] ${room.code}: the running match could not be resumed — room kept in the lobby`);
   }
+  for (const [key, checkpoint] of Object.entries(matches)) {
+    if (!key.startsWith('queue:') || !checkpoint) continue;
+    if (lobby.restoreQueuedMatch(checkpoint)) stats.matches++;
+    else log.warn?.(`[persist] ${key}: the standalone matchmaking match could not be resumed`);
+  }
   stats.ok = true;
   return stats;
 }
@@ -188,13 +194,14 @@ export class Persister {
 
   /** Refresh the checkpoint of every running match (a placeholder document while none is safe yet is *not* written). */
   checkpointMatches() {
-    for (const [code, room] of this.lobby.rooms) {
-      if (room.disposed || !room.match) { this.matchDocs.delete(code); continue; }
-      if (!canSnapshot(room.match)) continue;                     // keep the last safe checkpoint
-      const doc = snapshotMatch(room.match);
-      if (doc) this.matchDocs.set(code, doc);
+    const active = new Set();
+    for (const item of this.lobby.persistenceMatches()) {
+      active.add(item.key);
+      if (!canSnapshot(item.match)) continue;                     // keep the last safe checkpoint
+      const doc = snapshotMatch(item.match);
+      if (doc) this.matchDocs.set(item.key, doc);
     }
-    for (const code of [...this.matchDocs.keys()]) if (!this.lobby.rooms.has(code)) this.matchDocs.delete(code);
+    for (const code of [...this.matchDocs.keys()]) if (!active.has(code)) this.matchDocs.delete(code);
   }
 
   /** Build the document without writing it (tests / diagnostics). */

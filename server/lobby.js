@@ -232,6 +232,8 @@ export class Lobby {
     this.matchQueues = new Map();
     /** @type {Map<string, any>} one active queue entry per human player */
     this.queueByPlayer = new Map();
+    /** @type {Set<object>} running matchmaking contexts, including standalone matches */
+    this.activeQueueMatches = new Set();
     this.queueSeq = 0;
     this.matchQueueTimer = setInterval(() => this.processMatchQueues(), Math.max(100, Number(this.opts.matchmakingTickMs) || 1000));
     this.matchQueueTimer.unref?.();
@@ -484,10 +486,80 @@ export class Lobby {
     if (players.length === 0) return false;
     for (const p of players) {
       if (!p || typeof p.playerId !== 'string' || !Number.isInteger(p.seat)) return false;
-      if (!room.seatOf(p.playerId)) return false;
+      // Queue-filled AI seats live only in the match checkpoint; human seats must still belong to the room.
+      if (!p.isBot && !room.seatOf(p.playerId)) return false;
     }
     const res = this.startMatchWith(room, room.matchKey, checkpoint);
     return !(res && res.error);
+  }
+
+  /** Active matches exposed to the persistence layer. Queue matches without a room have no Room to enumerate. */
+  persistenceMatches() {
+    const out = [];
+    const seen = new Set();
+    for (const room of this.rooms.values()) {
+      if (!room.match || room.disposed) continue;
+      const ctx = room.matchCtx;
+      seen.add(ctx);
+      out.push({ key: room.code, room, ctx, match: room.match });
+    }
+    for (const ctx of this.activeQueueMatches) {
+      if (!ctx || ctx.disposed || ctx.ended || ctx.room || !ctx.match || seen.has(ctx)) continue;
+      const key = `queue:${ctx.match.roomCode}`;
+      out.push({ key, room: null, ctx, match: ctx.match });
+    }
+    return out;
+  }
+
+  /** Rebuild a standalone matchmaking match from a persisted checkpoint. */
+  restoreQueuedMatch(checkpoint) {
+    if (!checkpoint || typeof checkpoint !== 'object') return false;
+    const players = Array.isArray(checkpoint.players) ? checkpoint.players : [];
+    if (players.length === 0 || players.length > MAX_SEATS) return false;
+    const ids = new Set();
+    for (const p of players) {
+      if (!p || typeof p.playerId !== 'string' || ids.has(p.playerId) || p.isBot === undefined) return false;
+      ids.add(p.playerId);
+      if (!p.isBot && !this.registry.byId(p.playerId)) return false;
+    }
+    const seats = players.map((p, i) => ({
+      seat: Number.isInteger(p.seat) && p.seat >= 0 && p.seat < MAX_SEATS ? p.seat : i,
+      playerId: p.playerId,
+      name: typeof p.name === 'string' ? p.name : '博士',
+      isBot: !!p.isBot,
+      connected: false,
+      loadout: p.isBot ? null : (p.loadout || null),
+    }));
+    const ctx = { live: true, ended: false, disposed: false, queue: true, match: null, room: null,
+      members: seats, lastPublic: null, sharedResult: null, results: new Map() };
+    const roomCode = typeof checkpoint.roomCode === 'string' && checkpoint.roomCode ? checkpoint.roomCode : `M${randomBytes(3).toString('hex').toUpperCase()}`;
+    const mode = checkpoint.mode === 'solo' ? 'solo' : 'coop';
+    const difficulty = typeof checkpoint.difficulty === 'string' && checkpoint.difficulty ? checkpoint.difficulty : 'NORMAL';
+    try {
+      const match = new this.MatchClass({
+        roomCode, mode, difficulty, modeId: modeIdFor(mode, difficulty), seats,
+        consoleEnabled: false, seed: Number(checkpoint.seed) >>> 0, matchNo: 1,
+        data: this.safeData(), workerPool: this.workerPool, log: this.log, now: this.now,
+        send: (playerId, msg) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg) : false),
+        broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
+        onEnd: (summary) => this.onQueuedMatchEnd(ctx, summary),
+      });
+      ctx.match = match;
+      if (!applyMatchCheckpoint(match, checkpoint, { createRngFromState, log: this.log })) {
+        this.disposeMatchCtx(ctx);
+        return false;
+      }
+      this.activeQueueMatches.add(ctx);
+      for (const p of seats) if (!p.isBot) {
+        const session = this.registry.byId(p.playerId);
+        if (session) session.activeMatchCtx = ctx;
+      }
+      return true;
+    } catch (e) {
+      this.log.error(`[match] ${roomCode} matchmaking restore failed`, e);
+      this.disposeMatchCtx(ctx);
+      return false;
+    }
   }
 
   // ---------------------------------------------------------------------------------------------------
@@ -1063,6 +1135,7 @@ export class Lobby {
         onEnd: (summary) => this.onQueuedMatchEnd(ctx, summary),
       });
       ctx.match = match;
+      this.activeQueueMatches.add(ctx);
       for (const id of allHumanIds) {
         const session = this.registry.byId(id);
         if (session) session.activeMatchCtx = ctx;
@@ -1348,6 +1421,7 @@ export class Lobby {
     if (ctx.disposed) return;
     ctx.disposed = true;
     ctx.live = false;
+    this.activeQueueMatches.delete(ctx);
     try { ctx.match?.dispose?.(); } catch (e) { this.log.error('[lobby] match.dispose threw', e); }
   }
 

@@ -17,6 +17,7 @@
 //     in server/lobby.js. Local / LAN peers without a forwarding header (dev machine, tests, LAN party)
 //     have no key and are never limited per address.
 //   * Heartbeat (ws ping/pong every `heartbeatMs`, dead sockets terminated), hello timeout.
+//   * Presence: broadcast the authenticated online count every 2 s, even when unchanged; welcome is immediate.
 //   * Send helpers that never throw, with a backpressure guard: non-critical `b.snap` frames are skipped
 //     while the socket has more than 1 MB queued; a socket with more than 16 MB queued is terminated
 //     (the client reconnects and receives a full state resync).
@@ -69,6 +70,7 @@ export const HEAVY_TYPES = new Set(['g.watch', 'room.loadout', 'room.spectate'])
 export const CLOSE = Object.freeze({ REPLACED: 4001, HELLO_TIMEOUT: 4002, POLICY: 1008, SHUTDOWN: 1001 });
 
 const WS_OPEN = 1;
+export const PRESENCE_INTERVAL_MS = 2000;
 const MAX_RID = 2 ** 31;
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 
@@ -541,8 +543,9 @@ export class Network {
     this.conns = new Map();
     /** @type {Map<string, number>} open sockets per client network key */
     this.connsPerKey = new Map();
-    this.lastPresenceCount = 0;
     this.closed = false;
+    this.presenceTimer = setInterval(() => this.broadcastPresence(), PRESENCE_INTERVAL_MS);
+    this.presenceTimer.unref?.();
     this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
     this.heartbeatTimer.unref?.();
     const sweepMs = Math.max(20, Math.min(15_000, Math.floor(this.opts.reconnectWindowMs / 4)));
@@ -562,16 +565,14 @@ export class Network {
     return n;
   }
 
-  /** Broadcast an online-count change to existing clients. The new socket receives it in `welcome`. */
-  broadcastPresence(excludeWs = null) {
+  /** Fixed-cadence refresh, including unchanged counts. New authenticated sockets also receive an immediate welcome. */
+  broadcastPresence() {
     if (this.closed) return;
     const online = this.onlineCount;
-    if (online === this.lastPresenceCount) return;
-    this.lastPresenceCount = online;
     const data = encode({ t: 'presence', online, serverNow: this.now() });
     if (data == null) return;
     for (const conn of this.conns.values()) {
-      if (conn.ws === excludeWs || conn.closing) continue;
+      if (conn.closing) continue;
       sendRaw(conn.ws, data);
     }
   }
@@ -747,7 +748,6 @@ export class Network {
     } catch (e) {
       this.log.error('[net] onHello crashed', e);
     }
-    this.broadcastPresence(conn.ws);
   }
 
   /** The session moved to a new socket: unbind and close the old one without firing a disconnect. */
@@ -776,7 +776,6 @@ export class Network {
     s.disconnectedAt = this.now();
     if (this.closed) return;
     try { this.handler.onDisconnect?.(s); } catch (e) { this.log.error('[net] onDisconnect crashed', e); }
-    this.broadcastPresence();
   }
 
   /** Ping every socket; terminate the ones that did not answer since the previous heartbeat. */
@@ -821,6 +820,7 @@ export class Network {
     this.closed = true;
     clearInterval(this.heartbeatTimer);
     clearInterval(this.sweepTimer);
+    clearInterval(this.presenceTimer);
     for (const conn of this.conns.values()) {
       conn.close(code, reason);
       const t = setTimeout(() => { try { conn.ws.terminate(); } catch { /* ignore */ } }, 1000);

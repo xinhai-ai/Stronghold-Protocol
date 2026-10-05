@@ -5,6 +5,7 @@ import { html, Button, Icon, Modal, TextField, MicroLabel } from './components.j
 import { UnitThumb, useGameData } from './gameComponents.js';
 import { actions } from './gameActions.js';
 import { data } from '../data.js';
+import { CONSOLE_ROUND_LIMIT, CONSOLE_TOTAL_LIMIT } from '../../../shared/constants.js';
 
 const idOf = (r, fallback = null) => r?.id || r?.chessId || r?.itemId || fallback;
 
@@ -54,8 +55,8 @@ export function ConsoleModal({ open, priv, onClose }) {
   }, [gd.ready, kind, q]);
   const roundUses = Number(priv?.console?.roundUses) || 0;
   const totalUses = Number(priv?.console?.totalUses) || 0;
-  const roundLimit = Number(priv?.console?.roundLimit) || 3;
-  const totalLimit = Number(priv?.console?.totalLimit) || 10;
+  const roundLimit = Number(priv?.console?.roundLimit) || CONSOLE_ROUND_LIMIT;
+  const totalLimit = Number(priv?.console?.totalLimit) || CONSOLE_TOTAL_LIMIT;
   const grant = async (grantKind, id, amount = null) => {
     if (busy || roundUses >= roundLimit || totalUses >= totalLimit) return false;
     setBusy(id);

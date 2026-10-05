@@ -70,7 +70,7 @@
 //     it during INFO_CHECK only. battleInput() resolves every chess unit to `skillIndex` + `moduleId` (resolveLoadout:
 //     normal chess → moduleId null, elite → uniEquipId | 'none'); m.private exposes `loadout`.
 
-import { ERR, GEO, PHASE, layerGainRoom } from '../../shared/constants.js';
+import { ERR, GEO, PHASE, layerGainRoom, CONSOLE_ROUND_LIMIT, CONSOLE_TOTAL_LIMIT } from '../../shared/constants.js';
 import { checkLoadout, resolveLoadout } from '../../shared/protocol.js';
 import { FIELD, tileKey, parseKey, inField, canPlace, placeClass, boardOrder, freeSlot, pieceDir, parseDir, mergeTile, ownerRangeKeys } from './board.js';
 import { attackRangeGrid, loadoutRecord, resolveRecordLoadout } from '../../shared/loadoutRecord.js';
@@ -1670,8 +1670,8 @@ export class PlayerState {
         enabled: !!this.m.consoleEnabled,
         roundUses: this.consoleRoundUses,
         totalUses: this.consoleTotalUses,
-        roundLimit: 3,
-        totalLimit: 10,
+        roundLimit: CONSOLE_ROUND_LIMIT,
+        totalLimit: CONSOLE_TOTAL_LIMIT,
       },
       stats: {
         dmgDealt: Math.round(this.stats.dmgDealt), kills: this.stats.kills, leaks: this.stats.leaks, gold: this.stats.gold,

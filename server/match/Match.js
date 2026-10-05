@@ -134,7 +134,7 @@
 //     human is left at all the match ends ('abandoned'); when nobody alive is left it ends as 'eliminated'.
 
 import { C2S, unitStatsEntry } from '../../shared/protocol.js';
-import { PHASE, ERR, EMOTES, EMOTE_COOLDOWN_MS, GEO, modeIdFor, layerGainRoom } from '../../shared/constants.js';
+import { PHASE, ERR, EMOTES, EMOTE_COOLDOWN_MS, GEO, modeIdFor, layerGainRoom, CONSOLE_ROUND_LIMIT, CONSOLE_TOTAL_LIMIT } from '../../shared/constants.js';
 import { Battle } from '../sim/Battle.js';
 import { DataSource } from '../sim/simdata.js';
 import { createRng, deriveSeed } from '../sim/rng.js';
@@ -1115,8 +1115,8 @@ export class Match {
     if (!this.consoleEnabled) return fail(ERR.BAD_MSG, 'console is disabled for this match');
     if (!ps || ps.isBot || ps.left || !ps.alive) return fail(ERR.ELIMINATED);
     if (this.phase === PHASE.LOBBY || this.phase === PHASE.RESULT || this.ended || this.disposed) return fail(ERR.WRONG_PHASE);
-    if (ps.consoleTotalUses >= 10) return fail(ERR.RATE, 'console total limit reached');
-    if (ps.consoleRoundUses >= 3) return fail(ERR.RATE, 'console round limit reached');
+    if (ps.consoleTotalUses >= CONSOLE_TOTAL_LIMIT) return fail(ERR.RATE, 'console total limit reached');
+    if (ps.consoleRoundUses >= CONSOLE_ROUND_LIMIT) return fail(ERR.RATE, 'console round limit reached');
     let piece = null;
     let grantedName = id;
     let grantedAmount = null;

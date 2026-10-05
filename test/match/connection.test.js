@@ -65,23 +65,30 @@ test('m.private shape in PREP matches DESIGN §8.3 (pieces, slots, bonds, effect
   h.m.dispose();
 });
 
-test('developer console is server-authorized and enforces 3-per-round / 10-per-match quotas', () => {
-  const h = makeMatch({ mode: 'coop', humans: 1, bots: 1, seed: 611, consoleEnabled: true }).start();
-  h.toPrep(1);
-  const id = Object.keys(DATA.chess).find((k) => DATA.chess[k] && DATA.chess[k].visible && !DATA.chess[k].isGolden && !DATA.chess[k].isHidden && !DATA.chess[k].isDiy);
-  const item = Object.keys(DATA.items).find((k) => DATA.items[k] && !DATA.items[k].isHidden && !DATA.items[k].isDiy);
-  assert.ok(id && item);
-  for (let i = 0; i < 3; i++) assert.deepEqual(h.m.handle('p_0', { t: 'g.console', kind: 'chess', id }), { ok: true });
-  assert.match(h.lastBc('m.ticker')?.text || '', /通过控制台获得/);
-  assert.equal(h.m.handle('p_0', { t: 'g.console', kind: 'chess', id }).error, ERR.RATE);
-  h.toPrep(2);
-  for (let i = 0; i < 3; i++) assert.deepEqual(h.m.handle('p_0', { t: 'g.console', kind: 'item', id: item }), { ok: true });
-  h.toPrep(3);
-  for (let i = 0; i < 3; i++) assert.deepEqual(h.m.handle('p_0', { t: 'g.console', kind: 'chess', id }), { ok: true });
-  h.toPrep(4);
-  assert.deepEqual(h.m.handle('p_0', { t: 'g.console', kind: 'chess', id }), { ok: true });
-  assert.equal(h.ps('p_0').consoleTotalUses, 10);
-  assert.equal(h.m.handle('p_0', { t: 'g.console', kind: 'item', id: item }).error, ERR.RATE);
+test('developer console enforces 5-per-round / 50-per-match quotas and resets only the round count', () => {
+  const h = makeMatch({ mode: 'coop', humans: 1, bots: 1, seed: 611, fake: true, consoleEnabled: true }).start();
+  const id = Object.keys(DATA.bonds).find((k) => DATA.bonds[k] && !DATA.bonds[k].isHidden);
+  const chessId = Object.keys(DATA.chess).find((k) => DATA.chess[k]?.visible && !DATA.chess[k].isGolden && !DATA.chess[k].isHidden && !DATA.chess[k].isDiy);
+  const itemId = Object.keys(DATA.items).find((k) => !DATA.items[k]?.isHidden && !DATA.items[k]?.isDiy);
+  assert.ok(id && chessId && itemId);
+  const grant = () => h.m.handle('p_0', { t: 'g.console', kind: 'bond', id, amount: 1 });
+  for (let round = 1; round <= 10; round++) {
+    h.toPrep(round);
+    assert.equal(h.ps('p_0').consoleRoundUses, 0);
+    for (let i = 0; i < 5; i++) {
+      const result = round === 1 ? h.m.handle('p_0', { t: 'g.console', kind: 'chess', id: chessId })
+        : round === 2 ? h.m.handle('p_0', { t: 'g.console', kind: 'item', id: itemId }) : grant();
+      assert.deepEqual(result, { ok: true });
+    }
+    assert.equal(grant().error, ERR.RATE, 'the sixth grant is refused');
+    assert.equal(h.ps('p_0').consoleTotalUses, round * 5);
+  }
+  h.toPrep(11);
+  assert.equal(h.ps('p_0').consoleRoundUses, 0);
+  assert.equal(h.ps('p_0').consoleTotalUses, 50);
+  assert.equal(grant().error, ERR.RATE, 'the fifty-first grant is refused even in a new round');
+  assert.equal(h.ps('p_0').privateView().console.roundLimit, 5);
+  assert.equal(h.ps('p_0').privateView().console.totalLimit, 50);
   h.m.dispose();
 });
 

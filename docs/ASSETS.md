@@ -25,6 +25,15 @@ client fetches Spine `.skel` / `.atlas` files with `fetch` and loads images with
 so a long `Cache-Control` is safe only if you invalidate on update — the server itself uses `max-age=86400` for
 `/assets/`.
 
+Game data can also use a CDN: set `SP_DATA_CDN=https://cdn.example.com/stronghold` and upload the matching release's
+`data/` directory under that base. Existing static `/data/*.json` requests receive a temporary redirect to
+`<SP_DATA_CDN>/data/<file>.json`; fetch follows it automatically. The CDN must allow CORS for JSON and should use
+`Cache-Control: no-cache` with validators, or a release-specific base URL, to keep browser and server data in sync.
+Keep the local data directory: the server still reads it for game logic. `assets.json`, `local-assets.json` and the
+generated `resource-manifest.json` stay on the game server so asset URL rewriting and preload indexing still work.
+The two CDN settings are independent; `/healthz.dataCdn` reports the data base, and unsetting `SP_DATA_CDN` restores
+local data responses. See [DEPLOY.md §3.2](DEPLOY.md#32-素材放-cdn).
+
 ## Preload (optional asset preloading)
 
 A player can have the client download the art ahead of time into the browser's Cache Storage, so entering a battle never

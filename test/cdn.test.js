@@ -1,6 +1,7 @@
 // test/cdn.test.js — the assets CDN (SP_ASSETS_CDN, docs/ASSETS.md「CDN」): the server rewrites the /assets/… URLs of
 // the manifests it serves (/data/assets.json, /data/local-assets.json), so every client — the asset store, the audio
-// loader, the local-client art — asks the CDN for art without knowing that a CDN exists. Everything else is untouched.
+// loader, the local-client art — asks the CDN for art without knowing that a CDN exists. SP_DATA_CDN independently
+// redirects static game JSON; manifests stay local to retain rewriting and optional art/preload behavior.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,8 +37,8 @@ function writeDataDir() {
   return dir;
 }
 
-function serve(dataDir, cdnBase) {
-  const handler = createStaticHandler({ publicDir: path.join(ROOT, 'public'), dataDir, sharedDir: path.join(ROOT, 'shared'), cdnBase });
+function serve(dataDir, cdnBase, dataCdnBase = '') {
+  const handler = createStaticHandler({ publicDir: path.join(ROOT, 'public'), dataDir, sharedDir: path.join(ROOT, 'shared'), cdnBase, dataCdnBase });
   const srv = http.createServer((req, res) => {
     const [p, q] = (req.url || '/').split('?');
     handler(req, res, p, q || '');
@@ -45,9 +46,9 @@ function serve(dataDir, cdnBase) {
   return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve(srv)));
 }
 
-function get(srv, url, headers = {}) {
+function get(srv, url, headers = {}, method = 'GET') {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port: srv.address().port, path: url, headers }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port: srv.address().port, path: url, headers, method }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
@@ -66,6 +67,101 @@ test('parseAssetCdn accepts an absolute URL or a path prefix and drops trailing 
   assert.equal(parseAssetCdn('https://cdn.example.com/'), 'https://cdn.example.com');
   assert.equal(parseAssetCdn('/cdn///'), '/cdn');
   assert.equal(parseAssetCdn('http://127.0.0.1:8080/assets'), 'http://127.0.0.1:8080/assets');
+});
+
+test('data CDN redirects GET/HEAD JSON with the query intact; manifests and other mounts stay local', async () => {
+  const dir = writeDataDir();
+  const srv = await serve(dir, 'https://art.example.com/sp', 'https://data.example.com/v1');
+  try {
+    for (const method of ['GET', 'HEAD']) {
+      const r = await get(srv, '/data/config.json?v=123&x=a%20b', {}, method);
+      assert.equal(r.status, 307);
+      assert.equal(r.headers.location, 'https://data.example.com/v1/data/config.json?v=123&x=a%20b');
+      assert.equal(r.headers['cache-control'], 'no-store');
+      assert.equal(r.body, '');
+    }
+    const art = await get(srv, '/data/assets.json');
+    assert.equal(art.status, 200);
+    assert.equal(JSON.parse(art.body).ui['battle/sprite_shadow'], 'https://art.example.com/sp/assets/ui/battle/sprite_shadow.png');
+    const local = await get(srv, '/data/local-assets.json');
+    assert.equal(local.status, 200);
+    assert.equal(JSON.parse(local.body).groups.module['mar-x'].path, 'https://art.example.com/sp/assets/local/module/mar-x.png');
+    for (const url of ['/data/resource-manifest.json', '/data.js', '/shared/constants.js', '/sim/spec.js', '/js/data.js', '/']) {
+      const r = await get(srv, url);
+      assert.equal(r.status, 200, url);
+      assert.equal(r.headers.location, undefined, url);
+    }
+    for (const url of ['/data/no-such-file.json', '/data/config.json/', '/data/.hidden.json', '/data/%2e%2e/config.json']) {
+      const r = await get(srv, url);
+      assert.ok(r.status === 403 || r.status === 404, `${url}: ${r.status}`);
+      assert.equal(r.headers.location, undefined, url);
+    }
+  } finally {
+    srv.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('data CDN works independently, supports a same-origin prefix, and preserves missing local art fallback', async () => {
+  const dir = writeDataDir();
+  fs.unlinkSync(path.join(dir, 'local-assets.json'));
+  const srv = await serve(dir, '', '/cdn');
+  try {
+    assert.equal((await get(srv, '/data/config.json')).headers.location, '/cdn/data/config.json');
+    const art = await get(srv, '/data/assets.json');
+    assert.equal(art.status, 200);
+    assert.deepEqual(JSON.parse(art.body), manifest());
+    const local = await get(srv, '/data/local-assets.json');
+    assert.equal(local.status, 200);
+    assert.deepEqual(JSON.parse(local.body), { version: 1, source: 'none', count: 0, groups: {} });
+  } finally {
+    srv.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('fetch follows a data CDN redirect and receives the JSON from the static host', async () => {
+  const dir = writeDataDir();
+  const cdn = await serve(dir, '');
+  const cdnUrl = `http://127.0.0.1:${cdn.address().port}`;
+  const srv = await serve(dir, '', cdnUrl);
+  try {
+    const r = await fetch(`http://127.0.0.1:${srv.address().port}/data/config.json`);
+    assert.equal(r.status, 200);
+    assert.equal(r.redirected, true);
+    assert.equal(r.url, `${cdnUrl}/data/config.json`);
+    assert.deepEqual(await r.json(), { note: '/assets/not-a-manifest.json' });
+  } finally {
+    srv.close();
+    cdn.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('startServer reads SP_DATA_CDN, reports it and allows an explicit option to disable it', async () => {
+  const dir = writeDataDir();
+  const prev = process.env.SP_DATA_CDN;
+  process.env.SP_DATA_CDN = 'https://data.example.com/v1/';
+  const opts = { port: 0, quiet: true, dataDir: dir, store: null, log: { info() {}, warn() {}, error() {}, debug() {} } };
+  let srv;
+  try {
+    srv = await startServer(opts);
+    let fake = { address: () => ({ port: srv.port }) };
+    assert.equal(JSON.parse((await get(fake, '/healthz')).body).dataCdn, 'https://data.example.com/v1');
+    assert.equal((await get(fake, '/data/config.json')).headers.location, 'https://data.example.com/v1/data/config.json');
+    await srv.close();
+    srv = null;
+    srv = await startServer({ ...opts, dataCdn: '' });
+    fake = { address: () => ({ port: srv.port }) };
+    assert.equal(JSON.parse((await get(fake, '/healthz')).body).dataCdn, null);
+    const r = await get(fake, '/data/config.json');
+    assert.equal(r.status, 200);
+    assert.deepEqual(JSON.parse(r.body), { note: '/assets/not-a-manifest.json' });
+  } finally {
+    if (srv) await srv.close();
+    if (prev == null) delete process.env.SP_DATA_CDN; else process.env.SP_DATA_CDN = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('rewriteAssetPaths only touches /assets/… strings, at any depth', () => {

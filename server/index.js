@@ -28,6 +28,8 @@
 //     changes, and an unreachable Redis only logs a warning (server/redis.js, server/persist.js).
 //   * Assets CDN (docs/DEPLOY.md §3.2): SP_ASSETS_CDN rewrites the /assets/… URLs of the manifests served under
 //     /data/ (data/assets.json, data/local-assets.json) to the CDN directory — the client needs no change.
+//   * Data CDN: SP_DATA_CDN redirects static /data/*.json to <base>/data/*.json. Asset manifests and the generated
+//     resource manifest stay on this server; game logic still reads the local data directory.
 //   * Asset preload (docs/ASSETS.md「Preload」): GET /data/resource-manifest.json lists every asset file the client
 //     may preload into Cache Storage (tier 1 essential → tier 2 the rest), derived from those same manifests and
 //     rewritten the same way, so an optional client-side preload works without a CDN-less install (server/resources.js).
@@ -415,14 +417,14 @@ function splitUrl(url) {
 
 /**
  * Create the static request handler.
- * @param {{ publicDir: string, dataDir: string, sharedDir: string, simDir?: string, log?: object, cdnBase?: string }} dirs
+ * @param {{ publicDir: string, dataDir: string, sharedDir: string, simDir?: string, log?: object, cdnBase?: string, dataCdnBase?: string }} dirs
  * @returns {(req: http.IncomingMessage, res: http.ServerResponse, rawPath: string, query: string) => Promise<void>}
  */
 /** Optional per-machine art manifest (tools/local-extract) and the empty stand-in served when it is absent. */
 const LOCAL_ART_MANIFEST = 'local-assets.json';
 const EMPTY_LOCAL_ART = Buffer.from(JSON.stringify({ version: 1, source: 'none', count: 0, groups: {} }));
 
-export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), log = noopLog, cdnBase = '' }) {
+export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), log = noopLog, cdnBase = '', dataCdnBase = '' }) {
   const cdn = typeof cdnBase === 'string' ? cdnBase : '';
   // the preload manifest (docs/ASSETS.md「Preload」): built on first request, cached until the manifests change
   const resources = createResourceIndex({ dataDir, publicDir, cdnBase: cdn, rewrite: (v) => (cdn ? rewriteAssetPaths(v, cdn) : v), log });
@@ -541,6 +543,15 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
         log.error('[http] stat failed', e);
         sendError(req, res, 500, '服务器内部错误 · Internal error');
       }
+      return;
+    }
+    // Redirect only existing static JSON after the usual path/file checks. The two art manifests must stay local:
+    // their URLs depend on SP_ASSETS_CDN, and local-assets.json has an empty fallback when extraction is absent.
+    if (dataCdnBase && mount.name === 'data' && segments.length === 1
+      && path.extname(segments[0]).toLowerCase() === '.json' && !CDN_MANIFESTS.has(segments[0].toLowerCase())) {
+      const location = `${dataCdnBase}/data/${encodeURIComponent(segments[0])}${query ? `?${query}` : ''}`;
+      res.writeHead(307, { Location: location, 'Cache-Control': 'no-store', 'Content-Length': 0 });
+      res.end();
       return;
     }
     // assets CDN: the manifests are rewritten on the way out, so every client keeps requesting /data/assets.json
@@ -772,7 +783,7 @@ function makeLogger(quiet) {
  *   ratePerSec?: number, rateBurst?: number, maxConnections?: number, maxRooms?: number,
  *   maxConnectionsPerAddr?: number, maxRoomsPerAddr?: number, maxMatchesPerAddr?: number, resyncMinGapMs?: number,
  *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number,
- *   store?: object | null, resume?: boolean, saveMs?: number, assetsCdn?: string,
+ *   store?: object | null, resume?: boolean, saveMs?: number, assetsCdn?: string, dataCdn?: string,
  *   workers?: number, workerQueue?: number, workerTimeoutMs?: number, workerPool?: SimulationPool | null,
  *   announcementsFile?: string | null, announcementPollMs?: number, wsCompression?: boolean,
  * }} [opts]
@@ -794,6 +805,11 @@ export async function startServer(opts = {}) {
   const assetsCdn = parseAssetCdn(rawCdn);
   if (String(rawCdn ?? '').trim() && !assetsCdn) {
     log.warn(`[http] SP_ASSETS_CDN=${String(rawCdn).trim()} ignored: an http(s):// URL or a /path is required (docs/DEPLOY.md §3.2)`);
+  }
+  const rawDataCdn = opts.dataCdn != null ? opts.dataCdn : process.env.SP_DATA_CDN;
+  const dataCdn = parseAssetCdn(rawDataCdn);
+  if (String(rawDataCdn ?? '').trim() && !dataCdn) {
+    log.warn(`[http] SP_DATA_CDN=${String(rawDataCdn).trim()} ignored: an http(s):// URL or a /path is required (docs/DEPLOY.md §3.2)`);
   }
   // Redis is optional: no SP_REDIS_URL / REDIS_URL and the server is exactly what it always was (in memory only)
   const store = opts.store !== undefined ? opts.store : openStoreFromEnv({ log });
@@ -861,7 +877,7 @@ export async function startServer(opts = {}) {
   const announcements = new Announcements({ file: announcementFile ? path.resolve(announcementFile) : null,
     broadcast: (msg) => network.broadcast(msg), log, pollMs: opts.announcementPollMs });
   await announcements.start();
-  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log, cdnBase: assetsCdn });
+  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log, cdnBase: assetsCdn, dataCdnBase: dataCdn });
   const startedAt = Date.now();
   // The tag is per process (see buildTag): read the browser runtime once, here, not on every /healthz.
   resetBuildTag();
@@ -904,6 +920,7 @@ export async function startServer(opts = {}) {
         socketBuffers: network.bufferedBytes(),
         websocket: { compression: wsCompression, threshold: WS_DEFLATE_THRESHOLD },
         assetsCdn: assetsCdn || null,
+        dataCdn: dataCdn || null,
         limits: {
           maxRooms: lobby.opts.maxRooms,
           maxRoomsPerAddr: lobby.opts.maxRoomsPerAddr,

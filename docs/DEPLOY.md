@@ -272,6 +272,20 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 
 验证：`GET /healthz` 里 `assetsCdn` 会显示当前地址；浏览器网络面板里素材请求应指向 CDN。
 
+**数据也放 CDN：** 设置独立的 `SP_DATA_CDN`，把与游戏服务器同一版本的 `data/` 上传到 CDN 根目录下的 `data/`：
+
+```bash
+docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
+  -e SP_ASSETS_CDN=https://cdn.example.com/stronghold \
+  -e SP_DATA_CDN=https://cdn.example.com/stronghold \
+  stronghold-protocol
+```
+
+- `/data/chess.json` 等普通静态 JSON 返回临时跳转（307），浏览器自动加载 `<SP_DATA_CDN>/data/chess.json`；查询参数保留。跳转本身不缓存，移除变量并重启即可恢复本地提供。也支持同源前缀，例如 `/cdn`。
+- `assets.json`、`local-assets.json` 仍在游戏服务器上返回，保留 `SP_ASSETS_CDN` 地址改写及未提取本地素材时的空清单；`resource-manifest.json` 是动态生成的预载清单，也保留在服务器上。
+- **服务器的本地 `data/` 必须保留**，游戏逻辑与战斗计算仍从本地读取。CDN 侧允许 JSON 跨域读取（例如 `Access-Control-Allow-Origin: *`），并设置 `Cache-Control: no-cache` 配合 ETag / Last-Modified；更新时同步上传并刷新 CDN 缓存，或者使用带版本号的 CDN 根目录，避免客户端与服务器数值不一致。
+- 两个 CDN 变量可以独立配置。`GET /healthz` 的 `dataCdn` 显示当前数据 CDN 根目录；未配置时为 `null`。
+
 ### 3.3 资源预载（可选，客户端开关）
 
 玩家在游戏里「首页右下角」或「设置 ▸ 预载资源」打开后，客户端会把对局素材存进浏览器缓存（Service Worker + Cache Storage，见 [docs/ASSETS.md](docs/ASSETS.md)「Preload」），之后进战斗不再等待下载：素材由 Service Worker 直接从本机缓存读取。默认关闭，服务端无需任何配置（清单 `GET /data/resource-manifest.json` 由服务端从 `data/assets.json` 自动生成）。部署上只需注意两件事：

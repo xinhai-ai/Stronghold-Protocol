@@ -16,7 +16,7 @@
 # Env:  PORT (3000), HOST (0.0.0.0), SP_COMBAT (client|server), SP_VERIFY (off|sample|all), TRUST_PROXY (auto|1|0),
 #       SP_REDIS_URL (redis://redis:6379/0 — keep sessions/rooms/matches across restarts, docs/DEPLOY.md §3.1),
 #       SP_REDIS_PREFIX, SP_REDIS_TTL, SP_REDIS_SAVE_MS,
-#       SP_ASSETS_CDN (https://cdn.example.com/stronghold — serve /assets/… from a CDN, docs/DEPLOY.md §3.2), DEBUG
+#       SP_ASSETS_CDN / SP_DATA_CDN (https://cdn.example.com/stronghold — assets/data CDN, docs/DEPLOY.md §3.2), DEBUG
 #       SP_WORKERS (auto, up to 8; 0 disables), SP_WORKER_QUEUE (256), SP_WORKER_TIMEOUT_MS (120000)
 #       SP_ANNOUNCEMENTS_FILE (/app/config/announcements.json; mount /app/config read-only for live edits)
 #       SP_WS_COMPRESSION (on by default; off/0 disables WebSocket permessage-deflate)

@@ -122,6 +122,7 @@ npm start          # 启动服务器：http://localhost:3000
 | `SP_REDIS_TTL` | `90000` | 状态键的过期秒数（默认 25 小时，兜底清理） |
 | `SP_REDIS_SAVE_MS` | `10000` | 状态写入间隔（毫秒）；优雅关闭时另会立即写一次 |
 | `SP_ASSETS_CDN` | 空 | 素材 CDN 目录，例如 `https://cdn.example.com/stronghold` 或同源 `/cdn`：服务端把 `data/assets.json` 里的 `/assets/…` 改写为该地址（见 [docs/ASSETS.md](docs/ASSETS.md)「CDN」） |
+| `SP_DATA_CDN` | 空 | 数据 CDN 根目录，例如 `https://cdn.example.com/stronghold`：普通 `/data/*.json` 请求跳转至该目录下的 `data/`；素材清单与动态预载清单仍由游戏服务器提供，本地 `data/` 仍须保留（见 [docs/DEPLOY.md](docs/DEPLOY.md#32-素材放-cdn)） |
 | `SP_MAX_ROOMS` | `1000` | 全局同时存在的房间数上限（含正在对局的房间）；满了新房间会被拒绝 |
 | `SP_MAX_ROOMS_PER_ADDR` | `16` | 单个客户端网络（IPv4 地址 / IPv6 的 /64）同时拥有的房间数；`0` = 不限制。本地/内网直连不受此限 |
 | `SP_MAX_MATCHES_PER_ADDR` | `8` | 单个客户端网络同时进行的对局数；`0` = 不限制 |

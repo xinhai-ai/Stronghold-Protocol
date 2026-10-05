@@ -1,7 +1,7 @@
 // test/cdn.test.js — the assets CDN (SP_ASSETS_CDN, docs/ASSETS.md「CDN」): the server rewrites the /assets/… URLs of
 // the manifests it serves (/data/assets.json, /data/local-assets.json), so every client — the asset store, the audio
 // loader, the local-client art — asks the CDN for art without knowing that a CDN exists. SP_DATA_CDN independently
-// redirects static game JSON; manifests stay local to retain rewriting and optional art/preload behavior.
+// redirects static game JSON including the exported asset manifest; optional local art and preload stay local.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,6 +12,8 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import { createStaticHandler, parseAssetCdn, rewriteAssetPaths, startServer } from '../server/index.js';
+import { createDataStore } from '../public/js/data.js';
+import { createAssets } from '../public/js/assets.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -34,6 +36,7 @@ function writeDataDir() {
   fs.writeFileSync(path.join(dir, 'assets.json'), JSON.stringify(manifest()));
   fs.writeFileSync(path.join(dir, 'local-assets.json'), JSON.stringify({ version: 1, groups: { module: { 'mar-x': { path: '/assets/local/module/mar-x.png' } } } }));
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ note: '/assets/not-a-manifest.json' }));
+  fs.writeFileSync(path.join(dir, 'asset-hashes.json'), JSON.stringify({ files: { '/assets/x.png': 'abcd1234' } }));
   return dir;
 }
 
@@ -69,7 +72,7 @@ test('parseAssetCdn accepts an absolute URL or a path prefix and drops trailing 
   assert.equal(parseAssetCdn('http://127.0.0.1:8080/assets'), 'http://127.0.0.1:8080/assets');
 });
 
-test('data CDN redirects GET/HEAD JSON with the query intact; manifests and other mounts stay local', async () => {
+test('data CDN redirects GET/HEAD JSON including assets and hashes; local art and other mounts stay local', async () => {
   const dir = writeDataDir();
   const srv = await serve(dir, 'https://art.example.com/sp', 'https://data.example.com/v1');
   try {
@@ -80,9 +83,13 @@ test('data CDN redirects GET/HEAD JSON with the query intact; manifests and othe
       assert.equal(r.headers['cache-control'], 'no-store');
       assert.equal(r.body, '');
     }
-    const art = await get(srv, '/data/assets.json');
-    assert.equal(art.status, 200);
-    assert.equal(JSON.parse(art.body).ui['battle/sprite_shadow'], 'https://art.example.com/sp/assets/ui/battle/sprite_shadow.png');
+    for (const file of ['assets.json', 'asset-hashes.json']) for (const method of ['GET', 'HEAD']) {
+      const r = await get(srv, `/data/${file}?v=123`, {}, method);
+      assert.equal(r.status, 307);
+      assert.equal(r.headers.location, `https://data.example.com/v1/data/${file}?v=123`);
+      assert.equal(r.headers['cache-control'], 'no-store');
+      assert.equal(r.body, '');
+    }
     const local = await get(srv, '/data/local-assets.json');
     assert.equal(local.status, 200);
     assert.equal(JSON.parse(local.body).groups.module['mar-x'].path, 'https://art.example.com/sp/assets/local/module/mar-x.png');
@@ -109,8 +116,8 @@ test('data CDN works independently, supports a same-origin prefix, and preserves
   try {
     assert.equal((await get(srv, '/data/config.json')).headers.location, '/cdn/data/config.json');
     const art = await get(srv, '/data/assets.json');
-    assert.equal(art.status, 200);
-    assert.deepEqual(JSON.parse(art.body), manifest());
+    assert.equal(art.status, 307);
+    assert.equal(art.headers.location, '/cdn/data/assets.json');
     const local = await get(srv, '/data/local-assets.json');
     assert.equal(local.status, 200);
     assert.deepEqual(JSON.parse(local.body), { version: 1, source: 'none', count: 0, groups: {} });
@@ -134,6 +141,57 @@ test('fetch follows a data CDN redirect and receives the JSON from the static ho
   } finally {
     srv.close();
     cdn.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('browser loaders read original assets from the data CDN and rewrite with the runtime base', async () => {
+  const dir = writeDataDir();
+  const source = fs.readFileSync(path.join(dir, 'assets.json'), 'utf8');
+  let cdn, srv;
+  try {
+    cdn = await serve(dir, '');
+    const base = `http://127.0.0.1:${cdn.address().port}`;
+    srv = await serve(dir, 'https://art.example.com/sp', base);
+    const origin = `http://127.0.0.1:${srv.address().port}`;
+    const runtime = await fetch(origin + '/js/asset-cdn.js');
+    assert.equal(runtime.headers.get('cache-control'), 'no-cache');
+    const runtimeText = await runtime.text();
+    const { ASSETS_CDN: assetsCdn } = await import('data:text/javascript,' + encodeURIComponent(runtimeText));
+    assert.equal(assetsCdn, 'https://art.example.com/sp');
+    const unchanged = await get(srv, '/js/asset-cdn.js', { 'If-None-Match': runtime.headers.get('etag') });
+    assert.equal(unchanged.status, 304);
+    assert.equal((await get(srv, '/js/asset-cdn.js', {}, 'HEAD')).body, '');
+    const assets = await fetch(`http://127.0.0.1:${srv.address().port}/data/assets.json`);
+    assert.equal(assets.redirected, true);
+    assert.equal(assets.url, `${base}/data/assets.json`);
+    const doc = await assets.json();
+    assert.deepEqual(doc, manifest(), 'CDN JSON is uploaded unchanged');
+    const fetchFn = (url, opts) => fetch(new URL(url, origin), opts);
+    const data = createDataStore({ fetch: fetchFn, assetsCdn });
+    const rewritten = await data.load('assets');
+    assert.equal(rewritten.chars.char_002_amiya.avatar, 'https://art.example.com/sp/assets/char/avatar/char_002_amiya.png');
+    assert.equal(rewritten.audio.bgm.main, 'https://art.example.com/sp/assets/audio/bgm/main.mp3');
+    assert.equal(rewritten.absolute, manifest().absolute, 'absolute URLs are not rewritten again');
+    const store = createAssets({ fetch: fetchFn, assetsCdn });
+    assert.deepEqual(await store.ready(), rewritten, 'standalone art loader applies the same rewrite');
+    const local = await data.load('local');
+    assert.equal(local.groups.module['mar-x'].path, 'https://art.example.com/sp/assets/local/module/mar-x.png');
+    assert.deepEqual(await store.local(), local, 'already rewritten server manifests are not double-prefixed');
+    assert.deepEqual(await data.load('config'), { note: '/assets/not-a-manifest.json' }, 'other data is untouched');
+    assert.equal(doc.hash, 'deadbeef');
+    const hashes = await fetch(`http://127.0.0.1:${srv.address().port}/data/asset-hashes.json`);
+    assert.equal(hashes.redirected, true);
+    assert.deepEqual(await hashes.json(), { files: { '/assets/x.png': 'abcd1234' } });
+    const preload = JSON.parse((await get(srv, '/data/resource-manifest.json')).body);
+    assert.ok(preload.files.some((f) => f.url === 'https://art.example.com/sp/assets/x.png' && f.hash === 'abcd1234'));
+    assert.equal((await get(srv, '/data/local-assets.json')).status, 200);
+    assert.equal(fs.readFileSync(path.join(dir, 'assets.json'), 'utf8'), source);
+    const noArtCdn = createDataStore({ fetch: fetchFn, assetsCdn: '' });
+    assert.deepEqual(await noArtCdn.load('assets'), manifest(), 'data CDN alone retains game-origin asset URLs');
+  } finally {
+    srv?.close();
+    cdn?.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

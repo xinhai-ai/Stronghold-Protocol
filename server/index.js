@@ -28,7 +28,7 @@
 //     changes, and an unreachable Redis only logs a warning (server/redis.js, server/persist.js).
 //   * Assets CDN (docs/DEPLOY.md §3.2): SP_ASSETS_CDN rewrites the /assets/… URLs of the manifests served under
 //     /data/ (data/assets.json, data/local-assets.json) to the CDN directory — the client needs no change.
-//   * Data CDN: SP_DATA_CDN redirects static /data/*.json to <base>/data/*.json. Asset manifests and the generated
+//   * Data CDN: SP_DATA_CDN redirects static /data/*.json to <base>/data/*.json. The local-art and generated
 //     resource manifest stay on this server; game logic still reads the local data directory.
 //   * Asset preload (docs/ASSETS.md「Preload」): GET /data/resource-manifest.json lists every asset file the client
 //     may preload into Cache Storage (tier 1 essential → tier 2 the rest), derived from those same manifests and
@@ -66,6 +66,8 @@ import { createPublicApi } from './publicApi.js';
 import { createResourceIndex, RESOURCE_MANIFEST_FILE } from './resources.js';
 import { PROTOCOL_VERSION, APP_VERSION } from '../shared/constants.js';
 import { MEDIA_PREFIX, AUDIO_EXTS } from '../shared/media.js';
+import { rewriteAssetPaths } from '../shared/cdn.js';
+export { rewriteAssetPaths } from '../shared/cdn.js';
 
 /** Repository root. */
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -269,32 +271,6 @@ export function parseAssetCdn(v) {
   return s.replace(/\/+$/, '');
 }
 
-/**
- * Rewrite every `/assets/…` URL of an asset manifest (data/assets.json, data/local-assets.json) to the CDN base,
- * in place. The manifests are the only place the client takes asset URLs from (docs/ASSETS.md), so nothing else has to
- * know about the CDN. A CDN must send CORS headers: the client loads Spine atlases / skeletons with fetch and images
- * with `crossOrigin="anonymous"`.
- * @param {any} value manifest (mutated)
- * @param {string} base CDN directory (no trailing slash)
- * @returns {any} the same value
- */
-export function rewriteAssetPaths(value, base) {
-  if (!base || value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      const v = value[i];
-      if (typeof v === 'string') { if (v.startsWith('/assets/')) value[i] = base + v; }
-      else rewriteAssetPaths(v, base);
-    }
-    return value;
-  }
-  for (const [k, v] of Object.entries(value)) {
-    if (typeof v === 'string') { if (v.startsWith('/assets/')) value[k] = base + v; }
-    else if (v !== null && typeof v === 'object') rewriteAssetPaths(v, base);
-  }
-  return value;
-}
-
 /** Asset manifests the CDN rewriting applies to (under the `data` mount). */
 const CDN_MANIFESTS = new Set(['assets.json', 'local-assets.json']);
 
@@ -441,6 +417,9 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
   const shimBody = Buffer.from(DATA_SHIM_JS);
   const shimTag = `"shim-${shimBody.length.toString(16)}"`;
   const gzipCache = new GzipCache();
+  // A small runtime module supplies the base before client data/asset loaders run; no separate config fetch needed.
+  const cdnConfigBody = Buffer.from(`export const ASSETS_CDN = ${JSON.stringify(cdn)};\n`);
+  const cdnConfigTag = `"asset-cdn-${createHash('sha256').update(cdnConfigBody).digest('hex')}"`;
 
   const serveStatic = async function (req, res, rawPath, query) {
     let decoded;
@@ -449,8 +428,16 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
       sendError(req, res, 400, '请求地址无效 · Bad request');
       return;
     }
-    // The offline-resource manifest (docs/ASSETS.md「Preload」) is generated, never read from disk: the asset
-    // manifests would 404 for that name, so answer before the mount/traversal handling below.
+    // The runtime CDN setting is served by the game origin, independent of the data CDN.
+    if (decoded === '/js/asset-cdn.js') {
+      const headers = { 'Content-Type': MIME['.js'], 'Cache-Control': 'no-cache', ETag: cdnConfigTag };
+      if (isNotModified(req, cdnConfigTag, new Date(0))) { res.writeHead(304, headers); res.end(); return; }
+      headers['Content-Length'] = cdnConfigBody.length;
+      res.writeHead(200, headers);
+      res.end(req.method === 'HEAD' ? undefined : cdnConfigBody);
+      return;
+    }
+    // The offline-resource manifest is generated, never read from disk, before the mount handling below.
     if (decoded.toLowerCase() === `/data/${RESOURCE_MANIFEST_FILE}`) {
       let idx;
       try {
@@ -547,10 +534,10 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
       }
       return;
     }
-    // Redirect only existing static JSON after the usual path/file checks. The two art manifests must stay local:
-    // their URLs depend on SP_ASSETS_CDN, and local-assets.json has an empty fallback when extraction is absent.
+    // Redirect original static JSON, including assets.json and asset-hashes.json. Browser loaders rewrite the
+    // raw asset URLs using /js/asset-cdn.js. Optional local art stays local.
     if (dataCdnBase && mount.name === 'data' && segments.length === 1
-      && path.extname(segments[0]).toLowerCase() === '.json' && !CDN_MANIFESTS.has(segments[0].toLowerCase())) {
+      && path.extname(segments[0]).toLowerCase() === '.json' && segments[0].toLowerCase() !== LOCAL_ART_MANIFEST) {
       const location = `${dataCdnBase}/data/${encodeURIComponent(segments[0])}${query ? `?${query}` : ''}`;
       res.writeHead(307, { Location: location, 'Cache-Control': 'no-store', 'Content-Length': 0 });
       res.end();

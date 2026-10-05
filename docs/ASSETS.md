@@ -14,7 +14,7 @@ SP_ASSETS_CDN=https://cdn.example.com/stronghold npm start
 ```
 
 The server rewrites every `/assets/…` URL of the two manifests it serves — `data/assets.json` and
-`data/local-assets.json` — to `<SP_ASSETS_CDN>/assets/…`, so nothing on the client has to know about the CDN (images,
+`data/local-assets.json` — to `<SP_ASSETS_CDN>/assets/…` (images,
 Spine skeletons/atlases, audio and the local-client extraction all follow the manifest). A same-origin prefix works too
 (`SP_ASSETS_CDN=/cdn`). Leave it unset and the server serves `/assets/…` itself, exactly as before; when it is set, the
 local copy still works, so you can roll back at any time. `GET /healthz` reports the active base as `assetsCdn`.
@@ -29,8 +29,13 @@ Game data can also use a CDN: set `SP_DATA_CDN=https://cdn.example.com/stronghol
 `data/` directory under that base. Existing static `/data/*.json` requests receive a temporary redirect to
 `<SP_DATA_CDN>/data/<file>.json`; fetch follows it automatically. The CDN must allow CORS for JSON and should use
 `Cache-Control: no-cache` with validators, or a release-specific base URL, to keep browser and server data in sync.
-Keep the local data directory: the server still reads it for game logic. `assets.json`, `local-assets.json` and the
-generated `resource-manifest.json` stay on the game server so asset URL rewriting and preload indexing still work.
+Keep the local data directory: the server still reads it for game logic. `assets.json` and `asset-hashes.json` also
+redirect to the data CDN. Upload the original JSON files as-is: browser data and asset loaders rewrite `/assets/…`
+after reading the JSON, using the server's `SP_ASSETS_CDN` supplied by `/js/asset-cdn.js` (a small runtime module with
+`no-cache` and an ETag). Absolute URLs already present in a manifest are preserved. With no assets CDN configured,
+root-relative asset URLs continue to use the game origin. No export command or preprocessing is needed;
+hash-map keys and server-side source files stay unchanged.
+`local-assets.json` and the generated `resource-manifest.json` stay on the game server for optional art and preloading.
 The two CDN settings are independent; `/healthz.dataCdn` reports the data base, and unsetting `SP_DATA_CDN` restores
 local data responses. See [DEPLOY.md §3.2](DEPLOY.md#32-素材放-cdn).
 

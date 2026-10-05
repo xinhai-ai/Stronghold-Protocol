@@ -38,11 +38,15 @@
 //                                                   // it (manifest spineLocal), else the web model; `.fallback`
 //
 // Manifest URLs are normally same-origin paths (`/assets/…`), but SP_ASSETS_CDN makes the server rewrite them to
-// absolute CDN URLs (docs/ASSETS.md「CDN」), so every helper here accepts both shapes (`isAssetUrl`).
+// absolute CDN URLs (docs/ASSETS.md「CDN」). With SP_DATA_CDN the browser rewrites raw JSON after fetching it instead.
+// Every helper here accepts both shapes (`isAssetUrl`).
 //
 // Every URL helper is also exported as a pure function taking the manifest first (`avatarUrl(manifest, …)`),
 // so it can be unit tested without a browser. Helpers never throw on unknown ids — they return null and the
 // caller falls back (docs/ASSETS.md "Other fallbacks").
+
+import { ASSETS_CDN } from './asset-cdn.js';
+import { rewriteAssetPaths } from '../../shared/cdn.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const str = (v) => (typeof v === 'string' && v ? v : null);
@@ -715,7 +719,7 @@ const transientFetch = (err) => {
  * after MANIFEST_BACKOFF_MS (bounded; a 404 or a body that is no JSON only on the next `ready()`). `onChange(fn)` is told
  * when the manifest (`'manifest'`) or the optional local-client manifest (`'local'`) arrives, so views built without it
  * resolve their models then (render/app.js → UnitView.retryAssets).
- * @param {{ url?: string, fetch?: typeof fetch, manifest?: object, localManifest?: object, loadImage?: (url) => Promise<any>,
+ * @param {{ url?: string, assetsCdn?: string, fetch?: typeof fetch, manifest?: object, localManifest?: object, loadImage?: (url) => Promise<any>,
  *           loadSpine?: (entry) => Promise<any>, unloadSpine?: (entry, value, keepPages:Set<string>) => (Promise<void>|void),
  *           spineMax?: number, spineTimeout?: number, spineWeigh?: (key, spineData) => number, spineIdleBytes?: number,
  *           spineQuietBytes?: number, spineIdleGrace?: number, spineEvictDelay?: number, spineQuietDelay?: number,
@@ -767,7 +771,7 @@ export function createAssets(options) {
     let json;
     try { json = await res.json(); } catch (err) { throw Object.assign(err instanceof Error ? err : new Error(String(err)), { badJson: true }); }
     if (!isObj(json)) throw Object.assign(new Error('not a manifest'), { badJson: true });
-    return json;
+    return rewriteAssetPaths(json, opts.assetsCdn ?? ASSETS_CDN);
   }
 
   function scheduleBackoff() {
@@ -863,7 +867,7 @@ export function createAssets(options) {
         try {
           const res = await doFetch(localUrl, { cache: 'no-cache' });
           if (!res || !res.ok) return localManifest;
-          const json = await res.json();
+          const json = rewriteAssetPaths(await res.json(), opts.assetsCdn ?? ASSETS_CDN);
           if (!localManifest && isObj(json) && isObj(json.groups)) { localManifest = json; notify('local'); }
         } catch { /* optional art: absent */ }
         return localManifest;

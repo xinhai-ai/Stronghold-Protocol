@@ -282,9 +282,12 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 ```
 
 - `/data/chess.json` 等普通静态 JSON 返回临时跳转（307），浏览器自动加载 `<SP_DATA_CDN>/data/chess.json`；查询参数保留。跳转本身不缓存，移除变量并重启即可恢复本地提供。也支持同源前缀，例如 `/cdn`。
-- `assets.json`、`local-assets.json` 仍在游戏服务器上返回，保留 `SP_ASSETS_CDN` 地址改写及未提取本地素材时的空清单；`resource-manifest.json` 是动态生成的预载清单，也保留在服务器上。
+- `assets.json`、`asset-hashes.json` 也跳转到数据 CDN，**直接上传原始 JSON**，无需执行导出命令或提前改写地址。浏览器读取素材清单后，根据服务器通过 `/js/asset-cdn.js` 提供的 `SP_ASSETS_CDN` 改写 `/assets/…`；已有的绝对地址保持原样。素材 CDN 与数据 CDN 可以使用不同域名。
+- `local-assets.json` 保留在游戏服务器上，继续支持本地素材地址改写和未提取时的空清单；动态 `resource-manifest.json` 也保留在服务器上，并使用本地素材清单和哈希表生成。
 - **服务器的本地 `data/` 必须保留**，游戏逻辑与战斗计算仍从本地读取。CDN 侧允许 JSON 跨域读取（例如 `Access-Control-Allow-Origin: *`），并设置 `Cache-Control: no-cache` 配合 ETag / Last-Modified；更新时同步上传并刷新 CDN 缓存，或者使用带版本号的 CDN 根目录，避免客户端与服务器数值不一致。
 - 两个 CDN 变量可以独立配置。`GET /healthz` 的 `dataCdn` 显示当前数据 CDN 根目录；未配置时为 `null`。
+
+更新资源后同步上传原始 JSON，并刷新 CDN 缓存。`/js/asset-cdn.js` 由游戏服务器提供，使用 `no-cache` 和 ETag 校验；代理应保留此缓存策略，以便切换素材 CDN 后浏览器取得新地址。
 
 ### 3.3 资源预载（可选，客户端开关）
 

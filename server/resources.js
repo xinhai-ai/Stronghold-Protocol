@@ -182,13 +182,15 @@ export function collectRealHashes(localDoc, hashesDoc) {
  * @param {{ url: string, source: string }[]} files
  * @param {Map<string, string>} real
  * @param {{ web: string, local: string }} stamps
+ * @param {string} cdnBase serving prefix removed before looking up site-path hash keys
  * @returns {Map<string, string>}
  */
-export function resolveHashes(files, real, stamps) {
+export function resolveHashes(files, real, stamps, cdnBase = '') {
   /** @type {Map<string, string>} */
   const out = new Map();
   for (const f of files) {
-    const known = real.get(pathKey(f.url));
+    const siteUrl = cdnBase && f.url.startsWith(cdnBase + '/') ? f.url.slice(cdnBase.length) : f.url;
+    const known = real.get(pathKey(siteUrl)) || real.get(pathKey(f.url));
     out.set(f.url, typeof known === 'string' && known ? known : `syn-${shortHash(`${f.source}|${stamps[f.source] || ''}|${f.url}`)}`);
   }
   return out;
@@ -297,7 +299,7 @@ export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite 
       web: assetsDoc && assetsDoc.hash ? assetsDoc.hash : assets ? `m${Math.floor(assets.mtimeMs)}` : 'none',
       local: localDoc && localDoc.hash ? localDoc.hash : local ? `l${Math.floor(local.mtimeMs)}` : 'none',
     };
-    const fileHashes = resolveHashes(files, real, stamps);
+    const fileHashes = resolveHashes(files, real, stamps, cdnBase);
     // The version is informational now (the client keys its cache per file), but it must still change whenever the set
     // or any hash does — the settings panel and the /healthz-style diagnostics read it.
     const version = shortHash([cdnBase, ...files.map((f) => `${f.url}|${fileHashes.get(f.url)}`)].join('\n'));

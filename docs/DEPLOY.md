@@ -371,6 +371,8 @@ location = /resource-sw.js {
 
 ### 3.6 全站临时公告
 
+公开 HTTP 接口提供房间状态、跨域延迟探测和公告读取，详见 [CUSTOM_API.md](CUSTOM_API.md)。公告接口的 `expiresAt` 是 `startAt + durationSeconds × 1000`；可选 `title` 用作该接口的标题，省略时为“维护公告”。
+
 编辑 `config/announcements.json`，服务器每 2 秒读取一次，修改无需重启。公告在首页、大厅、房间和游戏内的上半屏滚动展示，不显示剩余时间，不拦截游戏操作，到期自动消失。开启系统“减少动态效果”时改为静态换行文本。默认配置为空，`config/announcements.example.json` 提供一个未启用的示例。
 
 ```json

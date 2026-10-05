@@ -25,6 +25,8 @@ test('config validation: timezone, plain text, limits, unique ids and explicit b
   assert.equal(n.text, '临时通知 请留意');
   assert.equal(n.startAt, BASE);
   assert.equal(n.endAt, BASE + 60000);
+  assert.equal(parseAnnouncements(doc(row({ title: '  计划维护  ' })))[0].title, '计划维护');
+  for (const title of ['', '   ', 42, 'x'.repeat(81)]) assert.throws(() => parseAnnouncements(doc(row({ title }))));
   assert.equal(parseAnnouncements(doc(row({ startAt: '2026-10-05T12:00:00.1234567+08:00' })))[0].startAt, BASE + 123);
   assert.throws(() => parseAnnouncements(doc(row({ startAt: '2026-10-05T12:00:00' }))));
   assert.throws(() => parseAnnouncements(doc(row({ startAt: '2026-02-30T12:00:00+08:00' }))));

@@ -62,6 +62,7 @@ import { openStoreFromEnv } from './redis.js';
 import { Persister, restoreServer, SAVE_MS } from './persist.js';
 import { SimulationPool, workerSettings } from './workers/pool.js';
 import { Announcements } from './announcements.js';
+import { createPublicApi } from './publicApi.js';
 import { createResourceIndex, RESOURCE_MANIFEST_FILE } from './resources.js';
 import { PROTOCOL_VERSION, APP_VERSION } from '../shared/constants.js';
 import { MEDIA_PREFIX, AUDIO_EXTS } from '../shared/media.js';
@@ -878,6 +879,7 @@ export async function startServer(opts = {}) {
   const announcements = new Announcements({ file: announcementFile ? path.resolve(announcementFile) : null,
     broadcast: (msg) => network.broadcast(msg), log, pollMs: opts.announcementPollMs });
   await announcements.start();
+  const serveApi = createPublicApi({ lobby, announcements, trustProxy: netOptions.trustProxy, sendJson, sendError });
   const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log, cdnBase: assetsCdn, dataCdnBase: dataCdn });
   const startedAt = Date.now();
   // The tag is per process (see buildTag): read the browser runtime once, here, not on every /healthz.
@@ -898,6 +900,7 @@ export async function startServer(opts = {}) {
     if (url.length > MAX_URL_LENGTH) { sendError(req, res, 414, '请求地址过长 · URI too long'); return; }
     const parts = splitUrl(url);
     if (!parts) { sendError(req, res, 400, '请求地址无效 · Bad request'); return; }
+    if (await serveApi(req, res, parts.rawPath)) return;
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.setHeader('Allow', 'GET, HEAD');
       sendError(req, res, 405, '不支持的请求方法 · Method not allowed');

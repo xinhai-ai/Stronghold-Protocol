@@ -21,6 +21,9 @@ export function parseAnnouncements(doc) {
   return doc.announcements.map((row) => {
     if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('invalid announcement');
     const { id, text, startAt, durationSeconds, level = 'info', enabled = true } = row;
+    if (own(row, 'title') && (typeof row.title !== 'string' || !row.title.trim() || row.title.trim().length > 80)) {
+      throw new Error(`${id}: title must contain 1..80 characters`);
+    }
     if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || ids.has(id)) throw new Error('announcement ids must be unique (1..64 letters, numbers, _ or -)');
     ids.add(id);
     if (typeof text !== 'string' || !text.trim() || [...text].length > ANNOUNCEMENT_MAX_TEXT
@@ -29,7 +32,8 @@ export function parseAnnouncements(doc) {
     if (!Number.isInteger(durationSeconds) || durationSeconds < 1 || durationSeconds > 86400) throw new Error(`${id}: durationSeconds must be 1..86400`);
     if (typeof level !== 'string' || !own(ANNOUNCEMENT_LEVELS, level) || typeof enabled !== 'boolean') throw new Error(`${id}: invalid level or enabled flag`);
     const at = Date.parse(startAt);
-    return { id, text: text.trim().replace(/\s+/g, ' '), startAt: at, endAt: at + durationSeconds * 1000, level, enabled };
+    return { id, ...(own(row, 'title') ? { title: row.title.trim() } : {}),
+      text: text.trim().replace(/\s+/g, ' '), startAt: at, endAt: at + durationSeconds * 1000, level, enabled };
   });
 }
 

@@ -69,6 +69,7 @@ export function makeMatch(o = {}) {
     registry: o.registry,
     BattleClass: o.fake ? FakeBattle : undefined,
     battleContent: o.battleContent,
+    consoleEnabled: o.consoleEnabled === true,
     timerScale: o.timerScale,
     // bot layout rehearsal (extra simulated battles per bot prep) is off unless a test asks for it: it multiplies the
     // simulation work of full-match suites; test/match/bot.test.js covers it

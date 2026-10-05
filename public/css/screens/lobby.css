@@ -197,7 +197,7 @@
 .diff-card__bar { position: absolute; left: 0; top: 0; bottom: 0; width: .06rem; background: var(--d-color); opacity: .45; transition: opacity var(--t-med), box-shadow var(--t-med); }
 .diff-card__head { grid-column: 1 / -1; display: flex; align-items: center; gap: .1rem; min-width: 0; }
 .diff-card__glyph { width: .28rem; height: .28rem; color: var(--d-color); filter: drop-shadow(0 0 5px var(--d-color)); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--d-color) 55%, transparent)); }
-.diff-card__name { font-size: .27rem; font-weight: 900; letter-spacing: .06em; color: var(--d-color); }
+.diff-card__name { font-size: .27rem; font-weight: 900; letter-spacing: .06em; color: var(--d-color); white-space: nowrap; }
 .diff-card__code { font-size: .14rem; color: var(--text-dim); letter-spacing: .1em; }
 .diff-card__meta { margin-left: auto; display: flex; align-items: center; gap: .04rem; font-size: .14rem; color: var(--text-lo); white-space: nowrap; }
 .diff-card__meta .num { color: var(--text-hi); font-weight: 700; font-size: .17rem; }

@@ -101,6 +101,9 @@ export class PlayerState {
     this.connected = this.isBot ? true : !!seat.connected;
     this.left = false;
     this.autoplay = false;
+    /** Developer-console quota: three successful grants per round and ten for the match. */
+    this.consoleRoundUses = 0;
+    this.consoleTotalUses = 0;
     this.alive = true;
     this.lp = 0;
     this.bandId = null;
@@ -1461,6 +1464,7 @@ export class PlayerState {
 
   startRound(r) {
     this.round = { refreshes: 0, buys: 0, sells: 0, spent: 0, gainedChess: 0, arts: 0 };
+    this.consoleRoundUses = 0;
     this.pendingLayerGains = null; // settled (or lapsed) at the last SETTLE
     if (r > 1) this.shop.upgradePrice = Math.max(0, this.shop.upgradePrice - 1);
     // onIncome handlers may rewrite ev.income / ev.pending (e.g. 老鲤 withholds R1–R2 income until R3)
@@ -1662,6 +1666,13 @@ export class PlayerState {
       nextEnemies: this.m.nextEnemiesFor(this),
       // DESIGN §16: the effective operator loadout ({ [baseChessId]: { skill, module } }; chess not listed use defaults)
       loadout: this.loadout,
+      console: {
+        enabled: !!this.m.consoleEnabled,
+        roundUses: this.consoleRoundUses,
+        totalUses: this.consoleTotalUses,
+        roundLimit: 3,
+        totalLimit: 10,
+      },
       stats: {
         dmgDealt: Math.round(this.stats.dmgDealt), kills: this.stats.kills, leaks: this.stats.leaks, gold: this.stats.gold,
         refreshes: this.stats.refreshes, merges: this.stats.merges,

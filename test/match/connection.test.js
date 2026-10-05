@@ -65,6 +65,46 @@ test('m.private shape in PREP matches DESIGN §8.3 (pieces, slots, bonds, effect
   h.m.dispose();
 });
 
+test('developer console is server-authorized and enforces 3-per-round / 10-per-match quotas', () => {
+  const h = makeMatch({ mode: 'coop', humans: 1, bots: 1, seed: 611, consoleEnabled: true }).start();
+  h.toPrep(1);
+  const id = Object.keys(DATA.chess).find((k) => DATA.chess[k] && DATA.chess[k].visible && !DATA.chess[k].isGolden && !DATA.chess[k].isHidden && !DATA.chess[k].isDiy);
+  const item = Object.keys(DATA.items).find((k) => DATA.items[k] && !DATA.items[k].isHidden && !DATA.items[k].isDiy);
+  assert.ok(id && item);
+  for (let i = 0; i < 3; i++) assert.deepEqual(h.m.handle('p_0', { t: 'g.console', kind: 'chess', id }), { ok: true });
+  assert.match(h.lastBc('m.ticker')?.text || '', /通过控制台获得/);
+  assert.equal(h.m.handle('p_0', { t: 'g.console', kind: 'chess', id }).error, ERR.RATE);
+  h.toPrep(2);
+  for (let i = 0; i < 3; i++) assert.deepEqual(h.m.handle('p_0', { t: 'g.console', kind: 'item', id: item }), { ok: true });
+  h.toPrep(3);
+  for (let i = 0; i < 3; i++) assert.deepEqual(h.m.handle('p_0', { t: 'g.console', kind: 'chess', id }), { ok: true });
+  h.toPrep(4);
+  assert.deepEqual(h.m.handle('p_0', { t: 'g.console', kind: 'chess', id }), { ok: true });
+  assert.equal(h.ps('p_0').consoleTotalUses, 10);
+  assert.equal(h.m.handle('p_0', { t: 'g.console', kind: 'item', id: item }).error, ERR.RATE);
+  h.m.dispose();
+});
+
+test('developer console stays disabled for matchmaking-style matches even when a client forges g.console', () => {
+  const h = makeMatch({ mode: 'coop', humans: 1, bots: 1, seed: 612, consoleEnabled: false }).start();
+  h.toPrep(1);
+  const id = Object.keys(DATA.chess).find((k) => DATA.chess[k] && DATA.chess[k].visible && !DATA.chess[k].isGolden && !DATA.chess[k].isHidden && !DATA.chess[k].isDiy);
+  assert.equal(h.m.handle('p_0', { t: 'g.console', kind: 'chess', id }).error, ERR.BAD_MSG);
+  h.m.dispose();
+});
+
+test('developer console grants positive alliance layers and rejects non-positive amounts', () => {
+  const h = makeMatch({ mode: 'solo', seed: 613, consoleEnabled: true }).start();
+  h.toPrep(1);
+  const bondId = Object.keys(DATA.bonds).find((k) => DATA.bonds[k] && !DATA.bonds[k].isHidden);
+  assert.ok(bondId);
+  assert.equal(h.m.handle('p_0', { t: 'g.console', kind: 'bond', id: bondId, amount: 0 }).error, ERR.BAD_TARGET);
+  assert.deepEqual(h.m.handle('p_0', { t: 'g.console', kind: 'bond', id: bondId, amount: 7 }), { ok: true });
+  assert.equal(h.ps('p_0').layers[bondId], 7);
+  assert.match(h.lastBc('m.ticker')?.text || '', /通过控制台获得.*7 层/);
+  h.m.dispose();
+});
+
 test('m.public is throttled to ≤ 10/s; m.private is only resent when it changed', () => {
   const h = makeMatch({ mode: 'solo', seed: 62 }).start();
   h.toPrep(1);

@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, MAX_SEATS, MAX_SPECTATORS } from '../../../shared/constants.js';
 import {
-  html, Button, Icon, MicroLabel, PingPill, OnlineCount, AvatarFrame, DifficultyTag, DifficultyIcon, Tooltip, confirmDialog, doctorNo,
+  html, Button, Icon, MicroLabel, PingPill, OnlineCount, AvatarFrame, DifficultyTag, DifficultyIcon, Tooltip, Modal, confirmDialog, doctorNo,
 } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { copyText } from '../ui/clipboard.js';
@@ -185,6 +185,20 @@ function DifficultyPicker({ room, isHost, busy, onPick }) {
   </div>`;
 }
 
+function ConsoleWarning({ open, remaining, busy, onCancel, onConfirm }) {
+  const ready = remaining <= 0;
+  return html`<${Modal} open=${open} title="启用控制台" micro="DEVELOPER CONSOLE" tone="red" closeOnBackdrop=${false}
+      onClose=${onCancel}
+      actions=${html`<${Button} variant="secondary" onClick=${onCancel}>取消<//>
+        <${Button} variant="danger" icon="terminal" loading=${busy} disabled=${!ready} onClick=${onConfirm}>${ready ? '确定启用' : `请等待 ${remaining} 秒`}<//>`}>
+    <div class="console-warning">
+      <${Icon} name="warn" class="console-warning__icon" />
+      <p>控制台能让玩家给予自己任何装备和干员，这有可能会严重破坏游戏平衡和大幅缩短游戏寿命，仅在必要时启用。</p>
+      <p class="t-lo">启用后本房间的模拟都可以使用控制台，私人房间将不能再匹配同盟队友。</p>
+    </div>
+  <//>`;
+}
+
 /** Room screen component. */
 export function RoomScreen() {
   const room = useStore((s) => s.room);
@@ -194,6 +208,9 @@ export function RoomScreen() {
   const [busy, setBusy] = useState(null);
   const [matchTeammates, setMatchTeammates] = useState(false);
   const [fillBots, setFillBots] = useState(true);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [consoleReadyAt, setConsoleReadyAt] = useState(0);
+  const [consoleNow, setConsoleNow] = useState(() => Date.now());
   const [, tickMatchClock] = useState(0);
   const alive = useRef(true);
   const inFlight = useRef(false); // synchronous guard against double clicks (state updates are async)
@@ -203,11 +220,18 @@ export function RoomScreen() {
     const id = setInterval(() => tickMatchClock((n) => n + 1), 250);
     return () => clearInterval(id);
   }, [room?.matching?.queueId]);
+  useEffect(() => {
+    if (!consoleOpen) return undefined;
+    const id = setInterval(() => setConsoleNow(Date.now()), 200);
+    return () => clearInterval(id);
+  }, [consoleOpen]);
+  useEffect(() => { if (room?.consoleEnabled) setMatchTeammates(false); }, [room?.consoleEnabled]);
 
   if (!room) return null;
   const online = conn.status === 'online';
   const coop = room.mode !== 'solo';
   const facts = roomFacts(room, me.playerId);
+  const canManageConsole = facts.isHost || (room.mode === 'solo' && !!facts.mine);
   const myReady = !!facts.mine?.ready;
   const info = difficultyInfo(room.mode, room.difficulty);
 
@@ -237,6 +261,19 @@ export function RoomScreen() {
     if (ok) run(`kick${seat}`, () => net.request('room.kick', { seat, playerId }));
   };
   const setDifficulty = (difficulty) => run('diff', () => net.request('room.setDifficulty', { difficulty }));
+  const openConsole = () => {
+    if (room.consoleEnabled || room.matching || !canManageConsole) return;
+    setConsoleReadyAt(Date.now() + 5000);
+    setConsoleNow(Date.now());
+    setConsoleOpen(true);
+  };
+  const disableConsole = () => run('console-disable', () => net.request('room.console.disable', {}));
+  const confirmConsole = () => run('console', async () => {
+    if (Date.now() < consoleReadyAt) return;
+    await net.request('room.console.enable', {});
+    setConsoleOpen(false);
+  });
+  const cancelConsole = () => setConsoleOpen(false);
   // spectator seats: the host frees one; a spectator takes a free player seat with room.join of this room
   const removeSpectator = (playerId) => run(`rs${playerId}`, () => net.request('room.removeSpectator', { playerId }));
   const sit = () => run('sit', () => net.request('room.join', { code: room.code }));
@@ -317,6 +354,10 @@ export function RoomScreen() {
       <div class="room-bar__left">
         <span class="room-bar__label">模拟难度<${MicroLabel}>DIFFICULTY<//></span>
         <${DifficultyPicker} room=${room} isHost=${facts.isHost} busy=${busy} onPick=${setDifficulty} />
+        ${canManageConsole ? html`<${Button} variant=${room.consoleEnabled ? 'danger' : 'secondary'} size="lg" icon="terminal"
+          class="room-console-btn" disabled=${(!room.consoleEnabled && !!room.matching) || !online} onClick=${room.consoleEnabled ? disableConsole : openConsole}
+          title=${room.consoleEnabled ? '关闭控制台' : '启用控制台'}>${room.consoleEnabled ? '关闭控制台' : '启用控制台'}<//>`
+          : room.consoleEnabled ? html`<span class="room-console-status"><${Icon} name="terminal" />控制台已启用</span>` : null}
       </div>
       <div class="room-bar__center">
         <div class="ready-count" hidden=${!coop}>
@@ -336,13 +377,15 @@ export function RoomScreen() {
               ? html`<div class="room-match-actions room-match-actions--active"><span class="room-match-state"><${Icon} name="signal" />正在匹配队友 <b class="num">${Math.max(0, Math.ceil((Number(room.matching.deadlineAt) - Date.now()) / 1000))}s</b></span><${Button} variant="danger" size="lg" icon="close" loading=${busy === 'cancel-match'} onClick=${cancelQueue}>取消匹配<//></div>`
               : html`<div class="room-match-actions">
                 <div class="room-match-options">
-                  <label class="fill-bots"><input type="checkbox" checked=${matchTeammates} onChange=${(e) => setMatchTeammates(e.currentTarget.checked)} /><span>匹配同盟队友</span></label>
+                  <label class="fill-bots"><input type="checkbox" checked=${matchTeammates} disabled=${!!room.consoleEnabled}
+                    onChange=${(e) => setMatchTeammates(e.currentTarget.checked)} /><span>匹配同盟队友</span></label>
                   <label class=${`fill-bots fill-bots--optional${matchTeammates ? '' : ' is-hidden'}`} aria-hidden=${matchTeammates ? 'false' : 'true'}>
                     <input type="checkbox" checked=${fillBots} disabled=${!matchTeammates} onChange=${(e) => setFillBots(e.currentTarget.checked)} /><span>60 秒后 AI 补齐</span>
                   </label>
                 </div>
-                <${Tooltip} text=${matchTeammates || facts.canStart ? null : '仍有博士未准备就绪'}>
-                  <${Button} variant="primary" size="xl" icon=${matchTeammates ? 'users' : 'play'} loading=${busy === (matchTeammates ? 'match' : 'start')} disabled=${(!matchTeammates && !facts.canStart) || !online} onClick=${start}>立即开始<//>
+                <${Tooltip} text=${room.consoleEnabled ? '控制台已启用，不能匹配同盟队友' : matchTeammates || facts.canStart ? null : '仍有博士未准备就绪'}>
+                  <${Button} variant="primary" size="xl" icon=${matchTeammates ? 'users' : 'play'} loading=${busy === (matchTeammates ? 'match' : 'start')}
+                    disabled=${(room.consoleEnabled && matchTeammates) || (!matchTeammates && !facts.canStart) || !online} onClick=${start}>立即开始<//>
                 <//>
               </div>`
             : html`<${Tooltip} text=${facts.canStart ? null : '仍有博士未准备就绪'}>
@@ -354,5 +397,7 @@ export function RoomScreen() {
               loading=${busy === 'ready'} disabled=${!online || !facts.mine} onClick=${toggleReady}>${myReady ? '已就绪' : '准备就绪'}<//>`}
       </div>
     </footer>
+    <${ConsoleWarning} open=${consoleOpen} remaining=${Math.max(0, Math.ceil((consoleReadyAt - consoleNow) / 1000))}
+      busy=${busy === 'console'} onCancel=${cancelConsole} onConfirm=${confirmConsole} />
   </div>`;
 }

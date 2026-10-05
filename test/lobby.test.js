@@ -584,6 +584,24 @@ describe('websocket lobby', () => {
     await expectError(host, { t: 'room.join', code: own.code }, ERR.ROOM_NOT_FOUND);
   });
 
+  test('console enable is host-only and mutually exclusive with room matchmaking', async () => {
+    const host = await pool.player('ConsoleHost');
+    const st = await createRoom(host, 'coop', 'NORMAL');
+    const guest = await pool.player('ConsoleGuest');
+    await joinRoom(guest, st.code);
+    await expectError(guest, { t: 'room.console.enable' }, ERR.NOT_HOST);
+    await expectOk(host, { t: 'room.console.enable' });
+    const enabled = await host.waitFor('room.state', (s) => s.consoleEnabled === true);
+    assert.equal(enabled.consoleEnabled, true);
+    await expectError(host, { t: 'match.join', mode: 'coop', difficulty: 'NORMAL', fillBots: true }, ERR.MATCHING);
+    await expectError(guest, { t: 'match.join', mode: 'coop', difficulty: 'NORMAL', fillBots: true }, ERR.MATCHING);
+    await expectOk(host, { t: 'room.console.disable' });
+    const disabled = await host.waitFor('room.state', (s) => s.consoleEnabled === false);
+    assert.equal(disabled.consoleEnabled, false);
+    await expectOk(host, { t: 'room.leave' });
+    await expectOk(guest, { t: 'room.leave' });
+  });
+
   test('room full, solo rooms admit one human and no AI', async () => {
     const host = await pool.player('H');
     const st = await createRoom(host);
@@ -847,6 +865,10 @@ describe('websocket lobby', () => {
   test('solo room: host starts alone', async () => {
     const solo = await pool.player('Solo');
     await createRoom(solo, 'solo', 'FUNNY');
+    await expectOk(solo, { t: 'room.console.enable' });
+    await solo.waitFor('room.state', (s) => s.consoleEnabled === true);
+    await expectOk(solo, { t: 'room.console.disable' });
+    await solo.waitFor('room.state', (s) => s.consoleEnabled === false);
     await expectOk(solo, { t: 'room.start' });
     const pub = await solo.waitFor('m.public');
     assert.equal(pub.phase, 'INFO_CHECK');

@@ -69,6 +69,7 @@ export function roomDoc(room) {
     code: room.code,
     mode: room.mode,
     difficulty: room.difficulty,
+    consoleEnabled: !!room.consoleEnabled,
     hostId: room.hostId || null,
     ownerKey: room.ownerKey || null,
     matchKey: room.matchKey || null,

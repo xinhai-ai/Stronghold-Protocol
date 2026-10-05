@@ -157,6 +157,8 @@ export class Room {
     this.matchKey = null;
     /** @type {{ queueId: string, queuedAt: number, deadlineAt: number, fillBots: boolean } | null} */
     this.matching = null;
+    /** Owner opt-in for the in-match developer console. Public matchmaking never has a Room flag. */
+    this.consoleEnabled = false;
     this.createdAt = now;
     this.disposed = false;
   }
@@ -186,6 +188,7 @@ export class Room {
       difficulty: this.difficulty,
       inMatch: !!this.match,
       matching: this.matching ? { ...this.matching } : null,
+      consoleEnabled: !!this.consoleEnabled,
       seats: this.seats.map((s) => (s
         ? { seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, ready: s.ready, connected: s.connected && !s.left }
         : null)),
@@ -347,6 +350,8 @@ export class Lobby {
       case 'room.removeBot': return this.removeBot(session, msg);
       case 'room.kick': return this.kick(session, msg);
       case 'room.start': return this.start(session);
+      case 'room.console.enable': return this.enableConsole(session);
+      case 'room.console.disable': return this.disableConsole(session);
       case 'room.loadout': return this.loadout(session, msg);
       case 'match.join': return this.matchJoin(session, msg);
       case 'match.leave': return this.matchLeave(session);
@@ -437,6 +442,7 @@ export class Lobby {
       room.ownerKey = typeof d.ownerKey === 'string' ? d.ownerKey : null;
       room.matchKey = typeof d.matchKey === 'string' ? d.matchKey : null;
       room.matchCount = Number.isInteger(d.matchCount) && d.matchCount >= 0 ? d.matchCount : 0;
+      room.consoleEnabled = d.consoleEnabled === true;
       for (const s of Array.isArray(d.seats) ? d.seats : []) {
         if (!s || typeof s.playerId !== 'string' || !Number.isInteger(s.seat) || s.seat < 0 || s.seat >= MAX_SEATS || room.seats[s.seat]) continue;
         const isBot = !!s.isBot;
@@ -511,6 +517,7 @@ export class Lobby {
     if (room) {
       if (room.match || room.matching) return fail(room.match ? ERR.ROOM_STARTED : ERR.MATCHING);
       if (room.mode !== 'coop') return fail(ERR.BAD_MSG, 'solo rooms cannot join co-op matchmaking');
+      if (room.consoleEnabled) return fail(ERR.MATCHING, 'console and matchmaking are mutually exclusive');
       if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
       const humans = room.activeHumans();
       if (!humans.length || humans.some((s) => !s.connected)) return fail(ERR.NOT_READY, 'all party members must be connected');
@@ -793,6 +800,38 @@ export class Lobby {
     return OK;
   }
 
+  /** Enable the developer console for this private room. The browser owns the five-second warning countdown; the
+   * server remains authoritative about who may enable it and prevents any matchmaking-room use. */
+  enableConsole(session) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.matching) return fail(ERR.MATCHING, 'console and matchmaking are mutually exclusive');
+    if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
+    const personal = room.mode === 'solo' && !!room.seatOf(session.playerId);
+    if (!personal && room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (room.consoleEnabled) return fail(ERR.ALREADY);
+    room.consoleEnabled = true;
+    this.broadcastState(room);
+    this.log.info(`[lobby] ${room.code} console enabled by ${session.name}`);
+    return OK;
+  }
+
+  /** Host-only opt-out while the room is still in its lobby. Running matches keep their immutable authorization. */
+  disableConsole(session) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
+    const personal = room.mode === 'solo' && !!room.seatOf(session.playerId);
+    if (!personal && room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (!room.consoleEnabled) return fail(ERR.ALREADY);
+    room.consoleEnabled = false;
+    this.broadcastState(room);
+    this.log.info(`[lobby] ${room.code} console disabled by ${session.name}`);
+    return OK;
+  }
+
   addBot(session) {
     const room = this.roomOf(session);
     if (!room) return fail(ERR.NOT_IN_ROOM);
@@ -944,6 +983,7 @@ export class Lobby {
         seats,
         // the spectator seats (header): watched like eliminated players, never players
         spectators: room.spectators.map((s) => s.playerId),
+        consoleEnabled: !!room.consoleEnabled,
         seed,
         // the room's match number: with the seed it keeps battleIds unique across the room's matches (DESIGN §14)
         matchNo,
@@ -1014,6 +1054,7 @@ export class Lobby {
         difficulty: owner.difficulty,
         modeId: modeIdFor(owner.mode, owner.difficulty),
         seats,
+        consoleEnabled: !!room?.consoleEnabled,
         seed,
         matchNo: room ? room.matchCount + 1 : 1,
         data: this.safeData(), workerPool: this.workerPool, log: this.log, now: this.now,

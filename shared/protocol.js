@@ -251,6 +251,10 @@ export const C2S = {
   // host confirmed — a seat that changed hands meanwhile is refused
   'room.kick': { seat: (v) => isInt(v, 0, MAX_SEATS - 1), playerId: isId },
   'room.start': {},
+  // Console is a room owner opt-in. The warning/countdown is enforced by the browser; the server still checks room
+  // ownership, match state and the matchmaking exclusion before changing the room flag.
+  'room.console.enable': {},
+  'room.console.disable': {},
   // matchmaking: an alliance room host queues the whole party. `mode: solo` remains accepted for older clients;
   // the current UI always creates a solo room instead, so independent simulation stays a solo room/match.
   'match.join': {
@@ -299,6 +303,13 @@ export const C2S = {
   // the stats the own board's units start their next battle with (user playtest #4 item 7; prep phases): answered by
   // the push m.unitStats { seq, round, units: [unitStatsEntry] }; `seq` is echoed so the client keeps the newest answer
   'g.unitStats': { seq: (v) => isInt(v, 0, 2 ** 31), $optional: ['seq'] },
+  // Developer console: only accepted by a server-authorized private/solo room match.
+  'g.console': {
+    kind: (v) => v === 'item' || v === 'chess' || v === 'bond',
+    id: isId,
+    amount: optional((v) => isNum(v, 1, 1e9)),
+    $optional: ['amount'],
+  },
   'g.leave': {},
 
   // client-side combat (DESIGN §14): the authoritative client of a field reports its battle; a 联防 field adds

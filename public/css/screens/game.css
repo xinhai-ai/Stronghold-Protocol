@@ -349,6 +349,33 @@
 }
 .gm__gear .icon { width: .28rem; height: .28rem; }
 .gm__gear:hover { color: var(--mint-400); border-color: var(--mint-700); }
+.gm__console { color: var(--red-premium); }
+.gm__console:hover { color: #ffaaa8; border-color: rgba(255, 84, 84, .7); }
+
+/* developer console */
+.console-ui { display: flex; flex-direction: column; gap: .14rem; min-height: 4.8rem; }
+.console-ui__warning { display: flex; align-items: center; gap: .08rem; color: var(--amber); font-size: .14rem; }
+.console-ui__warning .icon { width: .18rem; height: .18rem; }
+.console-ui__tabs { display: flex; align-items: center; gap: .1rem; }
+.console-ui__quota { margin-left: auto; color: var(--text-lo); font-size: .14rem; }
+.console-ui__amount { display: flex; align-items: center; gap: .1rem; color: var(--text-md); font-size: .15rem; }
+.console-ui__amount input { width: 1.1rem; height: .34rem; padding: 0 .08rem; color: var(--text-hi); background: #0a0d0c; border: 1px solid var(--line-2); font-family: var(--font-num); }
+.console-ui__amount input:invalid { border-color: var(--red-premium); }
+.console-bond-modal { display: flex; flex-direction: column; gap: .18rem; }
+.console-ui__presets { display: flex; gap: .08rem; }
+.console-ui__list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .06rem; max-height: 4.1rem; overflow: auto; padding-right: .04rem; }
+.console-ui__entry { display: flex; align-items: center; gap: .1rem; min-width: 0; padding: .06rem .1rem; color: var(--text-hi); background: rgba(12, 17, 15, .88); border: 1px solid var(--line-2); text-align: left; cursor: pointer; }
+.console-ui__entry:hover:not(:disabled) { border-color: var(--red-premium); background: rgba(120, 28, 28, .22); }
+.console-ui__entry:disabled { opacity: .52; cursor: default; }
+.console-ui__entry .uthumb { flex: none; }
+.console-ui__bond-icon { display: grid; place-items: center; width: .44rem; height: .44rem; flex: none; color: var(--mint-400); border: 1px solid var(--mint-700); background: rgba(23, 249, 183, .08); }
+.console-ui__bond-icon .icon { width: .24rem; height: .24rem; }
+.console-ui__entry-text { display: flex; flex-direction: column; gap: .02rem; min-width: 0; overflow: hidden; }
+.console-ui__entry-text b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .15rem; }
+.console-ui__entry-text .micro { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console-ui__entry > .icon { width: .18rem; height: .18rem; margin-left: auto; color: var(--mint-400); flex: none; }
+.console-ui__entry-busy { margin-left: auto; color: var(--amber); font-size: .13rem; white-space: nowrap; }
+.console-ui__empty { margin: .35rem 0; grid-column: 1 / -1; color: var(--text-lo); text-align: center; }
 
 .ewheel { position: relative; }
 .ewheel__btn {

@@ -265,6 +265,8 @@ export class Match {
     this.gd = new GameData(this.data, this.modeId);
     if (!this.difficulty) this.difficulty = this.gd.difficulty;
     this.isSolo = this.mode === 'solo' || this.gd.isSolo;
+    // Only a room created by the lobby can opt in. Public matchmaking passes false and has no room console.
+    this.consoleEnabled = opts.consoleEnabled === true;
     this.ownsScheduler = !opts.scheduler;
     this.sched = opts.scheduler || new RealScheduler({ now: opts.now || Date.now, onError: (e) => this.reportError('timer', e) });
     this.registry = opts.registry || getDefaultRegistry();
@@ -1099,11 +1101,59 @@ export class Match {
       case 'g.pause': return this.setPause(ps, !!msg.on);
       // the stats the board's units start their next battle with (the detail card in prep, user playtest #4 item 7)
       case 'g.unitStats': return this.unitStats(ps, msg.seq ?? null);
+      case 'g.console': return this.consoleGrant(ps, msg.kind, msg.id, msg.amount);
       case 'g.leave': this.onLeave(ps.playerId); return OK;
       case 'b.progress': return this._onProgress(ps, msg);
       case 'b.result': return this._onResult(ps, msg);
       default: return fail(ERR.BAD_MSG);
     }
+  }
+
+  /** Authoritative developer-console grant. The lobby flag is deliberately copied into the Match and never inferred
+   * from a client message, so public matchmaking cannot opt itself in by forging the UI request. */
+  consoleGrant(ps, kind, id, amount) {
+    if (!this.consoleEnabled) return fail(ERR.BAD_MSG, 'console is disabled for this match');
+    if (!ps || ps.isBot || ps.left || !ps.alive) return fail(ERR.ELIMINATED);
+    if (this.phase === PHASE.LOBBY || this.phase === PHASE.RESULT || this.ended || this.disposed) return fail(ERR.WRONG_PHASE);
+    if (ps.consoleTotalUses >= 10) return fail(ERR.RATE, 'console total limit reached');
+    if (ps.consoleRoundUses >= 3) return fail(ERR.RATE, 'console round limit reached');
+    let piece = null;
+    let grantedName = id;
+    let grantedAmount = null;
+    let granted = false;
+    if (kind === 'bond') {
+      if (!this.gd.bond(id) || !Number.isInteger(amount) || amount <= 0) return fail(ERR.BAD_TARGET, 'bond amount must be a positive integer');
+      const added = ps.addLayers(id, amount, { reason: 'console' });
+      if (!(added > 0)) return fail(ERR.BAD_TARGET, 'bond is already at the layer limit');
+      grantedName = this.gd.bond(id).name || id;
+      grantedAmount = added;
+      granted = true;
+    } else if (kind === 'chess') {
+      const rec = this.gd.chess(id);
+      // Hidden / DIY records are internal data, not player-facing operators. Golden variants are allowed when their
+      // base operator is visible, which still makes every normal playable operator available.
+      const base = rec && this.gd.chess(this.gd.baseIdOf(id));
+      if (!rec || rec.isDiy || rec.isHidden || !(rec.visible || rec.isGolden) || !base || base.isDiy || base.isHidden || !base.visible) {
+        return fail(ERR.BAD_TARGET, 'unknown operator');
+      }
+      grantedName = rec.name || id;
+      piece = ps.acquireChess(id, { source: 'console', fromPool: false });
+      granted = !!piece;
+    } else if (kind === 'item') {
+      const rec = this.gd.item(id);
+      if (!rec || rec.isDiy || rec.isHidden) return fail(ERR.BAD_TARGET, 'unknown equipment');
+      grantedName = rec.name || id;
+      piece = ps.acquireItem(id, { source: 'console' });
+      granted = !!piece;
+    } else return fail(ERR.BAD_MSG);
+    if (!granted) return fail(ERR.HAND_FULL, 'console grant could not fit in the preparation area');
+    ps.consoleRoundUses++;
+    ps.consoleTotalUses++;
+    // Reuse the existing in-match ticker component, but make the action explicit so every teammate and spectator sees
+    // that a developer-console grant happened. This is intentionally a broadcast, never a private toast.
+    this.tickerText(`${ps.name}博士通过控制台获得了${grantedName}${grantedAmount == null ? '' : ` ${grantedAmount} 层`}`, 2);
+    ps.dirty();
+    return OK;
   }
 
   emote(ps, id) {

@@ -105,7 +105,8 @@ export function resourceContext() {
     let res;
     try {
       const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(10000) : undefined;
-      res = await fetch(MANIFEST_URL, { cache: 'no-store', signal });
+      // Revalidate the HTTP cache on every page load. On a wire-level 304 the browser supplies the cached JSON body.
+      res = await fetch(MANIFEST_URL, { cache: 'no-cache', signal });
     } catch (err) {
       return { error: `无法读取资源清单：${err?.message || err}` };
     }

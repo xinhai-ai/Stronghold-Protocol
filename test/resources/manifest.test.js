@@ -247,6 +247,74 @@ describe('the served resource manifest', () => {
     assert.equal(m2.files.find((f) => f.url === '/assets/ui/battle/sprite_shadow.png').hash, 'fedcba987654', 'a hashed file does not depend on the asset manifest hash any more');
   });
 
+  test('conditional GET/HEAD support both encodings, weak/list validators and Last-Modified', async (t) => {
+    const inst = install();
+    const srv = await serve(inst);
+    t.after(() => { srv.close(); inst.cleanup(); });
+    const url = `http://127.0.0.1:${srv.address().port}/data/${RESOURCE_MANIFEST_FILE}`;
+    const tags = [];
+    for (const encoding of ['identity', 'gzip']) {
+      const headers = { 'accept-encoding': encoding };
+      const first = await fetch(url, { headers });
+      const etag = first.headers.get('etag');
+      const modified = first.headers.get('last-modified');
+      tags.push(etag);
+      assert.equal(first.headers.get('vary'), 'Accept-Encoding');
+      await first.json();
+      for (const method of ['GET', 'HEAD']) {
+        for (const conditional of [
+          { 'if-none-match': etag },
+          { 'if-none-match': `"other", W/${etag}` },
+          { 'if-modified-since': modified },
+        ]) {
+          const r = await fetch(url, { method, headers: { ...headers, ...conditional } });
+          assert.equal(r.status, 304, `${encoding} ${method} ${JSON.stringify(conditional)}`);
+          assert.equal(await r.text(), '');
+          assert.equal(r.headers.get('etag'), etag);
+          assert.equal(r.headers.get('vary'), 'Accept-Encoding');
+          assert.equal(r.headers.get('cache-control'), 'no-cache');
+        }
+      }
+      const stale = await fetch(url, { headers: { ...headers, 'if-none-match': '"stale"', 'if-modified-since': modified } });
+      assert.equal(stale.status, 200, 'If-None-Match takes precedence over the date');
+      await stale.json();
+    }
+    assert.notEqual(tags[0], tags[1], 'gzip and identity have distinct strong validators');
+  });
+
+  test('unchanged rebuilds/restarts retain the ETag; changed response metadata returns fresh JSON', async (t) => {
+    const inst = install();
+    const srv = await serve(inst);
+    t.after(() => { srv.close(); inst.cleanup(); });
+    const url = `http://127.0.0.1:${srv.address().port}/data/${RESOURCE_MANIFEST_FILE}`;
+    const headers = { 'accept-encoding': 'identity' };
+    const first = await fetch(url, { headers });
+    const etag = first.headers.get('etag');
+    const initial = await first.json();
+    const source = path.join(inst.dataDir, 'assets.json');
+    const stamp = fs.statSync(source).mtimeMs;
+    fs.utimesSync(source, new Date(stamp + 5000), new Date(stamp + 5000));
+    const unchanged = await fetch(url, { headers: { ...headers, 'if-none-match': etag } });
+    assert.equal(unchanged.status, 304, 'touching a source without changing the response retains the validator');
+    const restarted = await serve(inst);
+    t.after(() => restarted.close());
+    const afterRestart = await fetch(`http://127.0.0.1:${restarted.address().port}/data/${RESOURCE_MANIFEST_FILE}`, {
+      headers: { ...headers, 'if-none-match': etag },
+    });
+    assert.equal(afterRestart.status, 304, 'a new handler with the same data retains the validator');
+
+    fs.writeFileSync(path.join(inst.publicDir, 'assets/char/avatar/char_002_amiya.png'), 'changed-size');
+    fs.utimesSync(source, new Date(stamp + 10000), new Date(stamp + 10000));
+    const changed = await fetch(url, { headers: { ...headers, 'if-none-match': etag } });
+    assert.equal(changed.status, 200);
+    assert.notEqual(changed.headers.get('etag'), etag);
+    const updated = await changed.json();
+    assert.equal(updated.version, initial.version, 'resource hashes did not change, only response metadata did');
+    assert.notEqual(updated.totalBytes, initial.totalBytes);
+    const again = await fetch(url, { headers: { ...headers, 'if-none-match': changed.headers.get('etag') } });
+    assert.equal(again.status, 304, 'the changed response also revalidates');
+  });
+
   test('an install without data/assets.json answers an empty manifest (never a 404 loop)', async (t) => {
     const inst = install({ assets: null, localDoc: null });
     const srv = await serve(inst);

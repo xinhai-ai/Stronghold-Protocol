@@ -462,14 +462,15 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
       const gz = acceptsGzip(req.headers['accept-encoding']) ? idx.gzip : null;
       const body = gz || idx.body;
       const stat = { size: idx.body.length, mtimeMs: idx.mtimeMs, mtime: new Date(idx.mtimeMs) };
-      const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}-${idx.manifest.version.slice(0, 12)}${gz ? '-gz' : ''}"`;
+      const etag = gz ? `${idx.etag.slice(0, -1)}-gz"` : idx.etag;
       const headers = {
         'Content-Type': MIME['.json'],
         'Cache-Control': 'no-cache',
         ETag: etag,
         'Last-Modified': stat.mtime.toUTCString(),
+        Vary: 'Accept-Encoding',
       };
-      if (gz) { headers['Content-Encoding'] = 'gzip'; headers.Vary = 'Accept-Encoding'; }
+      if (gz) headers['Content-Encoding'] = 'gzip';
       if (isNotModified(req, etag, stat.mtime)) { res.writeHead(304, headers); res.end(); return; }
       headers['Content-Length'] = body.length;
       res.writeHead(200, headers);

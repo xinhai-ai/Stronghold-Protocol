@@ -36,6 +36,10 @@ local data responses. See [DEPLOY.md §3.2](DEPLOY.md#32-素材放-cdn).
 
 ## Preload (optional asset preloading)
 
+The resource manifest uses HTTP cache revalidation (`cache: 'no-cache'`): unchanged responses return 304 and the
+browser supplies the cached JSON. Its ETag depends on the complete response content, so rebuilding the same manifest
+or restarting the server keeps the validator; a changed manifest returns fresh JSON.
+
 A player can have the client download the art ahead of time into the browser's Cache Storage, so entering a battle never
 waits on a download: the files are served from the browser cache instead of being fetched again. It is **off by default** and
 there is a way in without leaving the home screen: the title screen shows a compact 「预载资源」 pill in its bottom-right

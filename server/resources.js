@@ -248,7 +248,7 @@ export function localPathFor(url, publicDir, cdnBase = '') {
  *           statFile?: (p: string) => Promise<{ isFile(): boolean, size: number }>, log?: any }} opts
  */
 export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite = (v) => v, statFile = (p) => fsp.stat(p), log = null } = {}) {
-  /** @type {{ key: string, body: Buffer, gzip: Buffer, mtimeMs: number, manifest: any } | null} */
+  /** @type {{ key: string, body: Buffer, gzip: Buffer, etag: string, mtimeMs: number, manifest: any } | null} */
   let cache = null;
 
   async function readJson(name) {
@@ -303,7 +303,9 @@ export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite 
     const version = shortHash([cdnBase, ...files.map((f) => `${f.url}|${fileHashes.get(f.url)}`)].join('\n'));
     const manifest = buildResourceManifest({ files, sizes: await measure(files), version, hashes: fileHashes });
     const body = Buffer.from(JSON.stringify(manifest));
-    cache = { key, body, gzip: zlib.gzipSync(body), mtimeMs: Date.now(), manifest };
+    // Hash the complete response (including tiers and sizes), so unchanged rebuilds/restarts keep their validator.
+    const etag = `"resources-${crypto.createHash('sha256').update(body).digest('hex')}"`;
+    cache = { key, body, gzip: zlib.gzipSync(body), etag, mtimeMs: Date.now(), manifest };
     log?.info?.(`[resources] ${manifest.count} file(s), ${manifest.tier1} essential, ${manifest.sized} sized`
       + `${manifest.totalBytes ? `, ${(manifest.totalBytes / 1048576).toFixed(1)} MiB` : ''}, `
       + `${fileHashes.size ? [...fileHashes.values()].filter((h) => !h.startsWith('syn-')).length : 0} hashed`
@@ -312,7 +314,7 @@ export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite 
   }
 
   return {
-    /** @returns {Promise<{ body: Buffer, gzip: Buffer, mtimeMs: number, manifest: any }>} */
+    /** @returns {Promise<{ body: Buffer, gzip: Buffer, etag: string, mtimeMs: number, manifest: any }>} */
     get: build,
     /** Drop the cache (tests). */
     reset() { cache = null; },

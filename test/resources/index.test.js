@@ -34,7 +34,7 @@ const MANIFEST = { format: 1, version: 'testversion', count: FILES.length, tier1
 
 /** Install stubs and return the recorder of what the module did. */
 function stubEnv({ manifest = MANIFEST, fail = false, secure = true } = {}) {
-  const calls = { fetch: [], registered: [], unregistered: 0, released: [] };
+  const calls = { fetch: [], fetchOptions: [], registered: [], unregistered: 0, released: [] };
   const globals = ['fetch', 'caches', 'navigator', 'isSecureContext', 'location'];
   const saved = Object.fromEntries(globals.map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
   const restore = () => {
@@ -59,6 +59,7 @@ function stubEnv({ manifest = MANIFEST, fail = false, secure = true } = {}) {
   Object.defineProperty(globalThis, 'fetch', {
     value: async (url, opts) => {
       calls.fetch.push(url);
+      calls.fetchOptions.push(opts);
       if (url === MANIFEST_URL) {
         if (fail) return new Response('nope', { status: 503 });
         return new Response(JSON.stringify(manifest), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -96,6 +97,7 @@ test('the preload controller: off by default, downloads in two passes, serves of
   assert.equal(env.calls.registered.length, 1);
   assert.deepEqual(env.calls.registered[0], [SW_URL, { type: 'module', scope: '/', updateViaCache: 'none' }]);
   assert.equal(env.calls.fetch[0], MANIFEST_URL);
+  assert.equal(env.calls.fetchOptions[0].cache, 'no-cache', 'manifest reads revalidate the HTTP cache instead of bypassing it');
   assert.deepEqual(env.calls.fetch.slice(1), [
     `${ORIGIN}/assets/audio/bgm.mp3`, `${ORIGIN}/assets/ui/panel.png`, // essential tier, alphabetical
     `${ORIGIN}/assets/char/portrait.png`, `${ORIGIN}/assets/spine/op/x/front/x.skel`, // then the rest

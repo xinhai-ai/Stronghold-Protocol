@@ -465,12 +465,11 @@ export class Lobby {
     if (this.queueByPlayer.has(session.playerId)) return fail(ERR.MATCHING);
     if (mode === 'solo') {
       if (room) return fail(ERR.MATCHING, 'leave the room before solo matchmaking');
-      // A solo operator is a one-person party in the four-seat co-op pool. The selected lobby mode describes the
-      // entry path; the actual match remains the shared four-player ruleset so three AI/queued seats can fill it.
+      // Compatibility for clients from the first queue rollout. The current UI keeps independent simulation on its
+      // solo room path and only sends mode=coop from the in-room teammate-match option.
       const entry = this.makeQueueEntry({ mode: 'coop', difficulty, fillBots: true, room: null,
         players: [{ seat: 0, playerId: session.playerId, name: session.name, isBot: false, connected: session.connected, loadout: session.loadout || null }] });
       this.enqueueMatchEntry(entry);
-      this.sendQueueState(entry);
       this.processMatchQueues();
       return OK;
     }
@@ -486,14 +485,12 @@ export class Lobby {
       const entry = this.makeQueueEntry({ mode, difficulty: room.difficulty, fillBots: !!fillBots, room, players });
       this.enqueueMatchEntry(entry);
       this.broadcastState(room);
-      this.sendQueueState(entry);
       this.processMatchQueues();
       return OK;
     }
     const entry = this.makeQueueEntry({ mode, difficulty, fillBots: true, room: null,
       players: [{ seat: 0, playerId: session.playerId, name: session.name, isBot: false, connected: session.connected, loadout: session.loadout || null }] });
     this.enqueueMatchEntry(entry);
-    this.sendQueueState(entry);
     this.processMatchQueues();
     return OK;
   }
@@ -529,6 +526,13 @@ export class Lobby {
     if (entry.room) {
       entry.room.matching = { queueId: entry.queueId, queuedAt: entry.queuedAt, deadlineAt: entry.deadlineAt, fillBots: entry.fillBots };
     }
+    this.broadcastQueueCounts(entry.mode, entry.difficulty);
+  }
+
+  /** Send the current number of waiting human players to every ticket in one mode/difficulty bucket. */
+  broadcastQueueCounts(mode, difficulty) {
+    const bucket = this.matchQueues.get(`${mode}:${difficulty}`) || [];
+    for (const entry of bucket) if (!entry.removed) this.sendQueueState(entry);
   }
 
   /** Process each bucket oldest-first. A complete four-person party starts immediately; the oldest incomplete ticket
@@ -555,6 +559,7 @@ export class Lobby {
           if (idx >= 0) bucket.splice(idx, 1);
           this.removeQueueReferences(entry);
         }
+        this.broadcastQueueCounts(first.mode, first.difficulty);
         const players = selected.flatMap((entry) => entry.players.map((p) => ({ ...p })));
         while (players.length < MAX_SEATS) {
           const seat = players.length;
@@ -589,12 +594,18 @@ export class Lobby {
     }
     this.removeQueueReferences(entry);
     this.sendQueueState(entry, reason === 'cancelled' ? 'cancelled' : 'closed', reason);
+    this.broadcastQueueCounts(entry.mode, entry.difficulty);
     if (entry.room && !entry.room.disposed) this.broadcastState(entry.room);
   }
 
   sendQueueState(entry, status = 'queued', reason = null) {
+    const count = status === 'queued'
+      ? (this.matchQueues.get(`${entry.mode}:${entry.difficulty}`) || [])
+        .filter((queued) => !queued.removed)
+        .reduce((n, queued) => n + queued.players.filter((p) => !p.isBot).length, 0)
+      : entry.players.filter((p) => !p.isBot).length;
     const msg = { t: 'match.queue', status, queueId: entry.queueId, mode: entry.mode, difficulty: entry.difficulty,
-      count: entry.players.filter((p) => !p.isBot).length, capacity: MAX_SEATS, queuedAt: entry.queuedAt,
+      count, capacity: MAX_SEATS, queuedAt: entry.queuedAt,
       deadlineAt: entry.deadlineAt, fillBots: entry.fillBots, ...(reason ? { reason } : {}) };
     for (const p of entry.players) if (!p.isBot) {
       const session = this.registry.byId(p.playerId);

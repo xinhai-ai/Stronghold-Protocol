@@ -24,11 +24,19 @@ before(async () => {
   srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true, MatchClass: StubMatch, matchmakingWaitMs: 1000, matchmakingTickMs: 10 });
 });
 
-test('four solo queue entries start one four-seat preparation match immediately', async () => {
+test('four alliance queue entries start one four-seat preparation match immediately', async () => {
   const cs = await Promise.all(['A', 'B', 'C', 'D'].map(player));
   for (const c of cs) {
-    const reply = await c.request({ t: 'match.join', mode: 'solo', difficulty: 'FUNNY', fillBots: true });
+    const reply = await c.request({ t: 'match.join', mode: 'coop', difficulty: 'FUNNY', fillBots: true });
     assert.equal(reply.t, 'ok');
+    if (c === cs[0] && cs.indexOf(c) === 0) {
+      const queued = await c.waitFor('match.queue', (m) => m.status === 'queued');
+      assert.equal(queued.count, 1);
+    }
+    if (c === cs[1]) {
+      const updated = await cs[0].waitFor('match.queue', (m) => m.status === 'queued' && m.count === 2);
+      assert.equal(updated.count, 2);
+    }
   }
   for (const c of cs) {
     const pub = await c.waitFor('m.public', (m) => m.phase === 'INFO_CHECK');

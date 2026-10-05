@@ -15,7 +15,7 @@
 .lobby-left, .lobby-right { display: flex; flex-direction: column; min-width: 0; }
 
 /* ---- mode cards ------------------------------------------------------------------------------------ */
-.mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: .24rem; margin-bottom: .34rem; }
+.mode-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .24rem; margin-bottom: .34rem; }
 .mode-card {
   --bk-c: transparent;
   --bk-l: .2rem;
@@ -35,6 +35,7 @@
   animation: card-in var(--t-slow) var(--ease-out) backwards;
 }
 .mode-card:nth-child(2) { animation-delay: 60ms; }
+.mode-card:nth-child(3) { animation-delay: 120ms; }
 .mode-card__bg {
   position: absolute;
   inset: 0;
@@ -116,7 +117,7 @@
 /* ---- join panel ------------------------------------------------------------------------------------ */
 .join-panel .panel__body { display: flex; flex-direction: column; gap: .14rem; padding: .22rem .26rem .18rem; }
 
-.match-queue { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .12rem .18rem; margin-top: .18rem; padding: .16rem .2rem; overflow: hidden; border: 1px solid var(--mint-700); background: rgba(20, 57, 47, .26); }
+.match-queue { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .12rem .18rem; min-height: .92rem; padding: .16rem .2rem; overflow: hidden; border: 1px solid var(--mint-700); background: rgba(20, 57, 47, .26); }
 .match-queue__scan { position: absolute; inset: 0 auto 0 0; width: 35%; pointer-events: none; background: linear-gradient(90deg, rgba(23, 249, 183, .11), transparent); animation: match-scan 2.4s ease-in-out infinite alternate; }
 .match-queue__head, .match-queue__meta { position: relative; display: flex; align-items: center; gap: .1rem; min-width: 0; }
 .match-queue__head { grid-column: 1 / -1; }
@@ -128,6 +129,7 @@
 .match-queue__meta span + span { padding-left: .12rem; border-left: 1px solid var(--line-2); }
 .match-queue .btn { position: relative; align-self: center; }
 @keyframes match-scan { from { transform: translateX(-20%); opacity: .5; } to { transform: translateX(220%); opacity: 1; } }
+
 .join-row { display: flex; gap: .16rem; align-items: stretch; }
 .join-row .field { flex: 1; }
 .join-row .btn { height: .64rem; }
@@ -249,5 +251,6 @@
 
 /* ---- create ------------------------------------------------------------------------------------------ */
 .create-box { margin-top: .3rem; display: flex; flex-direction: column; gap: .12rem; }
+.create-box > .match-queue { width: 100%; box-sizing: border-box; }
 .create-box .btn--xl { height: .92rem; font-size: .32rem; letter-spacing: .3em; }
 .create-box__hint { display: flex; align-items: center; justify-content: center; min-height: .3rem; font-size: .14rem; color: var(--text-lo); }

@@ -1,10 +1,10 @@
 // Room screen (同盟等待室): 4 seat cards (avatar frame, name, ready state, AI badge, host crown),
-// host controls (difficulty picker, add/remove AI in co-op, start), invite code with copy code /
-// copy link, ready toggle and leave.
+// host controls (difficulty picker, add/remove AI in co-op, optional teammate matchmaking), invite code with copy
+// code / copy link, ready toggle and leave.
 //
-// Start rule (server/lobby.js): room.start needs every *other* human connected and ready; the
-// host's start counts as the host's ready. So 开始模拟 is enabled exactly then and sends room.start
-// alone (no separate room.ready round trip that could leave the host "ready" after a failed start).
+// Start rule (server/lobby.js): without matchmaking, room.start needs every *other* human connected and ready; the
+// host's start counts as the host's ready. With matchmaking selected, the same 立即开始 action sends match.join
+// for the whole connected party and the queue fills the remaining seats.
 // Solo rooms show a single seat.
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
@@ -191,6 +191,7 @@ export function RoomScreen() {
   const conn = useStore((s) => s.connection, shallowEqual);
   const presence = useStore((s) => s.presence, shallowEqual);
   const [busy, setBusy] = useState(null);
+  const [matchTeammates, setMatchTeammates] = useState(false);
   const [fillBots, setFillBots] = useState(true);
   const [, tickMatchClock] = useState(0);
   const alive = useRef(true);
@@ -221,8 +222,9 @@ export function RoomScreen() {
   };
 
   const toggleReady = () => run('ready', () => net.request('room.ready', { ready: !myReady }));
-  const start = () => run('start', () => net.request('room.start', {}));
-  const queue = () => run('match', () => net.request('match.join', { mode: 'coop', difficulty: room.difficulty, fillBots }));
+  const start = () => run(matchTeammates ? 'match' : 'start', () => matchTeammates
+    ? net.request('match.join', { mode: 'coop', difficulty: room.difficulty, fillBots })
+    : net.request('room.start', {}));
   const cancelQueue = () => run('cancel-match', () => net.request('match.leave', {}));
   const addBot = () => run('add', () => net.request('room.addBot', {}));
   const removeBot = (seat) => run(`rm${seat}`, () => net.request('room.removeBot', { seat }));
@@ -315,15 +317,23 @@ export function RoomScreen() {
       <div class="room-bar__right">
         <${LoadoutButton} from="room" size="lg" class="room-loadout" />
         ${facts.isHost
-          ? room.matching
-            ? html`<div class="room-match-actions"><span class="room-match-state"><${Icon} name="signal" />正在匹配队友 <b class="num">${Math.max(0, Math.ceil((Number(room.matching.deadlineAt) - Date.now()) / 1000))}s</b></span><${Button} variant="danger" size="lg" icon="close" loading=${busy === 'cancel-match'} onClick=${cancelQueue}>取消匹配<//></div>`
-            : html`<div class="room-match-actions">
-              <label class="fill-bots"><input type="checkbox" checked=${fillBots} onChange=${(e) => setFillBots(e.currentTarget.checked)} /><span>60 秒后 AI 补齐</span></label>
-              <${Button} variant="secondary" size="lg" icon="users" loading=${busy === 'match'} disabled=${!online} onClick=${queue}>匹配队友<//>
-              <${Tooltip} text=${facts.canStart ? null : '仍有博士未准备就绪'}>
+          ? coop
+            ? room.matching
+              ? html`<div class="room-match-actions room-match-actions--active"><span class="room-match-state"><${Icon} name="signal" />正在匹配队友 <b class="num">${Math.max(0, Math.ceil((Number(room.matching.deadlineAt) - Date.now()) / 1000))}s</b></span><${Button} variant="danger" size="lg" icon="close" loading=${busy === 'cancel-match'} onClick=${cancelQueue}>取消匹配<//></div>`
+              : html`<div class="room-match-actions">
+                <div class="room-match-options">
+                  <label class="fill-bots"><input type="checkbox" checked=${matchTeammates} onChange=${(e) => setMatchTeammates(e.currentTarget.checked)} /><span>匹配同盟队友</span></label>
+                  <label class=${`fill-bots fill-bots--optional${matchTeammates ? '' : ' is-hidden'}`} aria-hidden=${matchTeammates ? 'false' : 'true'}>
+                    <input type="checkbox" checked=${fillBots} disabled=${!matchTeammates} onChange=${(e) => setFillBots(e.currentTarget.checked)} /><span>60 秒后 AI 补齐</span>
+                  </label>
+                </div>
+                <${Tooltip} text=${matchTeammates || facts.canStart ? null : '仍有博士未准备就绪'}>
+                  <${Button} variant="primary" size="xl" icon=${matchTeammates ? 'users' : 'play'} loading=${busy === (matchTeammates ? 'match' : 'start')} disabled=${(!matchTeammates && !facts.canStart) || !online} onClick=${start}>立即开始<//>
+                <//>
+              </div>`
+            : html`<${Tooltip} text=${facts.canStart ? null : '仍有博士未准备就绪'}>
                 <${Button} variant="primary" size="xl" icon="play" loading=${busy === 'start'} disabled=${!facts.canStart || !online} onClick=${start}>立即开始<//>
-              <//>
-            </div>`
+              <//>`
           : html`<${Button} variant=${myReady ? 'primary' : 'secondary'} size="xl" icon=${myReady ? 'check' : 'hourglass'} active=${myReady}
               loading=${busy === 'ready'} disabled=${!online || !facts.mine} onClick=${toggleReady}>${myReady ? '已就绪' : '准备就绪'}<//>`}
       </div>

@@ -246,7 +246,8 @@ export const C2S = {
   'room.addBot': {},
   'room.removeBot': { seat: (v) => isInt(v, 0, MAX_SEATS - 1) },
   'room.start': {},
-  // matchmaking: a solo operator joins the shared co-op pool; a room host queues the whole party.
+  // matchmaking: an alliance room host queues the whole party. `mode: solo` remains accepted for older clients;
+  // the current UI always creates a solo room instead, so independent simulation stays a solo room/match.
   'match.join': {
     mode: (v) => v === 'coop' || v === 'solo',
     difficulty: (v) => DIFFICULTIES.includes(v),

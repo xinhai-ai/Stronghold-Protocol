@@ -1528,13 +1528,13 @@ export function rangeGridBox(grid, mirror = false) {
 // ---- keyboard ---------------------------------------------------------------------------------------------------
 
 /**
- * Map a keydown to a game shortcut (R refresh, F freeze, D level-up, Space ready, Esc close).
+ * Map a keydown to a game shortcut. `shortcuts` stores KeyboardEvent.code values and is user-editable in settings.
  * Space means ready even while a HUD button has focus (a mouse click leaves the shop card / 刷新 focused, and
  * Space must not re-trigger it); the caller prevents the button's own activation. Enter still activates buttons.
  * @param {{ key?: string, code?: string, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, repeat?: boolean, target?: any }} e
- * @returns {'refresh'|'freeze'|'levelUp'|'ready'|'escape'|null}
+ * @returns {'viewEnemies'|'freeze'|'refresh'|'ready'|'sell'|'retreat'|'levelUp'|'escape'|null}
  */
-export function shortcutFor(e) {
+export function shortcutFor(e, shortcuts = null) {
   if (!e || e.ctrlKey || e.metaKey || e.altKey) return null;
   const t = e.target;
   const tag = t && typeof t.tagName === 'string' ? t.tagName.toUpperCase() : '';
@@ -1543,10 +1543,16 @@ export function shortcutFor(e) {
   if (e.repeat) return null;
   const code = e.code || '';
   const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
-  if (code === 'KeyR' || key === 'r') return 'refresh';
-  if (code === 'KeyF' || key === 'f') return 'freeze';
-  if (code === 'KeyD' || key === 'd') return 'levelUp';
-  if (code === 'Space' || key === ' ') return 'ready';
+  const configured = shortcuts && typeof shortcuts === 'object' ? shortcuts : null;
+  if (configured) {
+    for (const [act, binding] of Object.entries(configured)) if (binding && (code === binding || (!code && key === binding.toLowerCase()))) return act;
+  } else {
+    // Compatibility for pure helper callers from older clients; GameScreen always passes the persisted defaults.
+    if (code === 'KeyR' || key === 'r') return 'refresh';
+    if (code === 'KeyF' || key === 'f') return 'freeze';
+    if (code === 'KeyD' || key === 'd') return 'levelUp';
+    if (code === 'Space' || key === ' ') return 'ready';
+  }
   return null;
 }
 
@@ -1569,6 +1575,31 @@ export function shortcutBlocked(act, { modal = false, drawer = false } = {}) {
   if (modal) return true;
   return !!drawer && act !== 'escape';
 }
+
+/** Default editable game shortcuts. Values are KeyboardEvent.code strings. */
+export const DEFAULT_SHORTCUTS = Object.freeze({
+  viewEnemies: 'KeyW', freeze: 'KeyS', refresh: 'KeyR', ready: 'KeyC', sell: 'KeyX', retreat: 'KeyQ', levelUp: 'KeyG', pause: 'Space',
+});
+
+const SHORTCUT_ACTIONS = Object.keys(DEFAULT_SHORTCUTS);
+export const sanitizeShortcuts = (raw) => {
+  const source = isObj(raw) ? raw : {};
+  const out = {};
+  for (const action of SHORTCUT_ACTIONS) {
+    const v = source[action];
+    out[action] = typeof v === 'string' && /^[A-Za-z][A-Za-z0-9]+$/.test(v) ? v : DEFAULT_SHORTCUTS[action];
+  }
+  return out;
+};
+
+export const shortcutLabel = (shortcuts, action) => {
+  const code = shortcuts?.[action] || DEFAULT_SHORTCUTS[action];
+  if (code === 'Space') return '空格';
+  if (code?.startsWith('Key')) return code.slice(3);
+  if (code?.startsWith('Digit')) return code.slice(5);
+  if (code?.startsWith('Arrow')) return `方向${code.slice(5)}`;
+  return code || '';
+};
 
 // ---- settings ------------------------------------------------------------------------------------------------------
 

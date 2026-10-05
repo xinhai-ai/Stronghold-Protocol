@@ -11,7 +11,7 @@ import {
   phaseMode, phaseBanner, isCombatPhase, isBossPhase, countdownState, phaseTotalSeconds, sortBonds, bondTier, nextThreshold,
   bondMembers, memberHeadCount, bannedPerBond, priceTone, mergeProgress, shopBlockReason, deploySets, indexPieces, placementContext, canPlace,
   boardTargets, dropIntent, normalizeDraft, normalizeSp, groupEnemies, factionTypes, snapHud, bossFrac, attackInterval, fmtNum,
-  rangeGridBox, shortcutFor, sanitizeSettings, DEFAULT_SETTINGS, normalizeResult, cycleField, fieldLabel, homeFieldId,
+  rangeGridBox, shortcutFor, sanitizeSettings, DEFAULT_SETTINGS, DEFAULT_SHORTCUTS, sanitizeShortcuts, normalizeResult, cycleField, fieldLabel, homeFieldId,
   activeBubbles, sortedPlayers, tileKey, prepCapsuleLabel, prepCamera, dropFailureReason,
 } from '../../public/js/ui/gameLogic.js';
 import { pairPlayers } from '../../server/match/finalAssault.js';
@@ -515,6 +515,15 @@ describe('keyboard & settings', () => {
     assert.equal(sanitizeSettings(null).preload, false, 'the offline-resource preload is off unless the player turned it on');
     assert.equal(sanitizeSettings({ preload: true }).preload, true);
     assert.equal(sanitizeSettings({ preload: 'yes' }).preload, false);
+  });
+  test('editable shortcut defaults and sanitization', () => {
+    assert.deepEqual(DEFAULT_SHORTCUTS, { viewEnemies: 'KeyW', freeze: 'KeyS', refresh: 'KeyR', ready: 'KeyC', sell: 'KeyX', retreat: 'KeyQ', levelUp: 'KeyG', pause: 'Space' });
+    assert.equal(shortcutFor({ key: 'w', code: 'KeyW' }, DEFAULT_SHORTCUTS), 'viewEnemies');
+    assert.equal(shortcutFor({ key: 'c', code: 'KeyC' }, DEFAULT_SHORTCUTS), 'ready');
+    assert.equal(shortcutFor({ key: 'x', code: 'KeyX' }, DEFAULT_SHORTCUTS), 'sell');
+    assert.deepEqual(sanitizeShortcuts({ refresh: 'KeyT', ready: 'bad value', levelUp: 3 }), {
+      ...DEFAULT_SHORTCUTS, refresh: 'KeyT',
+    });
   });
 });
 

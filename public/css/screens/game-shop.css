@@ -75,7 +75,7 @@
 .lvcard__micro { font-family: var(--font-display); font-size: .12rem; letter-spacing: .24em; font-weight: 700; }
 .lvcard__num { font-size: .66rem; line-height: .9; font-weight: 700; }
 .lvcard__label { font-size: .2rem; font-weight: 900; letter-spacing: .3em; padding-left: .3em; }
-.lvcard__key { position: absolute; right: .08rem; bottom: .06rem; color: var(--mint-900) !important; border-color: rgba(6, 17, 13, .35) !important; background: transparent !important; }
+.lvcard__key { position: absolute; left: 50%; right: auto; bottom: .06rem; transform: translateX(-50%); z-index: 2; color: var(--mint-900) !important; border-color: rgba(6, 17, 13, .45) !important; background: rgba(238, 243, 241, .72) !important; }
 .lvcard.is-disabled { background: linear-gradient(180deg, #3a4a44, #2a3531); color: #8fa59c; cursor: not-allowed; }
 .lvcard.is-disabled .lvcard__frame { border-color: rgba(143, 165, 156, .5); }
 .lvcard.is-disabled .lvcard__frame::before, .lvcard.is-disabled .lvcard__frame::after { border-color: #8fa59c; }
@@ -161,8 +161,7 @@
 .funds__coin { width: .34rem; height: .34rem; fill: var(--gold); filter: drop-shadow(0 0 .06rem rgba(255, 198, 0, .6)); }
 .funds__num { font-size: .36rem; line-height: 1; font-weight: 700; color: #fff; }
 .funds__label { font-size: .14rem; color: var(--text-lo); letter-spacing: .1em; }
-.funds__collapse { display: flex; align-items: center; gap: .04rem; font-size: .15rem; background: none; border: 1px solid var(--line-2); color: var(--text-lo); padding: .02rem .1rem; }
-.funds__collapse .icon { width: .14rem; height: .14rem; }
+.funds__collapse { display: flex; align-items: center; font-size: .15rem; background: none; border: 1px solid var(--line-2); color: var(--text-lo); padding: .02rem .1rem; }
 .funds__collapse:hover { color: var(--text-hi); border-color: var(--line-3); }
 .coin-glyph { fill: var(--gold); }
 

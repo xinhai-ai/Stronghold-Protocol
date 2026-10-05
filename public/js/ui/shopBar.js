@@ -22,7 +22,8 @@
 import { useEffect, useState } from '../../vendor/hooks.module.js';
 import { html, Icon, HexBadge, TierChip, Tooltip, MicroLabel } from './components.js';
 import { Img, BondGlyph, CoinGlyph, GIcon, RichText } from './gameComponents.js';
-import { priceTone, mergeProgress, mergeTarget, shopBlockReason, chessLoadout, offerHeader, briefingBondTip } from './gameLogic.js';
+import { priceTone, mergeProgress, mergeTarget, shopBlockReason, chessLoadout, offerHeader, briefingBondTip, shortcutLabel } from './gameLogic.js';
+import { useShortcuts } from './settings.js';
 import { chessPortraitUrl, itemIconUrl, profIconUrl, uiUrl, skillIconUrl, skillRecordIconUrl, moduleTypeIconUrl } from './assetUrls.js';
 import { data } from '../data.js';
 
@@ -158,12 +159,12 @@ function SoldCard({ item = false }) {
   </div>`;
 }
 
-function LevelCard({ shop, reason, armed = false, onTap }) {
+function LevelCard({ shop, reason, armed = false, onTap, shortcut }) {
   const lv = shop?.level ?? 1;
   const max = lv >= (shop?.maxLevel ?? 6);
   const price = shop?.upgradePrice ?? 0;
   return html`<button type="button" class=${cx('lvcard', max && 'is-max', reason && 'is-disabled', armed && 'is-armed')} onClick=${() => !reason && onTap()}
-      title=${reason || (armed ? `再次点击确认升级（${price} 资金）` : `升级调度中心（${price} 资金） · D`)} aria-disabled=${reason ? 'true' : 'false'}
+      title=${reason || (armed ? `再次点击确认升级（${price} 资金）` : `升级调度中心（${price} 资金） · ${shortcut}`)} aria-disabled=${reason ? 'true' : 'false'}
       aria-pressed=${String(!!armed)}>
     ${!max ? html`<${HexBadge} value=${price} tone=${reason && reason !== '调度中心已达最高等级' ? 'dark' : 'gold'} size="md" class="lvcard__price" />` : null}
     <span class="lvcard__frame">
@@ -171,7 +172,7 @@ function LevelCard({ shop, reason, armed = false, onTap }) {
       <b class="lvcard__num num">${lv}</b>
     </span>
     <span class="lvcard__label">${max ? '已满级' : armed ? '确认升级' : '升级'}</span>
-    <kbd class="lvcard__key">D</kbd>
+    <kbd class="lvcard__key">${shortcut}</kbd>
   </button>`;
 }
 
@@ -258,6 +259,7 @@ export function RewardCards({ offer, priv, editable, onPick, onDetail, onLater, 
  */
 export function ShopBar({ priv, editable, collapsed, onCollapse, onBuy, onLevel, onRefresh, onFreeze, onDetail, onDetailClose, onRefuse, barRef,
   reward = null, onReward, onRewardLater, onArm = null, offBonds = null }) {
+  const shortcuts = useShortcuts();
   const shop = priv?.shop || {};
   const slots = Array.isArray(shop.slots) ? shop.slots : [];
   const chessSlots = slots.map((s, i) => ({ s, i })).filter(({ s }) => !s || s.kind !== 'item');
@@ -311,19 +313,19 @@ export function ShopBar({ priv, editable, collapsed, onCollapse, onBuy, onLevel,
     <div class="shopbar__tools">
       <span class="shopbar__remain">剩余可放置角色：<b class=${cx('num', remaining === 0 && 't-orange')}>${remaining}</b></span>
       <button type="button" class=${cx('toolbtn', 'toolbtn--ice', frozen && 'is-on')} disabled=${!!frzReason} onClick=${onFreeze}
-        title=${frzReason || (frozen ? '解冻商店 · F' : '冻结商店（下回合保留） · F')}>
+        title=${frzReason || (frozen ? `解冻商店 · ${shortcutLabel(shortcuts, 'freeze')}` : `冻结商店（下回合保留） · ${shortcutLabel(shortcuts, 'freeze')}`)}>
         <${Img} src=${uiUrl(data.get('assets'), frozen ? 'shopPanel/frozen_icon2' : 'shopPanel/frozen_icon')} class="toolbtn__img" fallback=${html`<${Icon} name="snow" />`} />
-        <span>${frozen ? '解冻' : '冻结'}</span><kbd>F</kbd>
+        <span>${frozen ? '解冻' : '冻结'}</span><kbd>${shortcutLabel(shortcuts, 'freeze')}</kbd>
       </button>
-      <button type="button" class="toolbtn toolbtn--amber" disabled=${!!refReason} onClick=${onRefresh} title=${refReason || '刷新商店 · R'}>
+      <button type="button" class="toolbtn toolbtn--amber" disabled=${!!refReason} onClick=${onRefresh} title=${refReason || `刷新商店 · ${shortcutLabel(shortcuts, 'refresh')}`}>
         <${Img} src=${uiUrl(data.get('assets'), 'shopPanel/refresh_icon')} class="toolbtn__img" fallback=${html`<${Icon} name="refresh" />`} />
         <span>刷新</span>
         ${free > 0 ? html`<span class="toolbtn__free">免费 ×${free}</span>` : html`<${HexBadge} value=${shop.refreshPrice ?? 1} tone=${refReason ? 'dark' : 'gold'} size="sm" />`}
-        <kbd>R</kbd>
+        <kbd>${shortcutLabel(shortcuts, 'refresh')}</kbd>
       </button>
     </div>
     <div class="shopbar__row">
-      <${LevelCard} shop=${shop} reason=${lvReason} armed=${armed === 'lv'} onTap=${tapLevel} />
+      <${LevelCard} shop=${shop} reason=${lvReason} armed=${armed === 'lv'} shortcut=${shortcutLabel(shortcuts, 'levelUp')} onTap=${tapLevel} />
       ${showReward ? html`<${RewardCards} offer=${reward} priv=${priv} editable=${editable} onPick=${onReward} onDetail=${onDetail} onLater=${onRewardLater}
           armed=${armed} onTap=${tapCard} offBonds=${offBonds} />`
         : html`<div class="shopbar__cards">
@@ -350,7 +352,7 @@ export function ShopBar({ priv, editable, collapsed, onCollapse, onBuy, onLevel,
           <b class="funds__num num">${funds}</b>
         </div>
         <span class="funds__label">目前资金</span>
-        <button type="button" class="funds__collapse" onClick=${() => onCollapse(true)}><${Icon} name="close" />收起</button>
+        <button type="button" class="funds__collapse" onClick=${() => onCollapse(true)}>收起</button>
       </div>
     </div>
   </section>`;

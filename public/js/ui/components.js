@@ -64,6 +64,7 @@ export const ICONS = {
   key: { d: 'M14.5 3a6.5 6.5 0 1 1-2.6 12.5l-1.1 1.1H9v2H7v2H3v-3.6l5.5-5.5A6.5 6.5 0 0 1 14.5 3zm1.5 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z', eo: true },
   search: { d: 'M10 3a7 7 0 0 1 5.6 11.2l5.6 5.6-1.4 1.4-5.6-5.6A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z', eo: true },
   info: { d: 'M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1 8v7h2v-7zm0-3v2h2V7z', eo: true },
+  keyboard: { d: 'M3 5h18v14H3zm2 2v10h14V7zm2 2h2v2H7zm3 0h2v2h-2zm3 0h2v2h-2zm3 0h2v2h-2zM7 13h10v2H7z' },
   terminal: { d: 'M3 4h18v16H3zm2 2v12h14V6zm2.2 3.1 1.4-1.4L13.8 11l-5.2 3.3-1.4-1.4L10.2 11zM14 14h3v2h-3z' },
   warn: { d: 'M12 2 1 21h22zm-1 7v6h2V9zm0 7.5v2h2v-2z', eo: true },
   play: { d: 'M7 4v16l13-8z' },

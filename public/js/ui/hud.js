@@ -26,6 +26,8 @@
 import { useRef } from '../../vendor/hooks.module.js';
 import { PHASE } from '../../../shared/constants.js';
 import { html, Button, Icon, PingPill, Countdown, Tooltip, MicroLabel, DifficultyTag, useTicker } from './components.js';
+import { useShortcuts } from './settings.js';
+import { shortcutLabel } from './gameLogic.js';
 import { Sprite, LpTower, GIcon, LocalSprite } from './gameComponents.js';
 import { localAsset } from '../data.js';
 import { serverNow } from '../store.js';
@@ -209,6 +211,7 @@ export function tempReadyReason(priv) {
  * @param {{ priv:any, onToggle:(ready:boolean)=>void, busy?:boolean, readyCount?:number, total?:number }} props
  */
 export function ReadyToggle({ priv, onToggle, busy, readyCount, total }) {
+  const shortcuts = useShortcuts();
   const ready = !!priv?.ready;
   const temp = tempInfo(priv);
   const reason = !ready ? tempReadyReason(priv) || shopBlockReason('ready', { priv, editable: true }) : null;
@@ -216,7 +219,7 @@ export function ReadyToggle({ priv, onToggle, busy, readyCount, total }) {
       aria-pressed=${ready ? 'true' : 'false'} aria-describedby=${!ready && temp.count ? 'readywrap-why' : undefined} onClick=${() => onToggle(!ready)}>
     <span class="readybtn__box">${ready ? html`<${Icon} name="check" />` : null}</span>
     <span class="readybtn__label">${ready ? '取消准备' : '准备就绪'}</span>
-    <kbd class="readybtn__key">Space</kbd>
+    <kbd class="readybtn__key">${shortcutLabel(shortcuts, 'ready')}</kbd>
   </button>`;
   return html`<div class="readywrap">
     ${reason ? html`<${Tooltip} text=${reason} placement="bottom">${btn}<//>` : btn}
@@ -244,12 +247,13 @@ export function checkButtons({ pen, penAvail, infoOpen }) {
 }
 
 /** One official 🔍 button: the sprite when installed, a CSS look-alike (icon + chevrons) otherwise. */
-function CheckBtn({ sprite, cls, label, chev, on, disabled, onClick, testid }) {
+function CheckBtn({ sprite, cls, label, chev, shortcut, on, disabled, onClick, testid }) {
   const url = localAsset('ui/battle', sprite);
   return html`<button type="button" class=${cx(cls, 'tapx', url && 'has-sprite', chev && 'is-wide', on && 'is-on')}
       style=${url ? `--chk-sprite:url("${url}")` : ''} aria-label=${label} aria-disabled=${disabled ? 'true' : 'false'}
       data-sprite=${sprite} data-testid=${testid} onClick=${onClick}>
     ${url ? null : html`<${Icon} name="search" />${chev ? html`<span class="enemybtn__chev">${chev}</span>` : null}`}
+    ${shortcut ? html`<kbd class="checkbtn__key">${shortcut}</kbd>` : null}
   </button>`;
 }
 
@@ -287,8 +291,9 @@ function PauseGlyph() {
  * @param {{ paused: boolean, busy?: boolean, onToggle: () => void }} props
  */
 export function PauseButton({ paused, busy = false, onToggle }) {
+  const shortcuts = useShortcuts();
   const label = paused ? '继续作战' : '暂停';
-  return html`<${Tooltip} text=${paused ? '继续作战（Space）' : '暂停作战（Space）'} placement="bottom">
+  return html`<${Tooltip} text=${paused ? `继续作战（${shortcutLabel(shortcuts, 'pause')}）` : `暂停作战（${shortcutLabel(shortcuts, 'pause')}）`} placement="bottom">
     <button type="button" class=${cx('pausebtn', 'tapx', paused && 'is-on', busy && 'is-busy')} aria-pressed=${paused ? 'true' : 'false'}
         aria-label=${label} disabled=${busy} data-testid="pause" onClick=${() => onToggle?.()}>
       ${paused ? html`<${Icon} name="play" class="pausebtn__glyph" />` : html`<${PauseGlyph} />`}
@@ -328,6 +333,7 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
   const cap = Number(config?.lpCapPerRound) > 0 ? Number(config.lpCapPerRound) : 10;
   const frozenSecs = Number.isFinite(frozenAt) ? remainAt(pub?.deadline, frozenAt) : null;
   const btn = checkButtons({ pen, penAvail, infoOpen: !!drawer });
+  const shortcuts = useShortcuts();
   const onLeft = () => (pen ? onPen(false) : onDrawer('info'));
   const onRight = () => (pen ? onPen(false) : penAvail ? onPen(true) : null);
   return html`<header class=${cx('gtop', pen && 'is-pen')}>
@@ -353,7 +359,7 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
         note=${pending > 0 && live?.unite ? '联防中' : null} tip=${pendingTip(lp, pending, { unite: !!live?.unite, cap, left: live?.left ?? null })} />
       <${Tooltip} text=${btn.right.tip} placement="bottom">
         <${CheckBtn} sprite=${btn.right.sprite} cls=${cx('enemybtn', btn.right.grey && 'is-grey')} label=${btn.right.label}
-          chev=${btn.right.grey ? null : '▶▶'} disabled=${btn.right.grey && !pen} onClick=${onRight} testid="check-enemy" />
+          chev=${btn.right.grey ? null : '▶▶'} shortcut=${shortcutLabel(shortcuts, 'viewEnemies')} disabled=${btn.right.grey && !pen} onClick=${onRight} testid="check-enemy" />
       <//>
     </div>
 

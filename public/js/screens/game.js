@@ -81,7 +81,7 @@ import { Ticker } from '../ui/ticker.js';
 import { EmoteWheel } from '../ui/emotes.js';
 import { EffectsList } from '../ui/effectsList.js';
 import { CombatHud } from '../ui/combatHud.js';
-import { SettingsModal } from '../ui/settings.js';
+import { SettingsModal, shortcutsStore } from '../ui/settings.js';
 import { ConsoleModal } from '../ui/console.js';
 import { ExitModal, AwayOverlay, awayStore } from '../ui/matchChrome.js';
 import { openGuide } from '../ui/guide.js';
@@ -276,8 +276,6 @@ function MatchScreen() {
     priv, stage: gd.stage(pub?.stageId), editable, field: deployField,
     getChess: gd.chess, getToken: gd.token, getItem: gd.item, getEffect: gd.effect,
   }), [priv, pub?.stageId, editable, gd.ready, deployField]);
-  live.current = { pub, priv, field, editable, placeCtx, watching, watchWho, home, myId, detail, drawer, bondOpen, emoteOpen, settingsOpen, exitOpen, drag, facing, sel, pen, collapsedNow: collapsed, localDone: false, canPause: false, paused };
-
   // ---- camera: every request goes through setCam, which remembers it for the pen's way back -----------------------
   // the own prep board: the normal board, or — in the prep of a boss round — the player's half of the boss field
   // (research 09 §1.2: the right-hand player's board mirrored; gameLogic prepCamera). The DOM fallback view keeps the
@@ -300,6 +298,7 @@ function MatchScreen() {
   }, [view]);
   // 休整期 only; never while a piece is being placed (the wheel sits on a tile of the board camera)
   const penAvail = phase === PHASE.PREP && !!view && viewKind !== 'loading';
+  live.current = { pub, priv, field, editable, placeCtx, watching, watchWho, home, myId, detail, drawer, bondOpen, emoteOpen, settingsOpen, exitOpen, drag, facing, sel, pen, penAvail, collapsedNow: collapsed, localDone: false, canPause: false, paused };
   /** Pan to the enemy preview pen (on) or back to the camera in use before (off). */
   const togglePen = useCallback((on) => {
     const P = penRef.current;
@@ -1066,7 +1065,7 @@ function MatchScreen() {
   // ---- keyboard ---------------------------------------------------------------------------------------------
   useEffect(() => {
     const onKey = async (e) => {
-      const act = shortcutFor(e);
+      const act = shortcutFor(e, shortcutsStore.get());
       const L = live.current;
       // dialogs / the guide own the keyboard; behind the 本局信息 / 敌方情报 drawer only Esc (closing it) acts
       if (shortcutBlocked(act, { modal: !!document.querySelector('.modal, .guide'), drawer: !!L.drawer })) return;
@@ -1080,8 +1079,14 @@ function MatchScreen() {
         e.preventDefault();
         return;
       }
+      if (act === 'viewEnemies') {
+        if (!L.penAvail) return;
+        e.preventDefault();
+        togglePenRef.current(!L.pen);
+        return;
+      }
       // Space pauses / resumes a solo battle (the official battle key)
-      if (act === 'ready' && (L.canPause || L.paused)) {
+      if (act === 'pause' && (L.canPause || L.paused)) {
         e.preventDefault();
         if (e.target instanceof HTMLElement && e.target.closest('button, [role="button"]')) e.target.blur();
         togglePauseRef.current(!L.paused);
@@ -1098,6 +1103,13 @@ function MatchScreen() {
         return;
       }
       if (!L.editable) return;
+      if (act === 'sell' || act === 'retreat') {
+        const selected = L.sel?.uid != null ? L.placeCtx.pieces.get(L.sel.uid) : null;
+        if (selected?.piece?.kind !== 'chess') return;
+        if (act === 'sell') sellSel();
+        else retreatSel();
+        return;
+      }
       const reason = shopBlockReason(act, { priv: L.priv, editable: L.editable });
       if (reason) { audio.sfx('error', { volume: 0.5 }); return; }
       if (act === 'refresh') actions.refresh();

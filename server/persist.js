@@ -23,7 +23,8 @@
 // shutdown. State older than the Redis TTL (25 h) is gone; a *stale* document (a Redis that kept state from an older
 // run of another version) is refused by its `v` field.
 
-import { snapshotMatch, restoreMatch, canSnapshot, SNAPSHOT_VERSION } from './match/snapshot.js';
+import { captureMatch, SNAPSHOT_VERSION } from './match/snapshot.js';
+import { PersistenceWorker } from './workers/persistenceClient.js';
 
 /** Document layout version (bumped when the shape below changes). */
 export const PERSIST_VERSION = 1;
@@ -162,13 +163,13 @@ export function restoreServer({ doc, registry, lobby, now = Date.now(), log = no
 
 /**
  * Keeps the Redis document up to date: every tick it refreshes the checkpoint of each running match that is in a
- * checkpointable phase, then writes the whole document (skipping identical writes), and finally writes once more on
- * stop() so a graceful shutdown never loses the last state.
+ * checkpointable phase. A dedicated Worker encodes and caches checkpoints and serializes the document; the main
+ * thread only selects fields and sends one match at a time. A graceful shutdown waits for writes before saving again.
  */
 export class Persister {
   /**
    * @param {{
-   *   store: { save: (doc: object) => Promise<boolean>, log?: object },
+   *   store: { save: (doc: object) => Promise<boolean>, saveSerialized?: (bytes: Buffer) => Promise<boolean>, log?: object },
    *   registry: import('./net.js').SessionRegistry,
    *   lobby: import('./lobby.js').Lobby,
    *   log?: object, now?: () => number, saveMs?: number,
@@ -181,8 +182,11 @@ export class Persister {
     this.log = log;
     this.now = now;
     this.saveMs = Math.max(1000, Number(saveMs) || SAVE_MS);
-    /** @type {Map<string, object>} room code → last safe match checkpoint */
-    this.matchDocs = new Map();
+    /** Keys of safe checkpoints; their contents live in the persistence Worker. */
+    this.checkpointKeys = new Set();
+    this.encoder = new PersistenceWorker();
+    this.generations = new WeakMap();
+    this.generationSeq = 0;
     /** @type {NodeJS.Timeout | null} */
     this.timer = null;
     this.writes = 0;
@@ -190,42 +194,75 @@ export class Persister {
     this.failures = 0;
     this.running = false;
     this._busy = false;
+    this._flush = null;
   }
 
-  /** Refresh the checkpoint of every running match (a placeholder document while none is safe yet is *not* written). */
-  checkpointMatches() {
-    const active = new Set();
+  entries() {
+    return this.lobby.persistenceMatches().map((item) => {
+      if (!this.generations.has(item.match)) this.generations.set(item.match, ++this.generationSeq);
+      return { ...item, generation: this.generations.get(item.match) };
+    });
+  }
+
+  /** Keep loaded checkpoints even if the restored match enters combat before the first save. */
+  async seed(doc) {
+    const entries = this.entries().map(({ key, generation }) => ({ key, generation }));
+    const { bytes } = await this.encoder.request('seed', { doc, entries });
+    this.encoder.remember(bytes, entries);
+    this.checkpointKeys = new Set(entries.filter(({ key }) => doc.matches?.[key]).map(({ key }) => key));
+  }
+
+  /** Post each capture immediately, before yielding: mutations cannot interleave with a match's structured clone. */
+  async checkpointMatches() {
     for (const item of this.lobby.persistenceMatches()) {
-      active.add(item.key);
-      if (!canSnapshot(item.match)) continue;                     // keep the last safe checkpoint
-      const doc = snapshotMatch(item.match);
-      if (doc) this.matchDocs.set(item.key, doc);
+      const capture = captureMatch(item.match);
+      if (!capture) continue;
+      if (!this.generations.has(item.match)) this.generations.set(item.match, ++this.generationSeq);
+      await this.encoder.request('checkpoint', { key: item.key, generation: this.generations.get(item.match), capture });
+      this.checkpointKeys.add(item.key);
     }
-    for (const code of [...this.matchDocs.keys()]) if (!active.has(code)) this.matchDocs.delete(code);
   }
 
-  /** Build the document without writing it (tests / diagnostics). */
-  document() {
-    this.checkpointMatches();
-    return snapshotServer({ registry: this.registry, lobby: this.lobby, matchDocs: this.matchDocs, now: this.now() });
+  async serialized() {
+    await this.checkpointMatches();
+    // Re-enumerate after yields: ended matches or a new match in the same room must never get an old checkpoint.
+    const entries = this.entries().map(({ key, generation }) => ({ key, generation }));
+    const doc = snapshotServer({ registry: this.registry, lobby: this.lobby, now: this.now() });
+    const result = await this.encoder.request('serialize', { doc, entries });
+    this.checkpointKeys = new Set(result.keys);
+    return { ...result, entries };
+  }
+
+  /** Diagnostic API only: decoding a whole document here does run on the calling thread. */
+  async document() {
+    const { bytes } = await this.serialized();
+    return JSON.parse(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8'));
   }
 
   /** One save round (never throws). */
   async flush(reason = 'tick') {
     if (!this.store || this._busy) return false;
     this._busy = true;
+    this._flush = this.write(reason);
+    try { return await this._flush; }
+    finally { this._busy = false; this._flush = null; }
+  }
+
+  async write(reason) {
     try {
-      const doc = this.document();
-      const ok = await this.store.save(doc);
-      if (ok) this.writes++;
+      const { bytes, entries } = await this.serialized();
+      const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      // Real Redis takes already encoded bytes. Legacy injected stores retain their object API (tests / diagnostics).
+      const ok = typeof this.store.saveSerialized === 'function'
+        ? await this.store.saveSerialized(buffer)
+        : await this.store.save(JSON.parse(buffer.toString('utf8')));
+      if (ok) { this.writes++; this.encoder.remember(bytes, entries); }
       else { this.failures++; this.log.debug?.(`[persist] write skipped (${reason})`); }
       return ok;
     } catch (e) {
       this.failures++;
       this.log.warn?.('[persist] save failed', e);
       return false;
-    } finally {
-      this._busy = false;
     }
   }
 
@@ -246,6 +283,8 @@ export class Persister {
   /** Stop and write the final document. */
   async shutdown(reason = 'shutdown') {
     this.stop();
-    return this.flush(reason);
+    if (this._flush) await this._flush;
+    try { return await this.flush(reason); }
+    finally { await this.encoder.close(); }
   }
 }

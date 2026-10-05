@@ -186,7 +186,7 @@ test('a restart keeps players on their seats (tokens resolve, room state resumes
 
   const srvB = await startServer({ port: 0, quiet: true, store, MatchClass: StubMatch, log: quietLog });
   try {
-    assert.equal(srvB.persister.matchDocs.size, 0);
+    assert.equal(srvB.persister.checkpointKeys.size, 0);
     const back = await player(srvB.port, 'Alice', token1);
     assert.equal(back.id, id1, 'same player id after the restart');
     const resumed = await back.waitFor('room.state');
@@ -236,8 +236,8 @@ test('a running match resumes from its last checkpoint (round, board, phase)', a
   const funds = ps.funds;
   assert.ok(bought > 0, 'bought an operator');
 
-  srvA.persister.checkpointMatches();
-  assert.equal(srvA.persister.matchDocs.size, 1, 'checkpoint taken');
+  await srvA.persister.checkpointMatches();
+  assert.equal(srvA.persister.checkpointKeys.size, 1, 'checkpoint taken');
   await srvA.persister.flush('test');
   await c.close();
   await srvA.close();
@@ -289,7 +289,7 @@ test('a standalone matchmaking match resumes from its last checkpoint', async (t
   assert.ok(active?.match);
   await clients[0].request({ t: 'g.infoReady' });
   until(active.match, () => active.match.phase === PHASE.BAND_DRAFT);
-  srvA.persister.checkpointMatches();
+  await srvA.persister.checkpointMatches();
   await srvA.persister.flush('test');
   assert.ok(Object.keys(store.doc.matches).some((key) => key.startsWith('queue:')), 'standalone checkpoint is persisted');
   for (const c of clients) await c.close();
@@ -331,7 +331,7 @@ test('a room matchmaking match resumes from its last checkpoint', async (t) => {
   assert.ok(room?.match);
   await c.request({ t: 'g.infoReady' });
   until(room.match, () => room.match.phase === PHASE.BAND_DRAFT);
-  srvA.persister.checkpointMatches();
+  await srvA.persister.checkpointMatches();
   await srvA.persister.flush('test');
   assert.ok(store.doc.matches[code], 'room matchmaking checkpoint is persisted');
   await c.close();
@@ -372,7 +372,7 @@ test('a checkpoint whose player lost their session is not resumed (room stays in
   await c.request({ t: 'g.band', bandId: match.gd.bandIds()[0] });
   until(match, () => match.phase === PHASE.PREP);
   assert.equal(match.phase, PHASE.PREP);
-  srvA.persister.checkpointMatches();
+  await srvA.persister.checkpointMatches();
   await srvA.persister.flush('test');
   await c.close();
   await srvA.close();

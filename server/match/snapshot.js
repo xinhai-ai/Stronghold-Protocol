@@ -218,11 +218,19 @@ export function snapshotMatch(m) {
 
 /** @param {import('./Match.js').Match} m @returns {object} */
 function buildSnapshot(m) {
+  return encodeMatchCapture(captureMatch(m));
+}
+
+/** Select only persistence fields. Nested values are cloned synchronously by Worker.postMessage before yielding.
+ * The wave schedule needs an explicit side channel: structured clone drops non-enumerable properties.
+ */
+export function captureMatch(m) {
+  if (!canSnapshot(m)) return null;
   const now = m.sched.now();
   const doc = { v: SNAPSHOT_VERSION, phase: m.phase, round: m.round, savedAt: now };
   for (const k of MATCH_FIELDS) {
     if (k === 'round') continue;
-    doc[k] = encodeState(m[k]);
+    doc[k] = m[k];
   }
   // the phase clock travels as *remaining* time: the match is frozen while the server is down
   doc.deadlineRemainingMs = m.deadline > 0 ? Math.max(0, Math.round(m.deadline - now)) : 0;
@@ -240,13 +248,31 @@ function buildSnapshot(m) {
     const p = { playerId: ps.playerId };
     for (const k of PLAYER_FIELDS) {
       if (k === 'playerId') continue;
-      p[k] = encodeState(ps[k]);
+      p[k] = ps[k];
     }
     return p;
   });
+  return { doc, factionSchedule: m.factions?.schedule };
+}
+
+/** Runs in the persistence Worker (also used by the synchronous diagnostic snapshot API). */
+export function encodeMatchCapture(capture) {
+  if (!capture) return null;
+  const { doc, factionSchedule } = capture;
+  // Reattach before encoding: the codec preserves it in the existing snapshot format.
+  if (Array.isArray(doc.factions) && factionSchedule !== undefined && !Object.hasOwn(doc.factions, 'schedule')) {
+    Object.defineProperty(doc.factions, 'schedule', { value: factionSchedule, enumerable: false });
+  }
+  const out = { ...doc };
+  for (const k of MATCH_FIELDS) if (k !== 'round') out[k] = encodeState(doc[k]);
+  out.players = doc.players.map((p) => {
+    const encoded = { playerId: p.playerId };
+    for (const k of PLAYER_FIELDS) if (k !== 'playerId') encoded[k] = encodeState(p[k]);
+    return encoded;
+  });
   try {
     // a round trip both validates JSON-safety and normalizes undefined away
-    return JSON.parse(JSON.stringify(doc));
+    return JSON.parse(JSON.stringify(out));
   } catch {
     return null;
   }

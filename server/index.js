@@ -842,6 +842,7 @@ export async function startServer(opts = {}) {
       const doc = await store.load();
       if (doc) {
         const stats = restoreServer({ doc, registry, lobby, log, now: Date.now() });
+        await persister.seed(doc);
         log.info(`[persist] state loaded (${stats.sessions} session(s), ${stats.rooms} room(s), ${stats.matches} match(es), ${stats.expired} expired${stats.droppedSeats ? `, ${stats.droppedSeats} seat(s) dropped` : ''})`);
       } else {
         log.info('[persist] no saved state in Redis — starting fresh');
@@ -890,7 +891,7 @@ export async function startServer(opts = {}) {
         // older than this reloads itself, so a deploy reaches clients that never reload
         build: buildTag(),
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
-        persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.matchDocs.size } : null,
+        persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.checkpointKeys.size } : null,
         workers: workerPool?.stats() || null,
         announcements: announcements.stats(),
         websocket: { compression: wsCompression, threshold: WS_DEFLATE_THRESHOLD },
@@ -978,6 +979,7 @@ export async function startServer(opts = {}) {
     await announcements.stop();
     network.close(); // stop heartbeat/sweep timers of the half-built server
     persister?.stop();
+    await persister?.encoder.close();
     lobby.shutdown('shutdown');
     if (ownsWorkerPool) await workerPool?.close();
     throw e;

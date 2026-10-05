@@ -176,8 +176,6 @@ export class StateStore {
    * @returns {Promise<boolean>}
    */
   async save(doc) {
-    const client = await this.connect();
-    if (!client) return false;
     let json;
     try {
       json = JSON.stringify(doc);
@@ -185,6 +183,13 @@ export class StateStore {
       this.#warn('state is not JSON-serializable', e);
       return false;
     }
+    return this.saveSerialized(json);
+  }
+
+  /** JSON encoded by the persistence Worker; sending these bytes performs no main-thread JSON serialization. */
+  async saveSerialized(json) {
+    const client = await this.connect();
+    if (!client) return false;
     try {
       await this.#command(client.set(this.key, json, { EX: this.ttlSec }), 'write');
       this.saved++;

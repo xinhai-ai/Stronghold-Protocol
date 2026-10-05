@@ -43,6 +43,7 @@ test('four alliance queue entries start one four-seat preparation match immediat
     assert.equal(pub.players.length, 4);
     assert.equal(pub.players.filter((p) => p.isBot).length, 0);
   }
+  assert.equal((await cs[0].request({ t: 'g.autoplay', on: true })).t, 'ok', 'standalone queue match accepts in-match intents');
   assert.equal(srv.lobby.stats().rooms, 0);
 });
 

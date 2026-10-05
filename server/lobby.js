@@ -1242,7 +1242,7 @@ export class Lobby {
       return OK;
     }
     // a spectator only watches (header): nothing else of it ever reaches the match
-    if (msg.t !== 'g.watch' && room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
+    if (room && msg.t !== 'g.watch' && room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
     let res;
     try {
       res = match.handle(session.playerId, msg);
@@ -1252,8 +1252,9 @@ export class Lobby {
     }
     if (res && typeof res.then === 'function') {
       // Contract violation (handle must be synchronous): never let the rejection go unhandled.
-      this.log.error(`[lobby] ${room.code} match.handle(${msg.t}) returned a Promise; it must be synchronous`);
-      Promise.resolve(res).catch((e) => this.log.error(`[lobby] ${room.code} match.handle(${msg.t}) rejected`, e));
+      const matchLabel = room?.code || active?.match?.roomCode || 'queue';
+      this.log.error(`[lobby] ${matchLabel} match.handle(${msg.t}) returned a Promise; it must be synchronous`);
+      Promise.resolve(res).catch((e) => this.log.error(`[lobby] ${matchLabel} match.handle(${msg.t}) rejected`, e));
       return OK;
     }
     if (res && typeof res === 'object' && res.error) {

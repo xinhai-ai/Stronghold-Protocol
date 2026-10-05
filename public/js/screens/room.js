@@ -6,17 +6,21 @@
 // host's start counts as the host's ready. With matchmaking selected, the same 立即开始 action sends match.join
 // for the whole connected party and the queue fills the remaining seats.
 // Solo rooms show a single seat.
+// Spectator seats (community report #26, a remake feature): a co-op room with spectators shows the 观战席 strip under
+// the seats — names, offline marks, the host's ✕ (room.removeSpectator) — and a spectator's own view swaps the ready
+// button for 观战中 and offers 入座 (room.join of the room) while a player seat is free.
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
-import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, MAX_SEATS } from '../../../shared/constants.js';
+import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, MAX_SEATS, MAX_SPECTATORS } from '../../../shared/constants.js';
 import {
   html, Button, Icon, MicroLabel, PingPill, OnlineCount, AvatarFrame, DifficultyTag, DifficultyIcon, Tooltip, confirmDialog, doctorNo,
 } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
+import { copyText } from '../ui/clipboard.js';
 import { GuideButton } from '../ui/guide.js';
 import { LoadoutButton } from './loadout.js';
 import { net } from '../net.js';
-import { store, useStore, shallowEqual, emptyMatch } from '../store.js';
+import { store, useStore, shallowEqual, emptyMatch, isSpectating } from '../store.js';
 import { difficultyInfo } from './lobby.js';
 
 /**
@@ -57,6 +61,9 @@ export function roomFacts(room, myId) {
     emptySeats: seats.filter((s) => !s).length,
     canStart: isHost && othersReady && !!mine,
     othersReady,
+    // spectator seats (never players: not in `humans`, never counted for ready / start)
+    spectators: Array.isArray(room?.spectators) ? room.spectators.filter((s) => s && typeof s === 'object') : [],
+    spectating: isSpectating(room, myId),
   };
 }
 
@@ -68,37 +75,14 @@ export function inviteLink(code) {
 }
 
 /**
- * Copy text to the clipboard (async API with a textarea fallback for insecure contexts).
+ * Copy text to the clipboard (async API with a textarea fallback for insecure contexts). Moved to ui/clipboard.js so
+ * 干员调配 can use it without importing this screen (which imports loadout.js): re-exported here for existing callers.
  * @param {string} text
  * @returns {Promise<boolean>}
  */
-export async function copyText(text) {
-  try {
-    if (globalThis.navigator?.clipboard && globalThis.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* fall through */ }
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    // 16 px: iOS zooms into smaller focused fields; `readonly` keeps the keyboard away
-    ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;font-size:16px';
-    document.body.appendChild(ta);
-    ta.select();
-    // iOS Safari ignores select() on a textarea: an explicit range is what it copies (LAN play over http has no
-    // navigator.clipboard, so this path is the one iPhones / iPads take)
-    try { ta.setSelectionRange(0, ta.value.length); } catch { /* ignore */ }
-    const ok = document.execCommand('copy');
-    ta.remove();
-    return ok;
-  } catch {
-    return false;
-  }
-}
+export { copyText };
 
-function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot }) {
+function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot, onKick }) {
   const coop = room.mode !== 'solo';
   if (!seat) {
     const canAdd = coop && facts.isHost;
@@ -148,8 +132,25 @@ function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot 
       ${seat.isBot && facts.isHost ? html`<${Tooltip} text="移除该 AI 队友">
         <${Button} variant="ghost" size="sm" square=${true} icon="close" loading=${busy === `rm${index}`} onClick=${() => onRemoveBot(index)} aria-label="移除 AI 队友" />
       <//>` : null}
+      ${!seat.isBot && !isMe && facts.isHost ? html`<${Tooltip} text="将该博士移出同盟">
+        <${Button} variant="ghost" size="sm" square=${true} icon="close" loading=${busy === `kick${index}`} onClick=${() => onKick(index, seat.name, seat.playerId)} aria-label="移出该博士" />
+      <//>` : null}
     </footer>
   </article>`;
+}
+
+/** 观战席: the room's spectators (host: ✕ frees a seat), and 入座 for a spectator while a player seat is free. */
+function SpectatorBar({ facts, myId, busy, onRemove, onSit }) {
+  if (!facts.spectators.length) return null;
+  return html`<section class="specbar" aria-label="观战席">
+    <span class="specbar__label"><${Icon} name="eye" />观战席<b class="num">${facts.spectators.length}</b><span class="num t-dim">/${MAX_SPECTATORS}</span></span>
+    ${facts.spectators.map((s) => html`<span key=${s.playerId} class=${`specbar__who${s.playerId === myId ? ' is-me' : ''}${s.connected === false ? ' is-offline' : ''}`}>
+      ${s.connected === false ? html`<${Icon} name="wifiOff" />` : null}${s.name || '博士'}${s.playerId === myId ? html`<span class="seat__you">你</span>` : null}
+      ${facts.isHost ? html`<${Button} variant="ghost" size="sm" square=${true} icon="close" loading=${busy === `rs${s.playerId}`}
+        onClick=${() => onRemove(s.playerId)} aria-label=${`移出观战者 ${s.name || ''}`} title="移出该观战者" />` : null}
+    </span>`)}
+    ${facts.spectating && facts.emptySeats > 0 ? html`<${Button} size="sm" icon="user" loading=${busy === 'sit'} onClick=${onSit}>入座<//>` : null}
+  </section>`;
 }
 
 function InviteBox({ code }) {
@@ -228,7 +229,17 @@ export function RoomScreen() {
   const cancelQueue = () => run('cancel-match', () => net.request('match.leave', {}));
   const addBot = () => run('add', () => net.request('room.addBot', {}));
   const removeBot = (seat) => run(`rm${seat}`, () => net.request('room.removeBot', { seat }));
+  // the host removes a human before the match (community report #17): asked first; the player may join again. The
+  // confirmed player's id goes along: if they left and someone else took the seat meanwhile, the server refuses it.
+  const kick = async (seat, name, playerId) => {
+    if (inFlight.current) return;
+    const ok = await confirmDialog({ title: '移出同盟', text: `确定将「${name || '博士'}」移出同盟吗？对方可以凭同盟密钥重新加入。`, okText: '移出', danger: true });
+    if (ok) run(`kick${seat}`, () => net.request('room.kick', { seat, playerId }));
+  };
   const setDifficulty = (difficulty) => run('diff', () => net.request('room.setDifficulty', { difficulty }));
+  // spectator seats: the host frees one; a spectator takes a free player seat with room.join of this room
+  const removeSpectator = (playerId) => run(`rs${playerId}`, () => net.request('room.removeSpectator', { playerId }));
+  const sit = () => run('sit', () => net.request('room.join', { code: room.code }));
   const leave = async () => {
     if (inFlight.current) return;
     const othersHere = facts.humans.some((s) => s.playerId !== me.playerId);
@@ -252,6 +263,8 @@ export function RoomScreen() {
 
   const statusLine = !online
     ? html`<span class="t-orange"><${Icon} name="wifiOff" />连接中断，正在重连…</span>`
+    : facts.spectating
+      ? html`<span class="t-lo"><${Icon} name="eye" />观战中 · 不占博士席位，模拟开始后可切换观看各位博士</span>`
     : !coop
       ? html`<span class="t-mint">*模拟协议已就绪，准许进入模拟</span>`
     : facts.isHost
@@ -286,7 +299,7 @@ export function RoomScreen() {
 
     <main class=${`seats${coop ? '' : ' seats--solo'}`}>
       ${facts.seats.map((s, i) => html`<${SeatCard} key=${s ? `p${s.playerId}` : `e${i}`} seat=${s} index=${i} room=${room} facts=${facts}
-        myId=${me.playerId} busy=${busy} onAddBot=${addBot} onRemoveBot=${removeBot} />`)}
+        myId=${me.playerId} busy=${busy} onAddBot=${addBot} onRemoveBot=${removeBot} onKick=${kick} />`)}
       ${coop ? null : html`<aside class="solo-brief brackets">
         <${MicroLabel} tone="mint">BRIEFING<//>
         <h2>${DIFFICULTY_NAMES[room.difficulty] || ''}<span class="num t-dim"> ${info.code}</span></h2>
@@ -298,6 +311,7 @@ export function RoomScreen() {
         </ul>
       </aside>`}
     </main>
+    <${SpectatorBar} facts=${facts} myId=${me.playerId} busy=${busy} onRemove=${removeSpectator} onSit=${sit} />
 
     <footer class="room-bar">
       <div class="room-bar__left">
@@ -334,6 +348,8 @@ export function RoomScreen() {
             : html`<${Tooltip} text=${facts.canStart ? null : '仍有博士未准备就绪'}>
                 <${Button} variant="primary" size="xl" icon="play" loading=${busy === 'start'} disabled=${!facts.canStart || !online} onClick=${start}>立即开始<//>
               <//>`
+          : facts.spectating
+            ? html`<${Button} variant="secondary" size="xl" icon="eye" disabled=${true}>观战中<//>`
           : html`<${Button} variant=${myReady ? 'primary' : 'secondary'} size="xl" icon=${myReady ? 'check' : 'hourglass'} active=${myReady}
               loading=${busy === 'ready'} disabled=${!online || !facts.mine} onClick=${toggleReady}>${myReady ? '已就绪' : '准备就绪'}<//>`}
       </div>

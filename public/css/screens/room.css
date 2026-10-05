@@ -187,7 +187,9 @@
   border-radius: 50%;
   background:
     repeating-radial-gradient(circle, transparent 0 .2rem, rgba(78, 216, 175, .14) .2rem .21rem),
-    conic-gradient(from 0deg, rgba(23, 249, 183, .2), transparent 25%);
+    /* same geometry as .title-bg__sweep: bright edge at 100% (== 0deg) so it leads the clockwise
+       rotation and the glow trails behind; see the comment in screens/title.css. */
+    conic-gradient(from 0deg, transparent 0 75%, rgba(23, 249, 183, .2) 100%);
   -webkit-mask-image: radial-gradient(circle, #000 60%, transparent 71%);
   mask-image: radial-gradient(circle, #000 60%, transparent 71%);
   animation: radar-sweep 4s linear infinite;
@@ -215,6 +217,35 @@
 .solo-brief ul { margin: .06rem 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .08rem; font-size: .16rem; color: var(--text-lo); }
 .solo-brief li::before { content: ''; display: inline-block; width: .06rem; height: .06rem; margin: 0 .12rem .02rem 0; background: var(--mint-600); transform: rotate(45deg); vertical-align: middle; }
 .solo-brief b { color: var(--text-hi); }
+
+/* ---- spectator seats (观战席, community report #26) -------------------------------------------------------------- */
+.specbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: .14rem;
+  padding: 0 .6rem .16rem;
+  font-size: .15rem;
+  color: var(--text-lo);
+}
+.specbar__label { display: flex; align-items: baseline; gap: .06rem; font-weight: 700; color: var(--text-md); }
+.specbar__label .icon { width: .18rem; height: .18rem; align-self: center; color: var(--mint-500); }
+.specbar__label b { color: var(--mint-400); }
+.specbar__who {
+  display: inline-flex;
+  align-items: center;
+  gap: .06rem;
+  min-height: .36rem;
+  padding: 0 .14rem;
+  border: 1px solid var(--line-2);
+  background: rgba(0, 0, 0, .32);
+  color: var(--text-hi);
+}
+.specbar__who.is-me { border-color: var(--mint-600); }
+.specbar__who.is-offline { color: var(--text-dim); }
+.specbar__who > .icon { width: .16rem; height: .16rem; }
 
 /* ---- bottom bar ----------------------------------------------------------------------------------------- */
 .room-bar {

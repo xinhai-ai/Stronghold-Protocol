@@ -610,6 +610,13 @@
 .set-seg button { min-width: .8rem; height: .38rem; background: #0a0d0c; border: 0; border-right: 1px solid var(--line-2); color: var(--text-lo); font-size: .16rem; }
 .set-seg button:last-child { border-right: 0; }
 .set-seg button.is-on { background: var(--mint-500); color: var(--text-on-mint); font-weight: 700; }
+.set-row--fps { grid-template-columns: minmax(0, 1fr) auto; }
+.set-row--fps .set-row__label { flex-wrap: wrap; white-space: normal; }
+.set-seg--fps { grid-column: 2; justify-self: end; }
+.set-seg--fps button:focus-visible { outline: 2px solid var(--mint-400); outline-offset: -2px; }
+@media (pointer: coarse), (any-pointer: coarse) {
+  .set-row--fps .set-seg--fps button { min-width: max(.8rem, 44px); height: max(.38rem, 44px); }
+}
 .set-hint { margin-top: .06rem; font-size: .14rem; color: var(--text-dim); line-height: 1.8; }
 /* 预载资源 (docs/ASSETS.md「Preload」): progress of the optional Cache Storage preload */
 .set-res { display: flex; flex-direction: column; gap: .1rem; }

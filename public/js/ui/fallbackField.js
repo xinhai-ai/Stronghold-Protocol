@@ -24,6 +24,7 @@ import { html, TierChip } from './components.js';
 import { GEO } from '../../../shared/constants.js';
 import { chessAvatarUrl, itemIconUrl, tokenAvatarUrl, enemyIconUrl } from './assetUrls.js';
 import { tileKey, hasFlag, UF, penPlacement, PEN, fieldTile } from './gameLogic.js';
+import { normalizeFrameRate } from '../frameRate.js';
 
 const DRAG_PX = 6;
 const DMG_TTL = 900;
@@ -88,9 +89,16 @@ export function createFallbackView(host, opts = {}) {
   };
 
   let raf = 0;
+  let lastPaint = -Infinity;
   const schedule = () => {
     if (raf || st.destroyed) return;
-    raf = requestAnimationFrame(() => { raf = 0; paint(); });
+    raf = requestAnimationFrame((now) => {
+      raf = 0;
+      const limit = normalizeFrameRate(st.settings.fpsLimit);
+      if (limit && now - lastPaint < 1000 / limit) { schedule(); return; }
+      lastPaint = now;
+      paint();
+    });
   };
 
   // ---- geometry ----------------------------------------------------------------------------------------

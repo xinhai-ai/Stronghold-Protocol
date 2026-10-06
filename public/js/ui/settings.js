@@ -10,8 +10,9 @@ import { audio } from '../audio.js';
 import { openGuide } from './guide.js';
 import { detectFeatures } from './device.js';
 import { ResourceRow } from './resourcePanel.js';
+import { FRAME_RATES } from '../frameRate.js';
 
-/** Settings store: { bgm, sfx, voice, muted, damageNumbers, quality, preload }. */
+/** Settings store: { bgm, sfx, voice, muted, damageNumbers, quality, fpsLimit, preload }. */
 export const settingsStore = createStore(sanitizeSettings(loadPref('settings', null)));
 export const shortcutsStore = createStore(sanitizeShortcuts(loadPref('shortcuts', DEFAULT_SHORTCUTS)));
 
@@ -80,6 +81,14 @@ export function SettingsModal({ open, onClose }) {
         <div class="set-seg" role="radiogroup">
           ${QUALITY.map(([id, label]) => html`<button key=${id} type="button" role="radio" aria-checked=${s.quality === id ? 'true' : 'false'}
             class=${s.quality === id ? 'is-on' : ''} onClick=${() => updateSettings({ quality: id })}>${label}</button>`)}
+        </div>
+      </div>
+      <div class="set-row set-row--fps">
+        <span class="set-row__label">帧率上限<${MicroLabel}>FRAME RATE<//></span>
+        <div class="set-seg set-seg--fps" role="radiogroup" aria-label="帧率上限">
+          ${FRAME_RATES.map((limit) => html`<button key=${limit} type="button" role="radio" aria-checked=${s.fpsLimit === limit ? 'true' : 'false'}
+            aria-label=${limit ? `${limit} FPS` : '不限帧率'} class=${s.fpsLimit === limit ? 'is-on' : ''}
+            onClick=${() => updateSettings({ fpsLimit: limit })}>${limit || '不限'}</button>`)}
         </div>
       </div>
       ${touchUi

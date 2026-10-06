@@ -16,7 +16,7 @@ import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
 import { LoadoutButton } from './loadout.js';
 import { net, identity } from '../net.js';
-import { store, useStore, shallowEqual, loadPref, savePref } from '../store.js';
+import { store, useStore, shallowEqual, loadPref, savePref, serverNow } from '../store.js';
 import { getConfig, getMode, getStage, useData } from '../data.js';
 
 /** Official mode texts (activity_table act2autochess.modeDataDict), fallback when config.json is absent. */
@@ -233,9 +233,9 @@ function DifficultyCard({ roomMode, difficulty, selected, onSelect }) {
 }
 
 function MatchQueuePanel({ queue, onCancel }) {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => serverNow());
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 250);
+    const id = setInterval(() => setNow(serverNow()), 250);
     return () => clearInterval(id);
   }, []);
   if (!queue) return null;
@@ -243,7 +243,7 @@ function MatchQueuePanel({ queue, onCancel }) {
   return html`<section class="match-queue brackets" aria-live="polite">
     <div class="match-queue__scan" aria-hidden="true"></div>
     <div class="match-queue__head"><${Icon} name="signal" /><div><${MicroLabel} tone="mint">ALLIANCE MATCHMAKING<//><strong>正在寻找同盟队友</strong></div><span class="match-queue__count num">${queue.count}/${queue.capacity}</span></div>
-    <div class="match-queue__meta"><span>已等待 <b class="num">${left}s</b></span><span>${queue.fillBots ? '60 秒后由 AI 补齐空位' : '仅匹配真实队友'}</span></div>
+    <div class="match-queue__meta"><span>匹配剩余 <b class="num">${left}s</b></span><span>${queue.fillBots ? '倒计时结束后由 AI 补齐空位' : '仅匹配真实队友'}</span></div>
     <${Button} variant="danger" size="sm" icon="close" onClick=${onCancel}>退出匹配<//>
   </section>`;
 }

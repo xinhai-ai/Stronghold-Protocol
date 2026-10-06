@@ -20,7 +20,7 @@ import { copyText } from '../ui/clipboard.js';
 import { GuideButton } from '../ui/guide.js';
 import { LoadoutButton } from './loadout.js';
 import { net } from '../net.js';
-import { store, useStore, shallowEqual, emptyMatch, isSpectating } from '../store.js';
+import { store, useStore, shallowEqual, emptyMatch, isSpectating, serverNow } from '../store.js';
 import { difficultyInfo } from './lobby.js';
 
 /**
@@ -374,7 +374,7 @@ export function RoomScreen() {
         ${facts.isHost
           ? coop
             ? room.matching
-              ? html`<div class="room-match-actions room-match-actions--active"><span class="room-match-state"><${Icon} name="signal" />正在匹配队友 <b class="num">${Math.max(0, Math.ceil((Number(room.matching.deadlineAt) - Date.now()) / 1000))}s</b></span><${Button} variant="danger" size="lg" icon="close" loading=${busy === 'cancel-match'} onClick=${cancelQueue}>取消匹配<//></div>`
+              ? html`<div class="room-match-actions room-match-actions--active"><span class="room-match-state"><${Icon} name="signal" />匹配剩余 <b class="num">${Math.max(0, Math.ceil((Number(room.matching.deadlineAt) - serverNow()) / 1000))}s</b></span><${Button} variant="danger" size="lg" icon="close" loading=${busy === 'cancel-match'} onClick=${cancelQueue}>取消匹配<//></div>`
               : html`<div class="room-match-actions">
                 <div class="room-match-options">
                   <label class="fill-bots"><input type="checkbox" checked=${matchTeammates} disabled=${!!room.consoleEnabled}

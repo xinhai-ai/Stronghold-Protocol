@@ -645,7 +645,39 @@ export class Lobby {
     if (entry.room) {
       entry.room.matching = { queueId: entry.queueId, queuedAt: entry.queuedAt, deadlineAt: entry.deadlineAt, fillBots: entry.fillBots };
     }
+    // A newly matched human party gives its teammates a fresh AI wait. Use the same packing as processing,
+    // so another difficulty, a private ticket or a party that does not fit cannot extend their deadline.
+    let remaining = bucket.filter((queued) => !queued.removed);
+    while (remaining.length) {
+      const selected = this.selectMatchEntries(remaining);
+      if (selected.includes(entry)) {
+        if (selected.length > 1) for (const teammate of selected) {
+          teammate.deadlineAt = entry.deadlineAt;
+          if (teammate.room?.matching) {
+            teammate.room.matching.deadlineAt = teammate.deadlineAt;
+            this.broadcastState(teammate.room);
+          }
+        }
+        break;
+      }
+      const group = new Set(selected);
+      remaining = remaining.filter((queued) => !group.has(queued));
+    }
     this.broadcastQueueCounts(entry.mode, entry.difficulty);
+  }
+
+  /** Oldest-first party packing, shared by AI deadline resets and match launch. */
+  selectMatchEntries(bucket) {
+    const first = bucket[0];
+    const selected = [first];
+    let total = first.players.length;
+    if (first.fillBots) for (let i = 1; i < bucket.length && total < MAX_SEATS; i++) {
+      const next = bucket[i];
+      if (!next || next.removed || !next.fillBots || total + next.players.length > MAX_SEATS) continue;
+      selected.push(next);
+      total += next.players.length;
+    }
+    return selected;
   }
 
   /** Send the current number of waiting human players to every ticket in one mode/difficulty bucket. */
@@ -654,24 +686,16 @@ export class Lobby {
     for (const entry of bucket) if (!entry.removed) this.sendQueueState(entry);
   }
 
-  /** Process each bucket oldest-first. A complete four-person party starts immediately; the oldest incomplete ticket
-   * receives AI at its deadline, so a quiet server never leaves an operator waiting indefinitely. */
+  /** Process each bucket oldest-first. Full teams start immediately; otherwise AI fills seats after the latest
+   * teammate's fresh wait expires. Regular scheduler ticks never extend that wait. */
   processMatchQueues() {
     const now = this.now();
     for (const [key, bucket] of this.matchQueues) {
       while (bucket.length) {
         const first = bucket[0];
         if (!first || first.removed) { bucket.shift(); continue; }
-        const selected = [first];
-        let total = first.players.length;
-        if (first.fillBots) {
-          for (let i = 1; i < bucket.length && total < MAX_SEATS; i++) {
-            const next = bucket[i];
-            if (!next || next.removed || !next.fillBots || total + next.players.length > MAX_SEATS) continue;
-            selected.push(next);
-            total += next.players.length;
-          }
-        }
+        const selected = this.selectMatchEntries(bucket);
+        const total = selected.reduce((n, entry) => n + entry.players.length, 0);
         if (total < MAX_SEATS && now < first.deadlineAt) break;
         for (const entry of selected) {
           const idx = bucket.indexOf(entry);

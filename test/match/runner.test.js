@@ -201,6 +201,28 @@ test('b.end forced ends the local battle and reports at once; a new prep clears 
   r.runner.dispose();
 });
 
+test('own battle statistics stay available when viewing a teammate; owner filtering excludes teammate damage', async () => {
+  const start = realStart(7311);
+  const r = rig();
+  await r.runner.onStart(start);
+  r.advance(5000, 50);
+  const ownerId = start.spec.players[0].playerId;
+  const own = r.runner.combatMetrics({ scope: 'battle', ownerId });
+  assert.ok(own.rows.length > 0);
+  const teammate = structuredClone(start);
+  teammate.battleId = 'metrics-teammate';
+  teammate.fieldId = 'n:metrics-teammate';
+  teammate.authoritative = false;
+  teammate.watch = true;
+  for (const player of teammate.spec.players) player.playerId = 'metrics-teammate';
+  await r.runner.onStart(teammate);
+  assert.deepEqual(r.runner.combatMetrics({ scope: 'battle', ownerId }), own, 'own field is selected instead of the watched field');
+  assert.ok(r.runner.combatMetrics({ scope: 'battle', ownerId }).rows.every((row) => row.ownerId === ownerId));
+  assert.deepEqual(r.runner.combatMetrics({ scope: 'match', ownerId }), own, 'match view remains restricted to self');
+  assert.equal(r.runner.combatMetrics({ scope: 'battle', ownerId: 'unavailable-player' }).rows.length, 0);
+  r.runner.dispose();
+});
+
 test('evicted observed battles keep match totals; replaying one replaces its snapshot without double counting', async () => {
   const start = realStart(7310);
   const r = rig();

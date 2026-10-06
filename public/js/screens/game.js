@@ -1348,16 +1348,16 @@ function MatchScreen() {
       <${Ticker} />
 
       <div class="gm__corner">
-        ${metricsOpen ? html`<${CombatMetricsPanel} myId=${myId} players=${players} onClose=${() => setMetricsOpen(false)} />` : null}
+        ${metricsOpen && !spectator ? html`<${CombatMetricsPanel} myId=${myId} onClose=${() => setMetricsOpen(false)} />` : null}
         ${spectator ? null : html`<${EmoteWheel} open=${emoteOpen} onToggle=${setEmoteOpen} onSend=${(id) => actions.emote(id)} disabled=${conn.status !== 'online'} />`}
-        <button type="button" class="gm__gear gm__metrics" aria-label="作战统计" title="作战统计" aria-expanded=${metricsOpen}
+        ${spectator ? null : html`<button type="button" class="gm__gear gm__metrics" aria-label="作战统计" title="作战统计" aria-expanded=${metricsOpen}
           aria-controls="combat-metrics-panel" onKeyDown=${(e) => { if (e.key === ' ') e.stopPropagation(); }} onClick=${() => {
             setMetricsOpen(!metricsOpen);
             setEmoteOpen(false);
             setDetail(null);
             setSel(null);
             setBondOpen(null);
-          }}><${Icon} name="signal" /></button>
+          }}><${Icon} name="signal" /></button>`}
         <button type="button" class="gm__gear" aria-label="设置" title="设置" onClick=${() => setSettingsOpen(true)}><${GIcon} name="gear" /></button>
         ${roomConsole && !spectator ? html`<button type="button" class="gm__gear gm__console" aria-label="控制台" title="控制台" onClick=${() => setConsoleOpen(true)}><${Icon} name="terminal" /></button>` : null}
         <button type="button" class="gm__gear gm__guide" aria-label="玩法说明" title="玩法说明" onClick=${() => openGuide(0)}><${Icon} name="book" /></button>

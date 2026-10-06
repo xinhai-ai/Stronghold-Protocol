@@ -780,7 +780,12 @@ export function createBattleRunner(deps) {
     state,
     /** Local-only damage/healing; current battle or the match so far. Read on demand, never sent to the server. */
     combatMetrics({ scope = 'match', ownerId = null } = {}) {
-      if (scope === 'battle') return combineCombat(cur?.combatMetrics ? [cur.combatMetrics()] : [], ownerId);
+      if (scope === 'battle') {
+        // Scouting another field must not replace the player's own current battle statistics.
+        const e = ownerId == null || cur?.members.includes(ownerId) ? cur
+          : [...entries.values()].reverse().find((entry) => entry.members.includes(ownerId));
+        return combineCombat(e?.combatMetrics ? [e.combatMetrics()] : [], ownerId);
+      }
       const records = new Map(combatHistory);
       for (const e of entries.values()) if (e.combatMetrics) {
         const record = e.combatMetrics();

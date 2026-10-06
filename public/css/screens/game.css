@@ -385,7 +385,6 @@
 .combat-metrics__scopes { display: flex; flex: 1; min-width: 0; }
 .combat-metrics__scopes button { flex: 1; min-width: 0; padding: 4px 6px; min-height: 32px; color: var(--text-lo); background: var(--bg-1); border: 1px solid var(--line-2); white-space: nowrap; font-size: inherit; }
 .combat-metrics__scopes button[aria-pressed="true"] { background: var(--mint-900); color: var(--mint-400); border-color: var(--mint-700); }
-.combat-metrics__tools select { min-width: 0; width: 30%; padding: 4px; font-size: inherit; color: var(--text-md); background: var(--bg-1); border: 1px solid var(--line-2); }
 .combat-metrics__totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: none; gap: 8px; padding: 0 max(.14rem, 10px) 8px; }
 .combat-metrics__totals span { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; color: var(--text-lo); }
 .combat-metrics__totals b { font-family: var(--font-num); color: var(--text-hi); font-size: max(.18rem, 14px); overflow-wrap: anywhere; }
@@ -405,7 +404,6 @@
 .combat-metrics__unit { min-width: 0; }
 .combat-metrics__name { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
 .combat-metrics__name b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-hi); }
-.combat-metrics__name small { flex: none; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-lo); font-size: max(.11rem, 10px); }
 .combat-metrics__bar { display: flex; width: 100%; height: max(.05rem, 5px); margin: 5px 0; background: var(--bg-4); overflow: hidden; }
 .combat-metrics__segment { flex: none; height: 100%; background: var(--damage-color); }
 .combat-metrics__values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; font-family: var(--font-num); font-variant-numeric: tabular-nums; }
@@ -417,9 +415,9 @@
 .combat-metrics__empty small { display: inline-block; margin-top: 6px; color: var(--text-lo); }
 .combat-metrics__note { flex: none; margin: 0; padding: 8px max(.14rem, 10px); border-top: 1px solid var(--line); color: var(--text-lo); font-size: max(.1rem, 10px); }
 .combat-metrics button:hover { color: var(--mint-400); border-color: var(--mint-700); }
-.combat-metrics :is(button, select):focus-visible { outline: 2px solid var(--mint-400); outline-offset: -2px; }
+.combat-metrics button:focus-visible { outline: 2px solid var(--mint-400); outline-offset: -2px; }
 @media (pointer: coarse), (any-pointer: coarse) {
-  .combat-metrics__close, .combat-metrics__scopes button, .combat-metrics__tools select { min-height: 44px; }
+  .combat-metrics__close, .combat-metrics__scopes button { min-height: 44px; }
   .combat-metrics__close { min-width: 44px; }
 }
 @media (max-height: 460px) {

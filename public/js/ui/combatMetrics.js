@@ -11,9 +11,8 @@ const number = (n) => Math.round(n || 0).toLocaleString('zh-CN');
 const rate = (n) => (n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 1 });
 
 /** A modeless panel: the battlefield stays visible and keeps playing. Mounted only while open. */
-export function CombatMetricsPanel({ myId, players = [], onClose, runner = battleRunner }) {
+export function CombatMetricsPanel({ myId, onClose, runner = battleRunner }) {
   const [scope, setScope] = useState('battle');
-  const [owner, setOwner] = useState(myId || '');
   const closeRef = useRef(null);
   const panelRef = useRef(null);
   useTicker(250);
@@ -38,10 +37,8 @@ export function CombatMetricsPanel({ myId, players = [], onClose, runner = battl
     window.addEventListener('resize', measure);
     return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
   }, []);
-  const result = runner?.combatMetrics({ scope, ownerId: owner || null }) || { rows: [], damage: 0, healing: 0 };
+  const result = (myId ? runner?.combatMetrics({ scope, ownerId: myId }) : null) || { rows: [], damage: 0, healing: 0 };
   const maximum = Math.max(1, ...result.rows.map((r) => r.damage));
-  const owners = new Map(players.map((p) => [p.playerId, p.name]));
-  if (myId && !owners.has(myId)) owners.set(myId, '自己');
   return html`<section ref=${panelRef} id="combat-metrics-panel" class="combat-metrics brackets" role="dialog" aria-label="作战统计"
       onKeyDown=${(e) => { if (e.key === 'Escape') onClose(); e.stopPropagation(); }}>
     <header class="combat-metrics__head">
@@ -54,10 +51,6 @@ export function CombatMetricsPanel({ myId, players = [], onClose, runner = battl
         ${[['battle', '当前战斗'], ['match', '本局累计']].map(([id, label]) => html`<button type="button" key=${id}
           aria-pressed=${scope === id} onClick=${() => setScope(id)}>${label}</button>`)}
       </div>
-      <select aria-label="统计玩家" value=${owner} onChange=${(e) => setOwner(e.currentTarget.value)}>
-        <option value="">全部玩家</option>
-        ${[...owners].map(([id, name]) => html`<option key=${id} value=${id}>${id === myId ? '自己' : name}</option>`)}
-      </select>
     </div>
     <div class="combat-metrics__totals">
       <span>总伤害 <b>${number(result.damage)}</b></span><span>总治疗 <b>${number(result.healing)}</b></span>
@@ -73,8 +66,7 @@ export function CombatMetricsPanel({ myId, players = [], onClose, runner = battl
           <span class="combat-metrics__rank">${String(i + 1).padStart(2, '0')}</span>
           <${UnitThumb} kind=${r.kind === 'token' ? 'token' : 'chess'} id=${r.defId} showTier=${false} size="sm" />
           <div class="combat-metrics__unit">
-            <div class="combat-metrics__name"><b title=${r.name}>${r.name || r.defId}</b>
-              ${owner ? null : html`<small>${owners.get(r.ownerId) || '队友'}</small>`}</div>
+            <div class="combat-metrics__name"><b title=${r.name}>${r.name || r.defId}</b></div>
             <div class="combat-metrics__bar" role="img" aria-label=${description} title=${description}>
               ${TYPES.map((t) => html`<span key=${t.id} class=${`combat-metrics__segment combat-metrics__segment--${t.id}`}
                 style=${{ width: `${r.types[t.id] / maximum * 100}%` }}></span>`)}
@@ -89,7 +81,7 @@ export function CombatMetricsPanel({ myId, players = [], onClose, runner = battl
         </li>`;
       }) : html`<li class="combat-metrics__empty">暂无本地战斗记录<br /><small>开始战斗后实时显示干员数据</small></li>`}
     </ol>
-    <p class="combat-metrics__note">同名干员合并 · 实际扣血 / 有效治疗 · 召唤物计入所属干员<br />DPS / HPS 按所选玩家累计战斗秒数计算。仅含本机模拟的战斗，刷新后重新累计。</p>
+    <p class="combat-metrics__note">仅统计自己 · 同名干员合并 · 召唤物计入所属干员<br />实际扣血 / 有效治疗，DPS / HPS 按自己的战斗秒数计算。刷新后重新累计。</p>
     </div>
   </section>`;
 }

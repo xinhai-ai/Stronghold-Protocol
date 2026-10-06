@@ -65,6 +65,7 @@
 import { net as appNet } from '../net.js';
 import { store as appStore } from '../store.js';
 import { unitStatsEntry, fxForm } from '../../../shared/protocol.js';
+import { DATA_CDN } from '../asset-cdn.js';
 
 const TICK = 1 / 30;
 /** Fast-forward budget per frame (ticks) when far behind. */
@@ -127,7 +128,7 @@ function deepFreeze(root) {
  * Browser sim loader: the /sim/ modules + the data files (own frozen copies — the server's data is frozen too, so a
  * content bug that writes into a record fails identically on both sides).
  */
-export async function loadBrowserSim({ base = '/sim/', dataBase = '/data/', fetchFn = (...a) => globalThis.fetch(...a) } = {}) {
+export async function loadBrowserSim({ base = '/sim/', dataCdn = DATA_CDN, dataBase = `${dataCdn.replace(/\/+$/, '')}/data/`, fetchFn = (...a) => globalThis.fetch(...a) } = {}) {
   // Literal imports let the production build emit a lazy simulation chunk. Custom bases remain usable by tools/tests.
   const [spec, simdata, support] = await Promise.all(base === '/sim/' ? [
     import('/sim/spec.js'), import('/sim/simdata.js'), import('/sim/content/support/index.js'),

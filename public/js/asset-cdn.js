@@ -1,2 +1,3 @@
-// The game server serves this module with the configured SP_ASSETS_CDN value. Empty for static/Node consumers.
+// The game server supplies runtime SP_ASSETS_CDN / SP_DATA_CDN values. Empty for static/Node consumers.
 export const ASSETS_CDN = '';
+export const DATA_CDN = '';

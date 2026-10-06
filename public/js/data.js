@@ -19,8 +19,8 @@
 // `loadData(...)` to await, or the `useData(...)` hook to re-render when files arrive.
 
 import { useEffect, useReducer } from '../vendor/hooks.module.js';
-import { ASSETS_CDN } from './asset-cdn.js';
-import { rewriteAssetPaths } from '../../shared/cdn.js';
+import { ASSETS_CDN, DATA_CDN } from './asset-cdn.js';
+import { rewriteAssetPaths, dataUrl } from '../../shared/cdn.js';
 
 /** Known data files (name → URL basename). Unknown names are allowed too (`/data/<name>.json`). */
 export const DATA_FILES = Object.freeze({
@@ -109,11 +109,12 @@ const transientFailure = (err) => {
  * user playtest #3 item 9); a transient failure is retried (RETRY_DELAYS_MS) while the file stays 'loading', so a
  * network hiccup does not leave the texts of a whole session missing. `local` and `assets` are reported `missing` on
  * the first failure or timeout (the emote glyph) and stay that way through a retry; a later success is `ready`.
- * @param {{ fetch?: typeof fetch, base?: string, assetsCdn?: string, retryDelays?: number[], wait?: (ms: number) => Promise<void>, timeoutMs?: number, setTimeout?: typeof setTimeout, clearTimeout?: typeof clearTimeout }} [opts]
+ * @param {{ fetch?: typeof fetch, base?: string, assetsCdn?: string, dataCdn?: string, retryDelays?: number[], wait?: (ms: number) => Promise<void>, timeoutMs?: number, setTimeout?: typeof setTimeout, clearTimeout?: typeof clearTimeout }} [opts]
  *   `timeoutMs` 0 turns the art-manifest clock off. `setTimeout` / `clearTimeout` let a test fire that clock.
  */
 export function createDataStore(opts = {}) {
   const assetsCdn = opts.assetsCdn ?? ASSETS_CDN;
+  const dataCdn = opts.dataCdn ?? DATA_CDN;
   const base = opts.base ?? '/data/';
   const doFetch = opts.fetch || ((...a) => globalThis.fetch(...a));
   const retryDelays = Array.isArray(opts.retryDelays) ? opts.retryDelays : RETRY_DELAYS_MS;
@@ -132,7 +133,10 @@ export function createDataStore(opts = {}) {
     }
   };
 
-  const urlFor = (name) => base + (DATA_FILES[name] || `${name}.json`);
+  const urlFor = (name) => {
+    const url = base + (DATA_FILES[name] || `${name}.json`);
+    return opts.base == null ? dataUrl(url, dataCdn) : url;
+  };
 
   /**
    * One attempt at a file. Art manifests reject with a transient `{ timeout: true }` when the clock fires; a response

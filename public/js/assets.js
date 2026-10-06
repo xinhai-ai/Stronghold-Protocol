@@ -45,8 +45,8 @@
 // so it can be unit tested without a browser. Helpers never throw on unknown ids — they return null and the
 // caller falls back (docs/ASSETS.md "Other fallbacks").
 
-import { ASSETS_CDN } from './asset-cdn.js';
-import { rewriteAssetPaths } from '../../shared/cdn.js';
+import { ASSETS_CDN, DATA_CDN } from './asset-cdn.js';
+import { rewriteAssetPaths, dataUrl } from '../../shared/cdn.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const str = (v) => (typeof v === 'string' && v ? v : null);
@@ -719,7 +719,7 @@ const transientFetch = (err) => {
  * after MANIFEST_BACKOFF_MS (bounded; a 404 or a body that is no JSON only on the next `ready()`). `onChange(fn)` is told
  * when the manifest (`'manifest'`) or the optional local-client manifest (`'local'`) arrives, so views built without it
  * resolve their models then (render/app.js → UnitView.retryAssets).
- * @param {{ url?: string, assetsCdn?: string, fetch?: typeof fetch, manifest?: object, localManifest?: object, loadImage?: (url) => Promise<any>,
+ * @param {{ url?: string, assetsCdn?: string, dataCdn?: string, fetch?: typeof fetch, manifest?: object, localManifest?: object, loadImage?: (url) => Promise<any>,
  *           loadSpine?: (entry) => Promise<any>, unloadSpine?: (entry, value, keepPages:Set<string>) => (Promise<void>|void),
  *           spineMax?: number, spineTimeout?: number, spineWeigh?: (key, spineData) => number, spineIdleBytes?: number,
  *           spineQuietBytes?: number, spineIdleGrace?: number, spineEvictDelay?: number, spineQuietDelay?: number,
@@ -728,7 +728,7 @@ const transientFetch = (err) => {
  */
 export function createAssets(options) {
   const opts = options && typeof options === 'object' ? options : {};
-  const url = opts.url || '/data/assets.json';
+  const url = opts.url || dataUrl('/data/assets.json', opts.dataCdn ?? DATA_CDN);
   const localUrl = opts.localUrl || '/data/local-assets.json';
   let localPromise = isObj(opts.localManifest) ? Promise.resolve(opts.localManifest) : null;
   let localManifest = isObj(opts.localManifest) ? opts.localManifest : null;

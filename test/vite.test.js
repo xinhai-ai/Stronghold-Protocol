@@ -61,7 +61,10 @@ test('built HTML, hashed assets, runtime CDN and data routes preserve the produc
   assert.ok(allJs.every((s) => !/node:fs|node:path|nodeData\.js|__vite-browser-external/.test(s)), 'no Node-only imports');
   const config = await fetch(origin + '/js/asset-cdn.js');
   assert.equal(config.headers.get('cache-control'), 'no-cache');
-  assert.match(await config.text(), /https:\/\/art\.example\.com\/game/);
+  const configText = await config.text();
+  assert.match(configText, /export const ASSETS_CDN = "https:\/\/art\.example\.com\/game"/);
+  assert.match(configText, /export const DATA_CDN = "https:\/\/data\.example\.com\/game"/);
+  assert.ok(allJs.some((s) => /DATA_CDN/.test(s)), 'built loaders consume the runtime data CDN');
   const data = await fetch(origin + '/data/chess.json', { redirect: 'manual' });
   assert.equal(data.status, 307);
   assert.equal(data.headers.get('location'), 'https://data.example.com/game/data/chess.json');

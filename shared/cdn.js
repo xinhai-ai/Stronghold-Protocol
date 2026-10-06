@@ -7,3 +7,11 @@ export function rewriteAssetPaths(value, base) {
   }
   return value;
 }
+
+/** Route static game JSON directly to the data CDN; local art and generated preload manifests stay on the game origin. */
+export function dataUrl(url, base) {
+  if (!base || typeof url !== 'string') return url;
+  const match = url.match(/^\/data\/([^/?#]+\.json)(?:[?#]|$)/);
+  if (!match || ['local-assets.json', 'resource-manifest.json'].includes(match[1].toLowerCase())) return url;
+  return base.replace(/\/+$/, '') + url;
+}

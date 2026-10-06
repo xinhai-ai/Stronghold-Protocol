@@ -406,6 +406,29 @@ test('loadBrowserSim: a data file that cannot be fetched fails the loader (no ba
   assert.ok(b.finished);
 });
 
+test('loadBrowserSim requests every data file directly from the CDN and preserves explicit dataBase', async () => {
+  const { loadBrowserSim, SIM_DATA_FILES } = await import('../../public/js/battle/runner.js');
+  const base = new URL('../../server/sim/', import.meta.url).href;
+  for (const options of [
+    { dataCdn: 'https://cdn.example.com/game/', expected: 'https://cdn.example.com/game/data/' },
+    { dataCdn: '/cdn/', expected: '/cdn/data/' },
+    { dataCdn: '', expected: '/data/' },
+    { dataCdn: 'https://cdn.example.com', dataBase: '/custom/', expected: '/custom/' },
+  ]) {
+    const calls = [];
+    const { expected, ...config } = options;
+    const sim = await loadBrowserSim({ base, ...config, fetchFn: async (url, init) => {
+      calls.push(url);
+      assert.equal(init.cache, 'no-cache');
+      const name = url.slice(expected.length).replace(/\.json$/, '');
+      assert.ok(SIM_DATA_FILES.includes(name));
+      return { ok: true, json: async () => JSON.parse(JSON.stringify(DATA[name])) };
+    } });
+    assert.ok(sim.spec && sim.ds);
+    assert.deepEqual(calls, SIM_DATA_FILES.map((name) => `${expected}${name}.json`));
+  }
+});
+
 // ---- 中途退出 around the 联防 plan ----------------------------------------------------------------------------------
 
 test('a player who quits while its field is the last one running is never picked as a 联防 helper (the plan is made after the pause)', () => {

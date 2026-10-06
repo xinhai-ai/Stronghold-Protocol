@@ -26,11 +26,12 @@ so a long `Cache-Control` is safe only if you invalidate on update — the serve
 `/assets/`.
 
 Game data can also use a CDN: set `SP_DATA_CDN=https://cdn.example.com/stronghold` and upload the matching release's
-`data/` directory under that base. Existing static `/data/*.json` requests receive a temporary redirect to
-`<SP_DATA_CDN>/data/<file>.json`; fetch follows it automatically. The CDN must allow CORS for JSON and should use
+`data/` directory under that base. Page, simulation and standalone asset loaders read the runtime `DATA_CDN` from
+`/js/asset-cdn.js` and request `<SP_DATA_CDN>/data/<file>.json` directly. Older pages requesting origin `/data/*.json`
+still receive a temporary redirect for compatibility. The CDN must allow CORS for JSON and should use
 `Cache-Control: no-cache` with validators, or a release-specific base URL, to keep browser and server data in sync.
 Keep the local data directory: the server still reads it for game logic. `assets.json` and `asset-hashes.json` also
-redirect to the data CDN. Upload the original JSON files as-is: browser data and asset loaders rewrite `/assets/…`
+come directly from the data CDN. Upload the original JSON files as-is: browser data and asset loaders rewrite `/assets/…`
 after reading the JSON, using the server's `SP_ASSETS_CDN` supplied by `/js/asset-cdn.js` (a small runtime module with
 `no-cache` and an ETag). Absolute URLs already present in a manifest are preserved. With no assets CDN configured,
 root-relative asset URLs continue to use the game origin. No export command or preprocessing is needed;
@@ -38,6 +39,11 @@ hash-map keys and server-side source files stay unchanged.
 `local-assets.json` and the generated `resource-manifest.json` stay on the game server for optional art and preloading.
 The two CDN settings are independent; `/metrics.dataCdn` reports the data base, and unsetting `SP_DATA_CDN` restores
 local data responses. See [DEPLOY.md §3.2](DEPLOY.md#32-素材放-cdn).
+
+The CDN's data origin must serve static files rather than proxying back to the Node data redirect route, which would
+redirect to itself. Keep `/data/local-assets.json`, `/data/resource-manifest.json` and `/js/asset-cdn.js` on the game
+origin backed by Node. Rebuild the client for this upgrade; subsequent CDN configuration changes only require a server
+restart and page refresh.
 
 ## Preload (optional asset preloading)
 

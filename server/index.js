@@ -30,8 +30,8 @@
 //     changes, and an unreachable Redis only logs a warning (server/redis.js, server/persist.js).
 //   * Assets CDN (docs/DEPLOY.md §3.2): SP_ASSETS_CDN rewrites the /assets/… URLs of the manifests served under
 //     /data/ (data/assets.json, data/local-assets.json) to the CDN directory — the client needs no change.
-//   * Data CDN: SP_DATA_CDN redirects static /data/*.json to <base>/data/*.json. The local-art and generated
-//     resource manifest stay on this server; game logic still reads the local data directory.
+//   * Data CDN: SP_DATA_CDN is supplied at runtime for direct browser requests to <base>/data/*.json; /data/ redirects
+//     remain for older pages. Local-art and generated resource manifests stay here; game logic reads local data.
 //   * Asset preload (docs/ASSETS.md「Preload」): GET /data/resource-manifest.json lists every asset file the client
 //     may preload into Cache Storage (tier 1 essential → tier 2 the rest), derived from those same manifests and
 //     rewritten the same way, so an optional client-side preload works without a CDN-less install (server/resources.js).
@@ -427,7 +427,7 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
   const shimTag = `"shim-${shimBody.length.toString(16)}"`;
   const gzipCache = new GzipCache();
   // A small runtime module supplies the base before client data/asset loaders run; no separate config fetch needed.
-  const cdnConfigBody = Buffer.from(`export const ASSETS_CDN = ${JSON.stringify(cdn)};\n`);
+  const cdnConfigBody = Buffer.from(`export const ASSETS_CDN = ${JSON.stringify(cdn)};\nexport const DATA_CDN = ${JSON.stringify(dataCdnBase)};\n`);
   const cdnConfigTag = `"asset-cdn-${createHash('sha256').update(cdnConfigBody).digest('hex')}"`;
 
   const serveStatic = async function (req, res, rawPath, query) {

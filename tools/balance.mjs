@@ -177,7 +177,7 @@ export function planBoard(m, r, rng, { profile = 1, spawns = null } = {}) {
   let core = null;
   const coreTarget = Math.min(n, curve('coreCount', r));
   if (coreTarget > 0) {
-    const cores = gd.bondIds.filter((b) => gd.bond(b).isCore && !gd.modeInactiveBonds.has(b) && members(b).length >= 3);
+    const cores = gd.bondIds.filter((b) => gd.bond(b).isCore && members(b).length >= 3);
     core = cores.length ? rng.weighted(cores, (b) => members(b).length) : null;
     if (core) {
       planned.add(core);
@@ -188,7 +188,7 @@ export function planBoard(m, r, rng, { profile = 1, spawns = null } = {}) {
   // 2. add-on bonds (their first threshold; the second one late when it exists)
   const addons = [];
   for (let k = 0; k < curve('addons', r); k++) {
-    const cands = BATTLE_ADDONS.filter((b) => gd.bond(b) && !gd.modeInactiveBonds.has(b) && !addons.includes(b) && members(b).length >= 2);
+    const cands = BATTLE_ADDONS.filter((b) => gd.bond(b) && !addons.includes(b) && members(b).length >= 2);
     if (!cands.length) break;
     const b = rng.weighted(cands, (x) => 1 + 3 * count(x));
     addons.push(b);

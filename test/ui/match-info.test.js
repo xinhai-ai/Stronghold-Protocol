@@ -54,11 +54,11 @@ const PUB = {
 const MODE = { inactiveBondIds: ['arcaneShip'] };
 const model = () => matchInfoModel(PUB, { bonds: data.list('bonds'), chess: (id) => data.lookup('chess', id), mode: MODE });
 
-test('matchInfoModel: the two greyed kinds, the briefing order, banned operators by tier (known only), banned members per bond', () => {
+test('matchInfoModel: random and static pool bans both mark incomplete lineups, the briefing order, banned operators by tier (known only), banned members per bond', () => {
   const m = model();
-  assert.deepEqual([...m.sets.drawn].sort(), ['sargonShip', 'steadShip'], 'D = drawnDisabledBonds minus the static list');
-  assert.deepEqual([...m.sets.off], ['arcaneShip'], 'the mode\'s inactive bonds');
-  assert.equal(m.stateOf('arcaneShip'), 'off');
+  assert.deepEqual([...m.sets.drawn].sort(), ['arcaneShip', 'sargonShip', 'steadShip'], 'random and static pool bans share the incomplete state');
+  assert.deepEqual([...m.sets.off], [], 'the mode\'s inactive bonds');
+  assert.equal(m.stateOf('arcaneShip'), 'drawn');
   assert.equal(m.stateOf('sargonShip'), 'drawn');
   assert.equal(m.stateOf('yanShip'), null);
   // bondOrder, then identifier: 调和 (bondOrder 1) leads the add-on row as in the official briefing
@@ -71,9 +71,9 @@ test('matchInfoModel: the two greyed kinds, the briefing order, banned operators
   assert.equal(m.perBond.get('arcaneShip'), 2, '深靛 + 海霓');
   assert.equal(m.perBond.get('preciShip'), 2, '深靛 + 缇缇');
   assert.equal(m.perBond.get('yanShip'), 0);
-  // an older payload without drawnDisabledBonds: disabledBonds minus the static list
+  // An older payload without drawnDisabledBonds still includes static pool bans.
   const old = matchInfoModel({ disabledBonds: ['arcaneShip', 'sargonShip'] }, { bonds: data.list('bonds'), chess: (id) => data.lookup('chess', id), mode: MODE });
-  assert.deepEqual([...old.sets.drawn], ['sargonShip']);
+  assert.deepEqual([...old.sets.drawn], ['arcaneShip', 'sargonShip']);
   // nothing loaded yet: empty, never throws
   const empty = matchInfoModel(null);
   assert.deepEqual([empty.bonds.length, empty.banned.length, empty.sets.drawn.size, empty.sets.off.size], [0, 0, 0, 0]);
@@ -87,11 +87,11 @@ test('MatchBondRow: greyed by state (✕ disc), the banned-member badge, the red
   const disc = (id) => [...walk(cell(id))].find((v) => v.type === BondDisc);
   const badge = (id) => [...walk(cell(id))].find((v) => hasClass(v, 'brief-bond__ban'));
   const tipOf = (id) => [...walk(row)].find((v) => v.type === Tooltip && v.key === id);
-  // 奥术: switched off by the mode — greyed, ✕, no tier, badge 2, tip 本局禁用
-  assert.ok(hasClass(cell('arcaneShip'), 'is-off') && !hasClass(cell('arcaneShip'), 'is-incomplete'));
+  // 奥术: static pool ban — incomplete lineup, badge 2, still activatable.
+  assert.ok(hasClass(cell('arcaneShip'), 'is-off') && hasClass(cell('arcaneShip'), 'is-incomplete'));
   assert.deepEqual([disc('arcaneShip').props.disabled, disc('arcaneShip').props.active, disc('arcaneShip').props.tier], [true, false, 0]);
   assert.match(textOf(badge('arcaneShip')), /^2$/);
-  assert.equal(tipOf('arcaneShip').props.text, '奥术：本局禁用（该盟约不会激活）');
+  assert.equal(tipOf('arcaneShip').props.text, '奥术：部分盟约所含干员阵容不完整（2 名干员无法出现）');
   // 坚守: drawn (D) — greyed as well, marked incomplete, the 阵容不完整 tip
   assert.ok(hasClass(cell('steadShip'), 'is-off') && hasClass(cell('steadShip'), 'is-incomplete'));
   assert.equal(tipOf('steadShip').props.text, briefingBondTip('坚守', 'drawn', m.perBond.get('steadShip')));
@@ -108,9 +108,9 @@ test('MatchBondRow: greyed by state (✕ disc), the banned-member badge, the red
   assert.equal(disc('deputShip').props.tier, DATA.bonds.deputShip.thresholds.length);
 });
 
-test('MatchLegend: the grey and the badge; "或本模式禁用" only when the mode switches bonds off', () => {
+test('MatchLegend: grey means incomplete lineup; no mode activation ban', () => {
   const t = textOf(MatchLegend({ model: model() }));
-  assert.match(t, /灰色：部分盟约所含干员阵容不完整（仍可通过其他盟约的干员或装备激活），或本模式禁用 · /);
+  assert.match(t, /灰色：部分盟约所含干员阵容不完整（仍可通过其他盟约的干员或装备激活） · /);
   assert.match(t, /该盟约中无法出现的干员数$/);
   const hard = matchInfoModel({ drawnDisabledBonds: ['sargonShip'] }, SRC('mode_multi_hard'));
   assert.doesNotMatch(textOf(MatchLegend({ model: hard })), /本模式禁用/);
@@ -153,20 +153,20 @@ test('MatchInfo = 核心盟约, 附加盟约, the legend, 本局禁用干员 (on
   assert.equal(MatchInfoDialog({ open: true, onClose, model: null }).props.open, false, 'no model: stays closed');
 });
 
-test('a real 标准 match (solo and co-op): the mode\'s 10 inactive bonds are "off", banned operators are exactly the server\'s, by tier', () => {
+test('a real 标准 match (solo and co-op): ten mode pool bans are incomplete lineups, still activatable, banned operators are exactly the server\'s, by tier', () => {
   for (const [mode, modeId] of [['solo', 'mode_single_funny'], ['coop', 'mode_multi_funny']]) {
     const h = makeMatch({ mode, difficulty: 'FUNNY', humans: 1, seed: 11 }).start();
     const pub = h.m.publicView();
     assert.equal(pub.modeId, modeId);
     const m = matchInfoModel(pub, SRC(pub.modeId));
-    assert.deepEqual([...m.sets.off].sort(), [...OFF_FUNNY].sort(), `${modeId}: 标准模拟's inactiveBondIdList`);
-    assert.equal(m.sets.drawn.size, 1, '标准 draws one add-on bond');
-    assert.ok([...m.sets.drawn].every((b) => !OFF_FUNNY.includes(b) && !DATA.bonds[b].isCore));
+    assert.deepEqual([...m.sets.off], [], `${modeId}: 标准模拟's inactiveBondIdList`);
+    assert.equal(m.sets.drawn.size, 11, '标准 retains ten static pool bans plus one random ban');
+    assert.ok(OFF_FUNNY.every((b) => m.sets.drawn.has(b)));
     assert.deepEqual([...m.banned].sort(), [...pub.bannedChess].sort(), 'every banned operator is known');
     assert.deepEqual(m.banned.map((id) => DATA.chess[id].tier), [...m.banned.map((id) => DATA.chess[id].tier)].sort((a, b) => a - b));
     for (const id of m.banned) assert.ok(DATA.chess[id].bonds.every((b) => m.stateOf(b)), `${id}: every bond greyed`);
     assert.equal(m.addon.filter((b) => m.stateOf(b.bondId)).length + m.core.filter((b) => m.stateOf(b.bondId)).length, 11);
-    assert.match(textOf(MatchLegend({ model: m })), /或本模式禁用/);
+    assert.doesNotMatch(textOf(MatchLegend({ model: m })), /或本模式禁用/);
     h.m.dispose();
   }
   // 绝境: 3 core + 4 add-on drawn, nothing switched off by the mode

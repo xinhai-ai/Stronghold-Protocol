@@ -104,7 +104,7 @@ test('驰援 cards: a bond without chess in this match\'s pool is never offered'
   m.dispose();
 });
 
-test('标准 (FUNNY) 机变: tactic cards acting only on mode-inactive bonds (玛恩纳 / 莫斯提马的盟誓, 卡西米尔 / 拉特兰 / 阿戈尔驰援) are never offered', () => {
+test('标准 (FUNNY) 机变: tactic cards follow chess-pool availability, including mode-banned bonds', () => {
   // the draft the finding saw at R3 of seed 18: 玛恩纳的盟誓 (卡西米尔 +12) and 卡西米尔驰援 in a mode without 卡西米尔
   const h = makeMatch({ mode: 'coop', difficulty: 'FUNNY', humans: 1, bots: 1, seed: 18, fake: true }).start();
   const m = h.m;
@@ -112,7 +112,7 @@ test('标准 (FUNNY) 机变: tactic cards acting only on mode-inactive bonds (�
   h.drive(() => m.phase === PHASE.SP_DRAFT);
   const inactive = m.gd.modeInactiveBonds;
   assert.ok(['kazimierzShip', 'lateranoShip', 'arcaneShip', 'egirShip'].every((b) => inactive.has(b)));
-  const dead = (c) => { const bonds = cardTargetBonds(m.gd, c.id); return !!bonds && bonds.every((b) => inactive.has(b) || !m.bondInPool(b)); };
+  const dead = (c) => { const bonds = cardTargetBonds(m.gd, c.id); return !!bonds && bonds.every((b) => !m.bondInPool(b)); };
   assert.deepEqual(m.sp.cards.filter((c) => c.kind === 'tactic' && dead(c)).map((c) => c.name), []);
   // every FUNNY tactic draft of the match's wiring (Match.bondLive)
   const seen = new Set();
@@ -120,7 +120,7 @@ test('标准 (FUNNY) 机变: tactic cards acting only on mode-inactive bonds (�
     const d = generateDraft(m.gd, createRng(s), 3, { stageId: m.stageId, bondAvailable: (b) => m.bondLive(b) });
     if (d && d.family === 'tactic') for (const c of d.cards) seen.add(c.id);
   }
-  for (const id of ['allybuff_select_2_7', 'allybuff_select_2_5', 'allybuff_select_7_5', 'allybuff_select_7_6', 'allybuff_select_7_8']) assert.ok(!seen.has(id), `${id} never offered in 标准`);
+  for (const id of ['allybuff_select_2_7', 'allybuff_select_2_5', 'allybuff_select_7_5', 'allybuff_select_7_6', 'allybuff_select_7_8']) assert.equal(seen.has(id), cardTargetBonds(m.gd, id).some((b) => m.bondInPool(b)), `${id}: actual pool availability`);
   assert.ok(seen.has('allybuff_select_2_1'), '斯卡蒂的盟誓 (阿戈尔 off, but 深海猎人 / 坚守 on) stays');
   assert.ok(seen.has('allybuff_select_7_1'), '炎盟约驰援 stays');
   assert.deepEqual(cardTargetBonds(m.gd, 'allybuff_select_2_5'), ['lateranoShip', 'arcaneShip']);

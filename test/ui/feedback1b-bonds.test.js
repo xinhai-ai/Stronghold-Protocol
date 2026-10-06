@@ -5,7 +5,7 @@
 // showed 奥术 like any bond: the detail card's chip read "奥术 0/2 未激活" with three 奥术 operators deployed (the server
 // used to leave an inactive bond out of m.private.bonds) and the bond popup "在场 0/2 未激活". The cards, chips and popup
 // say 本局禁用 for a bond the mode never activates (gameLogic modeOffBonds over config.modes[modeId].inactiveBondIds);
-// since 0.1.3 the view also lists it (`off: true`) so the strip can draw the grey disc — still never in ps.bonds.
+// Historical regression context above; this branch now allows those bonds to activate (2026-10-06).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -46,15 +46,13 @@ const hasClass = (v, c) => typeof v?.props?.class === 'string' && v.props.class.
 const textOf = (v) => [...walk(v)].flatMap((n) => (Array.isArray(n.props?.children) ? n.props.children : [n.props?.children])).filter((x) => typeof x === 'string' || typeof x === 'number').join('');
 const chipOf = (vnode, bondId) => [...walk(vnode)].find((v) => v.props?.['data-bond'] === bondId);
 
-const OFF_FUNNY = ['lateranoShip', 'egirShip', 'kazimierzShip', 'skillfulShip', 'arcaneShip', 'miraShip', 'investShip', 'raidShip', 'soloShip', 'suntShip'];
-
-test('modeOffBonds: 标准 (single and multi) switches off the 10 official inactive bonds, 奥术 included; 险境+ none', () => {
-  for (const id of ['mode_single_funny', 'mode_multi_funny']) assert.deepEqual([...modeOffBonds(getMode(id))].sort(), [...OFF_FUNNY].sort(), id);
+test('modeOffBonds: 标准 (single and multi) pool ban lists do not switch off activation', () => {
+  for (const id of ['mode_single_funny', 'mode_multi_funny']) assert.deepEqual([...modeOffBonds(getMode(id))], [], id);
   for (const id of ['mode_single_normal', 'mode_multi_hard', 'mode_single_abyss']) assert.equal(modeOffBonds(getMode(id)).size, 0, id);
   assert.equal(modeOffBonds(null).size, 0);
 });
 
-test('a real 标准 match: 奥术 operators are buyable, three on the board never activate the bond — and the card chips say so', () => {
+test('a real 标准 match: 奥术 operators are buyable, three on the board activate the bond and enter the battle input', () => {
   const h = makeMatch({ mode: 'solo', difficulty: 'FUNNY', humans: 1, seed: 3 }).start();
   h.toPrep(1);
   const m = h.m, ps = h.ps('p_0');
@@ -64,34 +62,30 @@ test('a real 标准 match: 奥术 operators are buyable, three on the board neve
   const used = new Set();
   for (const id of members.slice(0, 3)) { const t = legalTileFor(m, ps, id, used); used.add(tileKey(t[0], t[1])); give(m, ps, id, 'board', t); }
   ps.recompute();
-  assert.equal(ps.bonds.arcaneShip, undefined, 'official: the mode never activates 奥术 — not in the battle state');
+  assert.equal(ps.bonds.arcaneShip.active, true);
+  assert.equal(ps.battleInput().bonds.arcaneShip.active, true);
   const priv = ps.privateView();
   const arc = priv.bonds.find((b) => b.bondId === 'arcaneShip');
-  assert.ok(arc && arc.off === true && arc.active === false && arc.tier === 0 && arc.count === 3, 'the view lists the members as a grey 本局禁用 disc');
-  assert.ok(priv.bonds.slice(priv.bonds.findIndex((b) => b.off)).every((b) => b.off), 'off entries come last');
+  assert.ok(arc && !arc.off && arc.active && arc.count === 3);
   const off = modeOffBonds(getMode(m.modeId));
-  // without the mode's off set the chip would read the new entry as an ordinary inactive bond (在场 3/3，未激活)
-  const bare = chipOf(BondChips({ bondIds: DATA.chess[members[0]].bonds, bonds: priv.bonds }), 'arcaneShip');
-  assert.match(bare.props.title, /在场 3\/3，未激活/);
   const chip = chipOf(BondChips({ bondIds: DATA.chess[members[0]].bonds, bonds: priv.bonds, off }), 'arcaneShip');
-  assert.ok(hasClass(chip, 'is-off') && !hasClass(chip, 'is-active'));
-  assert.equal(chip.props.title, '奥术：本局禁用（该盟约不会激活）');
-  assert.match(textOf(chip), /本局禁用/);
-  assert.ok(![...walk(chip)].some((v) => hasClass(v, 'dbond__count')), 'no member count');
+  assert.ok(!hasClass(chip, 'is-off') && hasClass(chip, 'is-active'));
+  assert.match(chip.props.title, /已激活/);
+  assert.doesNotMatch(textOf(chip), /本局禁用/);
   // the operator's enabled bond (精准) keeps its normal chip
   const preci = chipOf(BondChips({ bondIds: DATA.chess[members[0]].bonds, bonds: priv.bonds, off }), 'preciShip');
   assert.ok(!hasClass(preci, 'is-off'));
   m.dispose();
 });
 
-test('shop / reward card: a mode-disabled bond tag is struck through with the 本局禁用 title; others unchanged', () => {
+test('shop / reward card: mode pool bans do not strike through bond tags', () => {
   const id = 'chess_char_1_17_a'; // 深靛: 奥术 / 精准
   const slot = { kind: 'chess', id, price: 1, basePrice: 1 };
   const tags = (offBonds) => [...walk(ChessCard({ slot, idx: 0, priv: { funds: 9, hand: [], board: [], temp: [] }, onBuy() {}, onDetail() {}, offBonds }))].filter((v) => hasClass(v, 'scard__bond'));
   const on = tags(modeOffBonds(getMode('mode_single_funny')));
   assert.equal(on.length, 2);
-  assert.ok(hasClass(on[0], 'is-off'), '奥术 struck');
-  assert.equal(on[0].props.title, '奥术：本局禁用（该盟约不会激活）');
+  assert.ok(!hasClass(on[0], 'is-off'), '奥术 can activate');
+  assert.doesNotMatch(on[0].props.title || '', /不会激活/);
   assert.ok(!hasClass(on[1], 'is-off'), '精准 enabled');
   assert.ok(tags(modeOffBonds(getMode('mode_single_normal'))).every((v) => !hasClass(v, 'is-off')), '险境: nothing off');
   assert.ok(tags(null).every((v) => !hasClass(v, 'is-off')), 'no set: as before');

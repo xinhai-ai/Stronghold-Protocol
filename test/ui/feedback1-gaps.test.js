@@ -125,13 +125,13 @@ describe('§21.26 1 — 变形同构体: the pairing list (gameLogic morphPairin
     }
   });
 
-  test('本局禁用: 标准 marks the 5 bonds it switches off (拉特兰 阿戈尔 卡西米尔 奥术 突袭), the other modes none', () => {
+  test('mode pool bans do not mark equipment pairings as disabled', () => {
     for (const id of ['mode_single_funny', 'mode_multi_funny']) {
       const off = modeOffBonds(getMode(id));
       const rows = morphPairings(ITEMS, BONDS, { off });
       const marked = rows.filter((r) => r.off).map((r) => r.bondId);
-      assert.deepEqual(marked, rows.map((r) => r.bondId).filter((b) => config.modes[id].inactiveBondIds.includes(b)), id);
-      assert.deepEqual(marked.map((b) => bonds[b].name), ['拉特兰', '阿戈尔', '卡西米尔', '奥术', '突袭']);
+      assert.deepEqual(marked, [], id);
+      assert.deepEqual(marked.map((b) => bonds[b].name), []);
     }
     for (const id of ['mode_single_normal', 'mode_multi_hard', 'mode_multi_abyss']) {
       assert.equal(morphPairings(ITEMS, BONDS, { off: modeOffBonds(getMode(id)) }).filter((r) => r.off).length, 0, id);
@@ -145,7 +145,7 @@ describe('§21.26 1 — 变形同构体: the pairing list (gameLogic morphPairin
     assert.deepEqual(vic[0].items.filter((it) => it.worn).map((it) => it.name), ['战栗维式重锤'], 'only the item it carries');
     assert.deepEqual(worn([{ uid: 1, id: HAMMER }, { uid: 2, id: ISO_B }]).map((r) => r.bondId), ['victoriaShip'], 'pieces, golden 变形同构体');
     const lat = worn([ISO, LATERANO_CLIP], modeOffBonds(getMode('mode_multi_funny')));
-    assert.ok(lat.length === 1 && lat[0].bondId === 'lateranoShip' && lat[0].off, 'worn, but 本局禁用 in 标准');
+    assert.ok(lat.length === 1 && lat[0].bondId === 'lateranoShip' && !lat[0].off, 'worn and enabled in 标准');
     assert.deepEqual(worn([ISO]), [], 'the 变形同构体 alone');
     assert.deepEqual(worn([HAMMER]), [], 'the bond item alone');
     assert.deepEqual(worn([ISO, 'chess_item_1_03_e_a']), [], 'a partner with no bond');
@@ -156,7 +156,7 @@ describe('§21.26 1 — 变形同构体: the pairing list (gameLogic morphPairin
 describe('§21.26 1 — 变形同构体 on the cards', () => {
   const funny = modeOffBonds(getMode('mode_multi_funny'));
 
-  test('the item card (shop / reward / hand): a 天赋 section with the 14 lines, 本局禁用 struck through, no highlight', () => {
+  test('the item card (shop / reward / hand): a 天赋 section with the 14 lines, all pairings enabled, no highlight', () => {
     const v = ItemDetail({ item: items[ISO], piece: null, editable: false, onDestroy() {}, offBonds: funny });
     const sec = [...walk(v)].find((x) => x.type?.name === 'Section' && x.props.title === '天赋');
     assert.ok(sec, 'a 天赋 section (the item text points at its 天赋栏)');
@@ -164,7 +164,7 @@ describe('§21.26 1 — 变形同构体 on the cards', () => {
     const rows = byClass(v, 'dmorph__row');
     assert.equal(rows.length, 14);
     const off = rows.filter((r) => hasClass(r, 'is-off'));
-    assert.deepEqual(off.map((r) => r.props['data-bond']), ['lateranoShip', 'egirShip', 'kazimierzShip', 'arcaneShip', 'raidShip']);
+    assert.deepEqual(off.map((r) => r.props['data-bond']), []);
     for (const r of off) assert.match(textOf(r), /本局禁用/);
     assert.equal(rows.filter((r) => !hasClass(r, 'is-off') && /本局禁用/.test(textOf(r))).length, 0);
     assert.equal(byClass(v, 'is-worn').length, 0, 'no wearer: nothing highlighted');
@@ -188,13 +188,12 @@ describe('§21.26 1 — 变形同构体 on the cards', () => {
     assert.equal(grant.length, 1, 'the 维式重锤 row');
     assert.ok(hasClass(grant[0], 'is-worn'));
     assert.match(textOf(grant[0]), /与变形同构体一同装备时，携带者视为【维多利亚】成员.*生效中/);
-    // worn with a bond the mode switches off: 已搭配 + 本局禁用, never 生效中
+    // Mode pool bans do not prevent an equipped pairing from taking effect.
     const lat = ChessDetail({ chess: chess[WEARER], piece: { ...piece, items: [{ uid: 2, id: ISO }, { uid: 4, id: LATERANO_CLIP }] }, editable: false, bonds: [], offBonds: funny, loadout: null });
     const latRow = byClass(lat.find((b) => b?.key === 'equip'), 'dmorph__row').find((r) => hasClass(r, 'is-worn'));
     assert.equal(latRow.props['data-bond'], 'lateranoShip');
-    assert.match(textOf(latRow), /已搭配/);
-    assert.match(textOf(latRow), /本局禁用/);
-    assert.doesNotMatch(textOf(latRow), /生效中/);
+    assert.doesNotMatch(textOf(latRow), /本局禁用/);
+    assert.match(textOf(latRow), /生效中/);
     // a teammate's unit / a popup's 同构 row (no own piece): the same, from the item ids it carries
     const ro = ChessDetail({ chess: chess[WEARER], piece: null, editable: false, bonds: [], offBonds: null, loadout: null, unitItems: [HAMMER_SHUDDER, ISO_B] });
     assert.deepEqual(byClass(ro.find((b) => b?.key === 'equip'), 'dmorph__row').filter((r) => hasClass(r, 'is-worn')).map((r) => r.props['data-bond']), ['victoriaShip']);
@@ -210,8 +209,8 @@ describe('§21.26 1 — 变形同构体 on the cards', () => {
     assert.match(textOf(line[0]), /^与变形同构体一同装备时，携带者视为【维多利亚】成员$/);
     assert.ok(!hasClass(line[0], 'is-worn'));
     const clip = byClass(ItemDetail({ item: items[LATERANO_CLIP], piece: null, editable: false, onDestroy() {}, offBonds: funny }), 'dhint--morph');
-    assert.ok(hasClass(clip[0], 'is-off'));
-    assert.match(textOf(clip[0]), /【拉特兰】成员本局禁用/);
+    assert.ok(!hasClass(clip[0], 'is-off'));
+    assert.doesNotMatch(textOf(clip[0]), /本局禁用/);
     assert.equal(MorphGrantLine({ item: items[ISO], off: null }), null, 'not on the 变形同构体 itself');
     assert.equal(MorphGrantLine({ item: items['chess_item_1_03_e_a'], off: null }), null, 'not on an item without a bond');
   });
@@ -313,14 +312,14 @@ describe('§21.26 2 — 调和\'s +1 in the bond popup', () => {
   });
 });
 
-describe('§21.26 4 — the strategy draft marks a strategy built around a bond the mode switches off (本局禁用)', () => {
+describe('§21.26 4 — the strategy draft keeps mode pool-banned bonds selectable', () => {
   const bands = load('bands.json');
   const modeIds = Object.keys(config.modes);
   const markedIn = (modeId) => Object.values(bands).map((b) => [b.bandId, bandOffBonds(b, modeOffBonds(getMode(modeId)))]).filter(([, ids]) => ids.length);
 
-  test('标准: exactly 潘格尼尼 (拉特兰), 克莱门莎 (阿戈尔) and 玛恩纳 (卡西米尔); 险境 / 绝境 / 终极: none; a band tied to no bond: never', () => {
+  test('no mode marks a strategy bond as unable to activate', () => {
     for (const id of ['mode_single_funny', 'mode_multi_funny']) {
-      assert.deepEqual(markedIn(id), [['band_paganini', ['lateranoShip']], ['band_clementia', ['egirShip']], ['band_mlynar', ['kazimierzShip']]], id);
+      assert.deepEqual(markedIn(id), [], id);
     }
     for (const id of ['mode_single_normal', 'mode_multi_normal', 'mode_single_hard', 'mode_multi_hard', 'mode_single_abyss', 'mode_multi_abyss']) assert.deepEqual(markedIn(id), [], id);
     for (const b of Object.values(bands).filter((x) => !x.bondIds.length)) {
@@ -332,7 +331,7 @@ describe('§21.26 4 — the strategy draft marks a strategy built around a bond 
     assert.deepEqual(bandOffBonds({ bandId: 'old' }, modeOffBonds(getMode('mode_multi_funny'))), [], 'data without bondIds: no mark');
   });
 
-  test('one source with the server: the bot\'s exclusion (GameData.bandBondIds ∩ modeInactiveBonds) is the draft\'s mark, in every mode', async () => {
+  test('the data ties agree with the server; pool bans never disable strategy bonds', async () => {
     const { GameData } = await import('../../server/match/gamedata.js');
     const { getData } = await import('../../server/data.js');
     const DATA = getData({ log: { warn() {}, error() {}, info() {} } });
@@ -340,7 +339,7 @@ describe('§21.26 4 — the strategy draft marks a strategy built around a bond 
       const gd = new GameData(DATA, modeId);
       for (const id of Object.keys(bands)) {
         assert.deepEqual([...gd.bandBondIds(id)], bands[id].bondIds, `${id}: the same field`);
-        const server = gd.bandBondIds(id).filter((b) => gd.modeInactiveBonds.has(b));
+        const server = []; // Mode pool bans no longer disable strategy bonds.
         assert.deepEqual(server, bandOffBonds(bands[id], modeOffBonds(getMode(modeId))), `${modeId} ${id}`);
       }
     }

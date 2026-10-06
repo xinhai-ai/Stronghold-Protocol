@@ -1,5 +1,7 @@
 # BALANCE.md — difficulty model and measurement (official numbers, no custom tuning)
 
+> 本分支当前规则以文末“2026-10-06 本分支规则调整”为准：干员池 ban 保留，模式盟约可激活；Boss 单人 ×1，多人 ×4 并按存活人数 /4 衰减。
+
 Owner: match / balance. Tools: `tools/balance.mjs` (competent-board model — now a **measuring** tool only),
 `tools/matchrun.mjs` (bot matches). Tests: `test/match/balance.test.js`, `test/match/waves-official.test.js`,
 `test/match/waves.test.js`, `test/sim/pathing.test.js`.
@@ -425,3 +427,9 @@ on a leader is cancelled (`MAX_BATTLE_DAMAGE`: 0 damage, nothing to the pool —
   max (【死亡集群】, boss_1 / boss_8; `bosses.js DRONE_LINK_BASE 'pool'`). Today that is at most 144000 (boss_8 ABYSS 7.2M) and lands; a pool above 14999950 would make every
   drone kill a cancelled hit. Re-check this whenever the pool size changes (research 11 §6).
 
+
+### 2026-10-06 本分支规则调整
+
+模式 `inactiveBondIds` 保留为干员池 ban 条件，与随机 ban 取并集；只有所有盟约都在并集中的干员被移出池子。它不再禁止盟约激活或效果触发，现有干员、装备赋予盟约和调和照常计数，战斗输入包括这些盟约。UI 的模式名单标注为阵容不完整，AI 不再按此名单排除策略或盟约，机变继续按实际池判断。本文之前关于模式盟约无法激活的记录已被此调整替代。
+
+Boss 共享血量池改为单人 `bloodPoint × 1`、多人 `bloodPoint × 4 × min(alive, 4) / 4`，`aliveScaling` 启用；人数取最终攻势或隐秘核心开始时的存活人数，未传人数按满队计算。此前单人 0.25、多人 1 及关闭人数衰减的配置已被此调整替代。这是本分支用户指定的规则，不作为官方机制的证据。

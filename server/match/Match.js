@@ -729,13 +729,9 @@ export class Match {
     return false;
   }
 
-  /**
-   * Whether a bond can matter in this match: not in the mode's static inactive list (标准: 拉特兰 / 阿戈尔 / 卡西米尔 /
-   * 奥术 … never activate, research 02 §2.1) and still with chess in the pool. 机变 tactic cards whose every target bond
-   * is dead are not offered (choices.js).
-   */
+  /** Tactic availability follows the chess pool; mode bans do not disable bond activation. */
   bondLive(bondId) {
-    return !this.gd.modeInactiveBonds.has(bondId) && this.bondInPool(bondId);
+    return this.bondInPool(bondId);
   }
   humans() { return this.order.filter((p) => !p.isBot && !p.left); }
 

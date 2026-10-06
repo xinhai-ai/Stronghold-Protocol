@@ -1,5 +1,7 @@
 # META.md — match & meta engine (server/match)
 
+> 本分支当前规则以文末“2026-10-06 本分支规则调整”为准：干员池 ban 保留，模式盟约可激活；Boss 单人 ×1，多人 ×4 并按存活人数 /4 衰减。
+
 Audience: **content authors** writing prep-side ("SERVER_*") effects in `server/sim/content/*.js → registerMeta(registry)`,
 the **UI owner** consuming `m.public` / `m.private` / `m.result`, and anyone driving matches in tests or tools.
 Normative contracts stay in DESIGN.md §6 and §8; this file documents the implementation and every assumption it makes.
@@ -809,3 +811,9 @@ round was over. The official 1 s `broadcastBeginDelay` is not modelled.
 * A merge completed after the prep (SETTLE effects) keeps its reward offer for the next prep; its elite goes where a prep
   merge's would — onto the tile of a consumed deployed copy (PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区
   对应位置"), else to the hand, overflowing into temp (temp pieces that arrive after the prep wait through the next prep).
+
+### 2026-10-06 本分支规则调整
+
+模式 `inactiveBondIds` 保留为干员池 ban 条件，与随机 ban 取并集；只有所有盟约都在并集中的干员被移出池子。它不再禁止盟约激活或效果触发，现有干员、装备赋予盟约和调和照常计数，战斗输入包括这些盟约。UI 的模式名单标注为阵容不完整，AI 不再按此名单排除策略或盟约，机变继续按实际池判断。本文之前关于模式盟约无法激活的记录已被此调整替代。
+
+Boss 共享血量池改为单人 `bloodPoint × 1`、多人 `bloodPoint × 4 × min(alive, 4) / 4`，`aliveScaling` 启用；人数取最终攻势或隐秘核心开始时的存活人数，未传人数按满队计算。此前单人 0.25、多人 1 及关闭人数衰减的配置已被此调整替代。这是本分支用户指定的规则，不作为官方机制的证据。

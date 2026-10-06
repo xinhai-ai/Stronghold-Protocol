@@ -1,5 +1,7 @@
 # 卫戍协议：盟约 — Web Remake · Architecture & Contracts (DESIGN.md)
 
+> 本分支当前规则以文末“2026-10-06 本分支规则调整”为准：干员池 ban 保留，模式盟约可激活；Boss 单人 ×1，多人 ×4 并按存活人数 /4 衰减。
+
 This is the **single source of truth** for every implementer. Research lives in `docs/research/` (start with `00-INDEX.md`; where a research file's body and its "Addendum (critic)" disagree, the addendum wins). When this document and research disagree, **this document wins**; when this document is silent, follow research; when both are silent, choose the simplest faithful behaviour and write it down in the module's header comment.
 
 Language: all player-facing text is **Simplified Chinese** (names/descriptions come from official data). Code, comments and identifiers are English.
@@ -376,6 +378,8 @@ Economy/shop/pool/merge/hand rules: exactly as research 00-INDEX §3–§4 (inco
 **Temp overflow (临时整备区, row 8; user playtest #3 item 3).** Passive gains that find the hand full (merge elites, grants — the operator a 突变细胞 transformation gains included, §21.1 —, battle-result rewards, equipment returned by a merged / sold / transformed carrier) overflow into the 5 temp slots, and Ready is refused while any is occupied (official "直到溢出情况排除才可开始进行作战"). A temp piece is resolved — a chess sold back to the pool with its summons removed, items destroyed, a summon stack removed (it comes back at the next round start, PRTS "干员所属召唤物会于下一回合返还", §20.1) — only at the deadline of the **first prep in which its player could act on it** (`PlayerState.tempDue(piece)` vs `prepsEnded`; every write into a temp slot goes through `_putTemp`, which records it): a piece that arrived during a prep before Ready is due at that prep's end; one that arrived after Ready or during the `<休整期结束时>` effects, or outside PREP (COMBAT, 联防, SETTLE — battle-result grants, a SETTLE merge's elite, returned equipment —, the next ROUND_START, 机变) is kept, visible and usable (move to a free hand slot, place, equip, use, destroy, sell) through the **next** prep. Un-readying (`setReady(false)`) makes whatever arrived while ready due at the current prep. ROUND_START no longer wipes temp (it used to destroy what SETTLE had put there before the player ever saw it). A merge's elite whose merge consumed a deployed copy takes that copy's tile and facing (§20.11); otherwise it goes to the hand, overflowing into temp (also outside PREP). `server/match/audit.js` (`tools/matchrun.mjs --check`) tracks the arrivals itself and flags any temp piece that outlives its due prep. The UI frames the row on the board with the rule (§17.5).
 
 ### 6.3 Bonds & layers (bondsMeta.js)
+
+本分支（2026-10-06）：模式及随机盟约 ban 只过滤干员池，不限制以下盟约计数和激活。
 
 - `count` = number of **distinct base chess** on the board carrying the bond (`BOARD`); `BOARD_AND_DECK` bonds also count the hand; 绝技 counts elites on board; 调和 adds +1 to each core bond count that has a real member on the board (the views mark such an entry `harmony: 1`, §21.26), etc. (research 02).
 - 变形同构体: an operator wearing it together with an item that has a `giveBondId` is a member of that bond — counted like any member (BOARD: on the board only; once per operator), in the battle, and in the client's member list (tagged 同构) and bond chips (§21.11).
@@ -2121,3 +2125,9 @@ Decisions of the owner, 2026-10-04: a 联防 devour counts members who enter alr
 - **Now**: one attempt at `local` or `assets` is abandoned after `ART_MANIFEST_TIMEOUT_MS`. A timeout or any other failure sets that file `missing` and notifies immediately, which is the existing glyph path. The status stays `missing` through the retry wait (going back to `loading` would blank the button again). A later attempt that succeeds notifies `ready` and the picture replaces the glyph. A 404 or bad JSON is still not retried. Chess and the other text files are not on this clock and still stay `loading` across retries.
 - [ASSUMED]: 8 seconds. A response that arrives after that attempt's clock is ignored; the retry is a new request, and the in-flight fetch is not aborted. After the two existing retries the glyph stays until the next `invalidate` or page load.
 - **Tests**: `test/ui/emotes.test.js` (stub timer, no network: hung `local` is `missing` before the retry wait, then `ready`; a thrown fetch is the same; a timeout with no retry and a 404 stay `missing`; `chess` arms no timer). `test/ui/playtest3.test.js` data-store retry and `test/client-static.test.js` data.js still pass. No browser render: `EmoteArt` already picks the glyph from `missing`.
+
+### 2026-10-06 本分支规则调整
+
+模式 `inactiveBondIds` 保留为干员池 ban 条件，与随机 ban 取并集；只有所有盟约都在并集中的干员被移出池子。它不再禁止盟约激活或效果触发，现有干员、装备赋予盟约和调和照常计数，战斗输入包括这些盟约。UI 的模式名单标注为阵容不完整，AI 不再按此名单排除策略或盟约，机变继续按实际池判断。本文之前关于模式盟约无法激活的记录已被此调整替代。
+
+Boss 共享血量池改为单人 `bloodPoint × 1`、多人 `bloodPoint × 4 × min(alive, 4) / 4`，`aliveScaling` 启用；人数取最终攻势或隐秘核心开始时的存活人数，未传人数按满队计算。此前单人 0.25、多人 1 及关闭人数衰减的配置已被此调整替代。这是本分支用户指定的规则，不作为官方机制的证据。

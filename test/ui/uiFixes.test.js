@@ -135,18 +135,18 @@ describe('result screen', () => {
 });
 
 describe('briefing bond labels', () => {
-  test('drawn bonds read "部分盟约所含干员阵容不完整" (still activatable), static ones "本局禁用"', () => {
+  test('drawn bonds read "部分盟约所含干员阵容不完整" (still activatable), static bans also remain activatable', () => {
     const pub = { disabledBonds: ['a', 'b', 's'], drawnDisabledBonds: ['a', 'b'] };
     const sets = disabledBondSets(pub, ['s']);
-    assert.deepEqual([...sets.drawn].sort(), ['a', 'b']);
-    assert.deepEqual([...sets.off], ['s']);
+    assert.deepEqual([...sets.drawn].sort(), ['a', 'b', 's']);
+    assert.deepEqual([...sets.off], []);
     const tip = briefingBondTip('坚守', 'drawn', 2);
     assert.match(tip, /部分盟约所含干员阵容不完整/);
     assert.doesNotMatch(tip, /本局禁用/);
     assert.match(briefingBondTip('坚守', 'off', 0), /本局禁用/);
     assert.equal(briefingBondTip('坚守', null, 0), '坚守');
     // older payloads: disabledBonds minus the static list
-    assert.deepEqual([...disabledBondSets({ disabledBonds: ['a', 's'] }, ['s']).drawn], ['a']);
+    assert.deepEqual([...disabledBondSets({ disabledBonds: ['a', 's'] }, ['s']).drawn], ['a', 's']);
   });
 });
 

@@ -597,20 +597,17 @@ export function bannedPerBond(bonds, bannedChess) {
 }
 
 /**
- * The two kinds of greyed bonds of a match (research 01 A2, 06 addendum D):
- *   drawn  — the per-match drawn set D (m.public drawnDisabledBonds): only operators whose EVERY bond is in D leave
- *            the pool, so these bonds stay activatable (multi-bond members, 变形同构体, 调和) — "部分盟约所含干员阵容不完整";
- *   off    — the mode's static inactive list (FUNNY): never activates this match — "本局禁用".
- * Older payloads without drawnDisabledBonds: disabledBonds minus the static list.
+ * Both random and static mode bans mark incomplete chess lineups, never disable activation.
+ * Older payloads without drawnDisabledBonds use disabledBonds.
  * @param {any} pub m.public
  * @param {string[]} [staticInactive] config.modes[modeId].inactiveBondIds
  * @returns {{ drawn: Set<string>, off: Set<string> }}
  */
 export function disabledBondSets(pub, staticInactive = []) {
-  const off = new Set(Array.isArray(staticInactive) ? staticInactive : []);
+  const staticBans = Array.isArray(staticInactive) ? staticInactive : [];
   const src = Array.isArray(pub?.drawnDisabledBonds) ? pub.drawnDisabledBonds : Array.isArray(pub?.disabledBonds) ? pub.disabledBonds : [];
-  const drawn = new Set(src.filter((b) => typeof b === 'string' && !off.has(b)));
-  return { drawn, off };
+  const drawn = new Set([...src, ...staticBans].filter((b) => typeof b === 'string'));
+  return { drawn, off: new Set() };
 }
 
 /**
@@ -625,26 +622,16 @@ export function briefingBondTip(name, state, bannedN = 0) {
   return name;
 }
 
-/**
- * The bonds a mode never activates (config.json modes[modeId].inactiveBondIds = the official modeDataDict
- * inactiveBondIdList: 标准模拟 leaves 拉特兰 阿戈尔 卡西米尔 灵巧 奥术 奇迹 投资人 突袭 独行 绝技 off). Operators that also carry an
- * enabled bond stay in the pool (server pool.js drawDisabledBonds) — 标准's 深靛 洛洛 阿罗玛 夕 圣聆初雪 still show 奥术 — and
- * the server left such a bond out of m.private.bonds, so without a mark a card read "奥术 0/2 未激活" with three 奥术
- * operators deployed (player report after 0.1.0: "奥术盟约不生效"). The shop / reward cards, the detail card's bond chips
- * and the bond popup mark these 本局禁用 (briefingBondTip 'off'); since 0.1.3 the server also lists such a bond the player
- * has members of (`off: true`, server/match/bondsMeta.js offBondCounts) and the strip shows it as a grey 本局禁用 disc.
- * @param {any} mode config.json modes[modeId] (data.js getMode), or null
- * @returns {Set<string>}
- */
-export function modeOffBonds(mode) {
-  const list = isObj(mode) && Array.isArray(mode.inactiveBondIds) ? mode.inactiveBondIds : [];
-  return new Set(list.filter((b) => typeof b === 'string'));
+/** Compatibility helper: mode bans only affect chess availability, not bond activation. */
+export function modeOffBonds() {
+  // inactiveBondIds limits the chess pool, never bond activation.
+  return new Set();
 }
 
 /**
  * The bonds a strategy is built around that this mode switches off: bands.json `bondIds` (shared/bandBonds.js at build
- * time — the field the server's bot reads too, GameData.bandBondIds) ∩ `off` (modeOffBonds). 标准: 潘格尼尼 → 拉特兰,
- * 克莱门莎 → 阿戈尔, 玛恩纳 → 卡西米尔; the strategy draft marks such a band 本局禁用 (still selectable, DESIGN §21.26).
+ * time) ∩ an explicitly supplied `off` set. Current modes return an empty modeOffBonds set;
+ * mode pool bans never disable a strategy bond.
  * @param {any} band bands.json record @param {Set<string>|null} off
  * @returns {string[]}
  */

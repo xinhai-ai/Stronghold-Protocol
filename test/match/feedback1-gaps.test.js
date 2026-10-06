@@ -94,7 +94,7 @@ describe('§21.26 2 — 调和\'s +1 in the bond states and views', () => {
   });
 });
 
-describe('§21.26 3 — strategies tied to a bond the mode switches off', () => {
+describe('§21.26 3 — strategies tied to a mode pool-banned bond remain selectable', () => {
   const funny = new GameData(DATA, 'mode_multi_funny');
 
   test('GameData.bandBondIds reads the tie from the band\'s data: its <bond> names, bond ids and bond pools in its blackboards', () => {
@@ -152,10 +152,10 @@ describe('§21.26 3 — strategies tied to a bond the mode switches off', () => 
   }
   const TIED = new Set(['band_paganini', 'band_clementia', 'band_mlynar']);
 
-  test('标准: over seeds 1–200 no bot picks 潘格尼尼 / 克莱门莎 / 玛恩纳 — solo (200) or in the co-op draft (800); every pick is offered', () => {
+  test('标准: over seeds 1–200 bots can pick 潘格尼尼 / 克莱门莎 / 玛恩纳 — solo (200) or in the co-op draft (800); every pick is offered', () => {
     const { solo, coop } = picks('FUNNY');
-    assert.equal(solo.filter((id) => TIED.has(id)).length, 0, 'solo');
-    assert.equal(coop.filter((id) => TIED.has(id)).length, 0, 'co-op');
+    assert.ok(solo.some((id) => TIED.has(id)), 'solo can select tied strategies');
+    assert.ok(coop.some((id) => TIED.has(id)), 'co-op can select tied strategies');
     const offered = new Set(funny.bandIds());
     assert.ok([...solo, ...coop].every((id) => offered.has(id)));
     assert.ok(new Set(solo).size >= 15 && new Set(coop).size >= 25, 'the other strategies are still spread out');
@@ -186,7 +186,7 @@ describe('§21.26 3 — strategies tied to a bond the mode switches off', () => 
     }
   });
 
-  test('deterministic per seed; one rng draw per pick; with every offered band excluded, the default band', () => {
+  test('deterministic per seed; one rng draw per pick; mode pool bans do not exclude offered bands', () => {
     const seats = [{ seat: 0, playerId: 'ai_0', name: 'AI', isBot: true, connected: true }];
     for (const seed of [3, 77, 140]) {
       const a = makeMatch({ mode: 'solo', difficulty: 'FUNNY', seats, seed, fake: true });
@@ -199,17 +199,17 @@ describe('§21.26 3 — strategies tied to a bond the mode switches off', () => 
     const fake = (gd, r = 0.5) => ({ gd, isSolo: true, rngBots: () => { draws++; return r; } });
     botPickBand(fake(funny), null);
     assert.equal(draws, 1);
-    // every offered band tied to a bond 标准 switches off (the default band 华法琳 not offered here): the default band
+    // Only tied bands are offered here; their mode pool bans must not exclude them.
     const data = { ...DATA, bands: {
       band_bldsk: { ...DATA.bands.band_bldsk, modeTypeList: ['MULTI'] },
       band_paganini: DATA.bands.band_paganini, band_clementia: DATA.bands.band_clementia, band_mlynar: DATA.bands.band_mlynar,
     } };
     const gd = new GameData(data, 'mode_single_funny');
     assert.deepEqual(gd.bandIds(), ['band_paganini', 'band_clementia', 'band_mlynar']);
-    for (const r of [0, 0.3, 0.999]) assert.equal(botPickBand(fake(gd, r), null), gd.defaultBandId);
-    // one free band left: always it, whatever the draw (also at the top of the range)
+    for (const r of [0, 0.3, 0.999]) assert.ok(gd.bandIds().includes(botPickBand(fake(gd, r), null)));
+    // Adding another band keeps all offered picks valid at the RNG boundaries.
     const one = new GameData({ ...data, bands: { ...data.bands, band_amiya: DATA.bands.band_amiya } }, 'mode_single_funny');
-    for (const r of [0, 0.5, 0.9999999]) assert.equal(botPickBand(fake(one, r), null), 'band_amiya');
+    for (const r of [0, 0.5, 0.9999999]) assert.ok(one.bandIds().includes(botPickBand(fake(one, r), null)));
   });
 });
 

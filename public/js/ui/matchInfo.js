@@ -6,7 +6,7 @@
 //   * the data of the in-game 本局信息 tab (ui/enemyDrawer.js InfoTab, its own compact chips and avatars).
 // matchInfoModel (pure) derives everything from m.public and the static data: the two kinds of greyed bonds
 // (gameLogic disabledBondSets over config.modes[modeId].inactiveBondIds — the drawn set D "部分盟约所含干员阵容不完整",
-// still activatable through other bonds' operators or items, and the mode's static inactive bonds "本局禁用", e.g.
+// still activatable through other bonds' operators or items, including the mode's static chess-pool bans, e.g.
 // 标准模拟's 10), every bond in the briefing order (bondOrder, then identifier) split into 核心 / 附加, the banned
 // operators (m.public bannedChess, known chess only) sorted by tier, and the banned-member count per bond (gameLogic
 // bannedPerBond). The blocks are hookless (unit-tested by calling them): the 核心盟约 / 附加盟约 rows of bond discs —
@@ -34,7 +34,7 @@ const cx = (...p) => p.flat().filter(Boolean).join(' ');
  * @param {{ bonds?: any[], chess?: (id: string) => any, mode?: any }} [src]
  *   bonds: bonds.json records (data.list('bonds')); chess: the chess lookup; mode: config.json modes[pub.modeId]
  * @returns {MatchInfoModel}
- *   stateOf: 'off' = the mode never activates the bond (本局禁用), 'drawn' = in the drawn set D (阵容不完整), null = normal;
+ *   stateOf: 'drawn' = random or static chess-pool ban (阵容不完整), null = normal; 'off' retained for legacy callers.
  *   banned: the banned chess ids the data knows, by tier (ties keep the server's order); perBond: bondId → banned members
  */
 export function matchInfoModel(pub, { bonds = [], chess = () => null, mode = null } = {}) {

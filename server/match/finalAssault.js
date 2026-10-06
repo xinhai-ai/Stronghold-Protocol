@@ -8,13 +8,8 @@
 //     RIGHT side (the sim mirrors the right side: board col c → field col 20 − c with the piece direction RIGHT ↔
 //     LEFT, UP / DOWN unchanged (DESIGN §3, research 09 §1.2 ConvertChessPositionInfoToBossMap); board rows 9–12 →
 //     boss rows 2–5, sim/constants BOSS_ROW_OFFSET). `bossFieldPlacement` gives that mapping for UIs / tools.
-//   * Shared boss HP pool (DESIGN §20.10, GameData.bossPoolShare): one pool shared by every boss field (official tip
-//     "所有人将一起对敌方领袖造成伤害"); co-op = bloodPoint[difficulty] whatever the number of alive players (notice 5114's
-//     "敌方领袖的总生命值不变" is about the mirrored copies of a pair field sharing it, not about that number); config
-//     bossHpScale.aliveScaling true scales it × alive / 4 (巴哈姆特 12294 "聯機隊友(撤退/死掉)變少，最後boss血條也會變少" — one
-//     community note, no proportion; off until the user confirms it); solo = bloodPoint × config bossHpScale.solo (0.25,
-//     flagged unknown); × the tuning bossHpMul when data/tuning.json still has one (docs/BALANCE.md); bosses are never
-//     scaled by enemyScale.
+//   * Shared boss HP pool: solo × 1; co-op × 4 × alive / 4, one pool shared by all fields.
+//     Alive count is taken at each boss round start. Leaders are never scaled by enemyScale.
 //   * Overtime: bossTurnHpReduceTime counts REAL seconds like the level's 120 s maxPlayTime (which runs out first; the
 //     battle goes on): from 150 real s (300 game s on the 2× field clock) the team loses bossOvertimeDrainPerSec (1) LP
 //     per real second (gamedata.js bossOvertimeDue); m.public.deadline = the 120 s countdown, m.public.overtimeAt = the
@@ -75,7 +70,16 @@ export function bossPoolHp(gd, bossId, aliveCount) {
   else {
     const scale = gd.mode.bossHpScale && typeof gd.mode.bossHpScale === 'object' ? gd.mode.bossHpScale : {};
     const cfg = gd.config.bossHpScale && typeof gd.config.bossHpScale === 'object' ? gd.config.bossHpScale : {};
-    share = gd.isSolo ? (Number.isFinite(scale.solo) ? scale.solo : Number.isFinite(cfg.solo) ? cfg.solo : 0.25) : 1;
+    const pick = (key, fallback) => Number.isFinite(scale[key]) && scale[key] > 0 ? scale[key]
+      : Number.isFinite(cfg[key]) && cfg[key] > 0 ? cfg[key] : fallback;
+    if (gd.isSolo) share = pick('solo', 1);
+    else {
+      const scaling = typeof scale.aliveScaling === 'boolean' ? scale.aliveScaling : cfg.aliveScaling === true;
+      const full = Math.max(1, Math.floor(pick('aliveFull', 4)));
+      const n = Number(aliveCount);
+      const alive = scaling && Number.isFinite(n) && n >= 1 ? Math.min(full, Math.floor(n)) : full;
+      share = pick('coop', 4) * alive / full;
+    }
   }
   return Math.max(1, Math.round(base * share * tune));
 }

@@ -302,8 +302,13 @@ export function TitleScreen() {
         </div>
       </dl>
       <div class="title-about__disclaimer">
-        <h3>免责声明</h3>
-        <p>本站为纯公益的非官方同人站点，不收取任何费用，与游戏官方及其关联方无关。</p>
+        <h3>版权与免责声明</h3>
+        <p>本站为纯公益的非官方同人复刻，仅供学习、研究和个人非商业娱乐，不收取任何费用；与上海鹰角网络、Yostar 及其关联方没有任何关联，也未获得其授权或认可。</p>
+        <p>《明日方舟》及「卫戍协议」相关名称、角色、美术、模型、界面、音乐音效、文本与游戏数据的版权归上海鹰角网络及其授权方所有。项目自编代码采用 GPL-3.0-or-later 许可证，游戏素材与数据不属于该许可证的授权范围；第三方库和字体保留各自的许可证。</p>
+        <p>请勿将游戏素材与数据用于盈利，包括出售或付费分发、收费开服、付费房间或会员、植入广告、与本项目挂钩的打赏、赞助或众筹，以及打包进收费产品或服务。上述限制针对游戏素材与数据，GPL 本身允许在其条款下商业使用代码。</p>
+        <p>本站按「原样」提供，不附带任何明示或暗示的担保。使用、架设或公开本项目涉及的网络安全、第三方工具与服务及当地法律法规等风险，由使用者自行承担。本站不需要也不会索取任何游戏账号。</p>
+        <p>如相关权利人认为本站内容不妥，请通过上方邮箱联系，我们会尽快核实并删除相关内容，必要时停止提供服务。</p>
+        <p>完整声明请参阅上游项目的 <a href="https://github.com/sganggs/Stronghold-Protocol/blob/v0.1.4/NOTICE.md" target="_blank" rel="noopener noreferrer">版权与使用声明（NOTICE）</a>及 <a href="https://github.com/sganggs/Stronghold-Protocol/blob/v0.1.4/LICENSE" target="_blank" rel="noopener noreferrer">代码许可证</a>。</p>
       </div>
     <//>
   </div>`;

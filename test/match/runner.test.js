@@ -124,6 +124,17 @@ test('authoritative battle: 2× pacing, ≤ max(8, 4·speed) ticks per frame, b.
   const b = validateClientResult(start.spec, specMod.compactResult(server), {});
   assert.ok(a.ok && b.ok);
   assert.equal(specMod.resultDigest(a.result).hash, specMod.resultDigest(b.result).hash, 'the browser result equals the server simulation');
+  const metrics = r.runner.combatMetrics();
+  const hpDamage = e.battle.allyUnits.reduce((n, u) => n + u.stats.dmg, 0);
+  assert.ok(Math.abs(metrics.damage - hpDamage) < 1e-6, 'local accounting matches unrounded simulation totals');
+  const finalMetrics = structuredClone(metrics);
+  await r.runner.onStart(start);
+  assert.deepEqual(r.runner.combatMetrics(), finalMetrics, 'resending a finished battle does not count it twice');
+  r.store.patch('match', { public: { phase: PHASE.PREP, round: 3 } });
+  assert.deepEqual(r.runner.combatMetrics(), finalMetrics, 'match totals survive next-round prep');
+  assert.equal(r.runner.combatMetrics({ scope: 'battle' }).rows.length, 0, 'current battle clears at prep');
+  r.store.patch('match', { public: null });
+  assert.equal(r.runner.combatMetrics().rows.length, 0, 'leaving the match clears totals');
   r.runner.dispose();
 });
 
@@ -135,6 +146,8 @@ test('fast-forward to `elapsed` before showing; display replicas never report; b
   await r.settle();
   const e = r.runner._entries.get(start.battleId);
   assert.ok(e.battle.time >= 19.8, `caught up to the field clock (${e.battle.time})`);
+  assert.ok(Math.abs(r.runner.combatMetrics().damage - e.battle.allyUnits.reduce((n, u) => n + u.stats.dmg, 0)) < 1e-6,
+    'initial silent catch-up records all damage');
   assert.equal(r.feed.fields.length, 1, 'shown once, after the catch-up');
   r.advance(3000);
   assert.equal(r.net.sent.length, 0, 'a display replica never reports');
@@ -163,6 +176,8 @@ test('fast-forward to `elapsed` before showing; display replicas never report; b
   const snaps = r3.feed.snaps.length;
   r3.advance(2000, 1000);
   assert.ok(e3.battle.tickCount >= 110, `pumped while hidden (${e3.battle.tickCount})`);
+  assert.ok(Math.abs(r3.runner.combatMetrics().damage - e3.battle.allyUnits.reduce((n, u) => n + u.stats.dmg, 0)) < 1e-6,
+    'hidden-tab damage is recorded before visual events are discarded');
   assert.equal(r3.feed.snaps.length, snaps, 'nothing rendered while hidden');
   r3.runner.dispose();
 });
@@ -183,6 +198,30 @@ test('b.end forced ends the local battle and reports at once; a new prep clears 
   r.store.patch('match', { public: { phase: 'PREP' } });
   assert.equal(r.runner._entries.size, 0);
   assert.equal(r.store.get().match.battle, null);
+  r.runner.dispose();
+});
+
+test('evicted observed battles keep match totals; replaying one replaces its snapshot without double counting', async () => {
+  const start = realStart(7310);
+  const r = rig();
+  const recorded = new Map();
+  for (let i = 0; i < 5; i++) {
+    const battleId = `metrics-replica-${i}`;
+    await r.runner.onStart({ ...start, battleId, authoritative: false, watch: true });
+    r.advance(10000, 50);
+    const b = r.runner._entries.get(battleId).battle;
+    recorded.set(battleId, b.allyUnits.reduce((n, u) => n + u.stats.dmg, 0));
+  }
+  assert.ok(!r.runner._entries.has('metrics-replica-0'), 'first replica was evicted');
+  const expected = [...recorded.values()].reduce((n, v) => n + v, 0);
+  assert.ok(expected > 0);
+  assert.ok(Math.abs(r.runner.combatMetrics().damage - expected) < 1e-6);
+  await r.runner.onStart({ ...start, battleId: 'metrics-replica-0', authoritative: false, watch: true });
+  assert.ok(Math.abs(r.runner.combatMetrics().damage - expected) < 1e-6, 'replay at time zero retains prior totals');
+  r.advance(12000, 50);
+  const replay = r.runner._entries.get('metrics-replica-0').battle;
+  const updated = expected - recorded.get('metrics-replica-0') + replay.allyUnits.reduce((n, u) => n + u.stats.dmg, 0);
+  assert.ok(Math.abs(r.runner.combatMetrics().damage - updated) < 1e-6, 'same battle contributes only its newer snapshot');
   r.runner.dispose();
 });
 
@@ -319,9 +358,11 @@ test('solo pause: m.public.paused freezes every local battle clock (no ticks, no
   assert.equal(r.runner.state().paused, true);
   assert.equal(r.store.get().match.battle.paused, true, 'published for the HUD');
   const reports = r.net.sent.length;
+  const beforePause = r.runner.combatMetrics();
   r.advance(5000);
   assert.equal(e.battle.tickCount, t1, 'no tick while paused');
   assert.equal(r.net.sent.length, reports, 'no report while paused');
+  assert.deepEqual(r.runner.combatMetrics(), beforePause, 'damage, healing and rates all freeze while paused');
   // a resend while paused (reconnect) keeps the clock frozen
   r.net.emit('b.start', { ...start, elapsed: t1 / 30 });
   await r.settle();

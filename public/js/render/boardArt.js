@@ -8,12 +8,18 @@
 // tools/crop-board-atlas.mjs). Every image referenced by the table is loaded through the shared image cache; a
 // missing image drops only the materials that use it. Everything is cached per page (one load for every view).
 
+import { ASSETS_CDN } from '../asset-cdn.js';
+import { rewriteAssetPaths } from '../../../shared/cdn.js';
+
 let cached = null;
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** @param {any} assets store of public/js/assets.js (needs local(), localUrl(), image()) */
-export function loadBoardArt(assets) {
+/**
+ * @param {any} assets store of public/js/assets.js (needs local(), localUrl(), image())
+ * @param {{ assetsCdn?: string }} [options] runtime CDN by default; injectable for tests.
+ */
+export function loadBoardArt(assets, { assetsCdn = ASSETS_CDN } = {}) {
   if (cached) return cached;
   cached = (async () => {
     if (!assets || typeof assets.local !== 'function' || typeof assets.image !== 'function') return null;
@@ -28,6 +34,8 @@ export function loadBoardArt(assets) {
       tiles = res.ok ? await res.json() : null;
     } catch { tiles = null; }
     if (!isObj(tiles) || !isObj(tiles.materials) || !isObj(tiles.source)) return null;
+    // The crop table is a static JSON sidecar, so its root-relative image paths need the same rewrite as manifests.
+    rewriteAssetPaths(tiles.source, assetsCdn);
     const images = {};
     await Promise.all(Object.entries(tiles.source).map(async ([k, s]) => {
       const url = isObj(s) && typeof s.path === 'string' ? s.path : null;

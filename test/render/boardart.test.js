@@ -18,6 +18,7 @@ import { FX_KINDS, fxSpec, tilesAround } from '../../public/js/render/fx.js';
 import { statusIconKey } from '../../public/js/render/style.js';
 import { STATUS_KEYS } from '../../public/js/render/textures.js';
 import { createAssets, localAssetUrl } from '../../public/js/assets.js';
+import { loadBoardArt, resetBoardArt } from '../../public/js/render/boardArt.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const stages = JSON.parse(readFileSync(path.join(ROOT, 'data/stages.json'), 'utf8'));
@@ -293,6 +294,46 @@ describe('impostor atlas allocator', () => {
       delete globalThis.PIXI;
     }
   });
+});
+
+describe('board art CDN loading', () => {
+  for (const assetsCdn of ['', 'https://cdn.example.com/stronghold', '/cdn']) {
+    test(`crop-table images follow the configured CDN (${assetsCdn || 'same origin'})`, async (t) => {
+      const originalFetch = globalThis.fetch;
+      resetBoardArt();
+      t.after(() => { globalThis.fetch = originalFetch; resetBoardArt(); });
+      const dir = '/assets/local/map/autochess';
+      const paths = {
+        D: `${dir}/TX_autochessi_D.png`,
+        common: `${dir}/TX_autochessi_common_D.png`,
+        BG: `${dir}/TX_autochessi_BG.png`,
+        external: 'https://other.example.com/image.png',
+      };
+      const images = [];
+      const requests = [];
+      globalThis.fetch = async (url, options) => {
+        requests.push(url);
+        assert.equal(options.cache, 'no-cache');
+        return { ok: true, json: async () => ({ version: 1, materials: {},
+          source: Object.fromEntries(Object.entries(paths).map(([key, path]) => [key, { path }])) }) };
+      };
+      const assets = createAssets({ assetsCdn, manifest: {},
+        fetch: async () => ({ ok: true, json: async () => ({ groups: {
+          'map/autochess': { TX_autochessi_D: { path: paths.D } },
+        } }) }),
+        loadImage: async (url) => { images.push(url); return { width: 2048 }; },
+      });
+      const art = await loadBoardArt(assets, { assetsCdn });
+      assert.ok(art, 'board art loads successfully');
+      assert.deepEqual(requests, [`${assetsCdn}${dir}/tiles.json`]);
+      assert.deepEqual(images, [assetsCdn + paths.D, assetsCdn + paths.common, assetsCdn + paths.BG, paths.external]);
+      assert.deepEqual(Object.keys(art.images), Object.keys(paths));
+      assert.equal(art.tiles.source.D.path, assetsCdn + paths.D);
+      assert.equal(art.tiles.source.external.path, paths.external, 'absolute URLs stay unchanged');
+      assert.equal(await loadBoardArt(assets, { assetsCdn }), art, 'existing per-page cache is retained');
+      assert.equal(requests.length, 1);
+    });
+  }
 });
 
 describe('local-art manifest helpers', () => {

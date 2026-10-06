@@ -152,7 +152,7 @@ test('global WS delivery works before hello, in rooms and across reconnects; fil
   await writeFile(file, JSON.stringify(doc()));
   await title.waitFor('site.announcement', (m) => m.announcement === null);
   await player.waitFor('site.announcement', (m) => m.announcement === null);
-  const health = await (await fetch(`${srv.url}/healthz`)).json();
+  const health = await (await fetch(`${srv.url}/metrics`)).json();
   assert.equal(health.announcements.entries, 0);
   assert.equal(health.announcements.configError, null);
   assert.equal((await fetch(`${srv.url}/config/announcements.json`)).status, 404, 'operator configuration is not served');

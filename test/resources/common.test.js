@@ -65,6 +65,11 @@ describe('resource manifest validation', () => {
     assert.equal(isResourcePath('/assets/x.png'), true);
     assert.equal(isResourcePath('/fonts/x.woff2'), true);
     assert.equal(isResourcePath('/data/assets.json'), false);
+    for (const url of ['/build/assets/index-AbCd1234.js', '/build/assets/index-AbCd1234.css', '/build/assets/x.png']) {
+      assert.equal(isResourcePath(url), false, 'Vite build files bypass the resource worker');
+      assert.equal(isResourceUrl(url), false, 'Vite build files cannot enter the preload manifest');
+    }
+    assert.equal(isResourcePath('/stronghold/assets/x.png'), true, 'CDN prefixes still work');
     assert.equal(resourceType('/assets/x.png'), 'image/png');
     assert.equal(resourceType('https://cdn/x.SKEL'), 'application/octet-stream');
     assert.equal(resourceType('/assets/x.json'), null);

@@ -578,7 +578,7 @@ export class Network {
   }
 
   /**
-   * Aggregate per-network socket usage for /healthz (docs/DEPLOY.md §3.4). Deliberately no addresses: /healthz is a
+   * Aggregate per-network socket usage for /metrics (docs/DEPLOY.md §3.4). Deliberately no addresses: /metrics is a
    * public endpoint, so it answers "is any network at the cap?" while the refusal logs keep the identifiable detail.
    * @returns {{ networks: number, worstSockets: number, overSockets: number }}
    */

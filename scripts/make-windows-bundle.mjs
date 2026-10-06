@@ -51,7 +51,7 @@ const NODE_PIN = Object.freeze({
 });
 
 /** 这几份不进版本库（npm / tools/setup.mjs 生成），但必须进包，否则游戏缺素材或缺前端库。 */
-const ASSET_DIRS = ['public/assets', 'public/fonts', 'public/vendor'];
+const ASSET_DIRS = ['public/assets', 'public/fonts', 'public/vendor', 'public/build'];
 
 /** 版本库里有、但便携包不要的（测试代码，省体积）。 */
 const SKIP_TRACKED = ['test/'];
@@ -91,7 +91,7 @@ const HELP = `node scripts/make-windows-bundle.mjs — 生成 Windows 开箱即�
   --node-version X   换一个 Node 版本（默认 ${NODE_PIN.version}）；换版本必须同时给 --sha256
   --sha256 <hash>    该版本 win-x64.zip 的 sha256（取自官方 SHASUMS256.txt）
 
-  app\\ 里只放 git 跟踪的文件 + 生产依赖（npm ci --omit=dev）+ public/{assets,fonts,vendor}；
+  app\\ 里只放 git 跟踪的文件 + 生产依赖（npm ci --omit=dev）+ public/{assets,fonts,vendor,build}；
   因此 .env / .venv / .claude / scripts/service.env.cmd 这些本机文件不会被打进去。
   data/local-assets.json 存在时（本机提取过 3D 棋盘贴图）会一起收，否则贴图进了包也用不上。
 
@@ -482,6 +482,11 @@ async function main() {
     console.error(`✖ --out 指向仓库本身或它的上级目录：${out}\n  加 --force 会把仓库删掉，请换一个仓库之外的目录（例如 D:\\Game\\Stronghold-Protocol-Windows）。`);
     return 1;
   }
+  // Build before replacing an existing package; a build failure must leave the previous output intact.
+  const clientBuild = spawnSync(process.execPath, [path.join(ROOT, 'node_modules/vite/bin/vite.js'), 'build'],
+    { cwd: ROOT, stdio: 'inherit' });
+  if (clientBuild.error || clientBuild.status !== 0) throw new Error('Vite 构建失败：请先 npm ci 并运行 npm run vendor');
+
   const verdict = forceDeleteVerdict(out);
   if (verdict !== 'missing') {
     if (!o.force) {

@@ -52,6 +52,14 @@
 
 所有 `/api/rooms`、`/api/rooms/…` 共用客户端网络令牌桶，每秒补充 2 次、突发 10 次。失败查询和不支持的方法也计数；先检查限流，所以 429 优先于 405 / 404。IPv6 按 /64 合并，本机和内网也限流。地址识别遵循 `TRUST_PROXY`。所有响应带 `X-Robots-Tag: noindex, nofollow, noarchive`，不开放 CORS，跨站展示服务从后端查询。
 
+## 健康检查与运行指标
+
+`GET /healthz` 用于健康检查和页面版本检测，保留 `ok`、协议版本 `version`、应用版本 `app`、`uptimeSec`、构建标识 `build`，以及 `sockets`、`sessions`、`rooms`、`matches`、`roomMatches`、`standaloneMatches`、`humans`、`bots`、`spectators`、`queued` 计数。
+
+`GET /metrics` 返回 JSON，包含上述字段及详细运行状态：`persist`、`workers`、`memory`、`staticCache`、`usage`、`socketBuffers`、`announcements`、`websocket`、`assetsCdn`、`dataCdn`、`limits`、`tuning`。这些详细字段从 `/healthz` 迁移到 `/metrics`，字段名、结构与含义保持原样；持久化或计算池未启用时，`persist` 或 `workers` 为 `null`。内存与 Worker 采样说明见 [部署文档](DEPLOY.md#35-多核计算固定-worker-池)。
+
+两个端点均返回 200，支持 HEAD（无正文）和 `Cache-Control: no-store`；其他方法返回 405，`Allow: GET, HEAD`。无需认证，不开放 CORS，不包含客户端地址。`/metrics` 使用 JSON 格式。
+
 ## 延迟探测
 
 `GET /api/ping` 返回 200、`{"ok":true}`；HEAD 返回 200；OPTIONS 返回 204。其他方法返回 405、`{"error":"METHOD_NOT_ALLOWED"}`、`Allow: GET, HEAD, OPTIONS`。

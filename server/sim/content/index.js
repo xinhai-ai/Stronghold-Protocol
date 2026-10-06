@@ -24,18 +24,36 @@ import { withUnitLoadouts } from '../simdata.js';
 
 // Content files are loaded with guarded dynamic imports: a module that fails to load (syntax error, throwing
 // top-level code, missing file) is logged and replaced by an empty module instead of breaking the server.
-async function safeImport(path) {
+async function safeImport(path, load) {
   try {
-    return await import(path);
+    return await load();
   } catch (e) {
     console.error(`[content] failed to load ${path}: ${e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e}`);
     return {};
   }
 }
 
-const TIERS = await Promise.all([1, 2, 3, 4, 5, 6].map((t) => safeImport(`./kits/tier${t}.js`)));
+// Literal imports are also discoverable by the browser bundler; retain per-module failure isolation in native ESM.
+const TIERS = await Promise.all([
+  safeImport('./kits/tier1.js', () => import('./kits/tier1.js')),
+  safeImport('./kits/tier2.js', () => import('./kits/tier2.js')),
+  safeImport('./kits/tier3.js', () => import('./kits/tier3.js')),
+  safeImport('./kits/tier4.js', () => import('./kits/tier4.js')),
+  safeImport('./kits/tier5.js', () => import('./kits/tier5.js')),
+  safeImport('./kits/tier6.js', () => import('./kits/tier6.js')),
+]);
 const DOMAIN_NAMES = ['tokens', 'devices', 'enemies', 'bosses', 'bonds', 'garrisons', 'items', 'bands', 'choices'];
-const DOMAINS = await Promise.all(DOMAIN_NAMES.map((n) => safeImport(`./${n}.js`)));
+const DOMAINS = await Promise.all([
+  safeImport('./tokens.js', () => import('./tokens.js')),
+  safeImport('./devices.js', () => import('./devices.js')),
+  safeImport('./enemies.js', () => import('./enemies.js')),
+  safeImport('./bosses.js', () => import('./bosses.js')),
+  safeImport('./bonds.js', () => import('./bonds.js')),
+  safeImport('./garrisons.js', () => import('./garrisons.js')),
+  safeImport('./items.js', () => import('./items.js')),
+  safeImport('./bands.js', () => import('./bands.js')),
+  safeImport('./choices.js', () => import('./choices.js')),
+]);
 const tokens = DOMAINS[0];
 
 /** Merged kit registry: baseChessId → (bb, chess, def) => Kit */

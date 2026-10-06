@@ -264,8 +264,8 @@ export class Lobby {
   }
 
   /**
-   * Aggregate per-network room/match usage for /healthz (docs/DEPLOY.md §3.4): how many client networks are already at
-   * one of the caps and how close the worst one is. No addresses here — /healthz is public, the refusal logs name the
+   * Aggregate per-network room/match usage for /metrics (docs/DEPLOY.md §3.4): how many client networks are already at
+   * one of the caps and how close the worst one is. No addresses here — /metrics is public, the refusal logs name the
    * network (`room limit (16) reached for 203.0.113.7`).
    * @returns {{ rooms: number, matches: number, networks: number, worstRooms: number, worstMatches: number,
    *             overRooms: number, overMatches: number }}

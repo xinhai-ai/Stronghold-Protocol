@@ -3,10 +3,11 @@
 //
 //   node tools/setup.mjs [options]
 //
-// Steps (each one is skipped when already done, so re-running is cheap — the start scripts run it on every start):
+// Steps (the start scripts run this on every start; downloads/installations skip files already present):
 //   1. Node.js ≥ 22 check (clear message + download link otherwise).
 //   2. Dependencies: `npm ci` (falls back to `npm install`) when node_modules is missing or incomplete.
 //   3. Client libraries in public/vendor (tools/vendor.mjs) when any is missing.
+//      With Vite installed, rebuild the production client in public/build (release bundles carry it already).
 //   4. Game data (data/*.json, committed) present and parseable.
 //   5. Art/audio (tools/fetch-assets.mjs, ~270 MB into public/assets, resumable, mirror fallback) when public/assets
 //      is missing or data/assets.json lists files that are not on disk. A failure is a warning: the game still runs
@@ -397,6 +398,15 @@ async function main() {
   }
   if (vendor.ok) add('ok', '前端库 public/vendor', vendor.optionalMissing.length ? '（three.js 缺失：3D 棋盘回退为 2D）' : '');
   else { add('err', '前端库 public/vendor', `缺少 ${vendor.missing.join(', ')} → 运行 node tools/vendor.mjs`); fatal = true; }
+
+  // Source installs build after setup; release bundles already carry the client and need no Vite at runtime.
+  const viteCli = path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
+  if (!opts.check && vendor.ok && fs.existsSync(viteCli)) {
+    log(`\n${c.cyan('▶')} 构建前端 JS / CSS …`);
+    const built = run(process.execPath, [viteCli, 'build']);
+    if (!built.ok) { add('err', 'Vite 前端构建', '运行 npm run build 查看错误'); fatal = true; }
+    else add('ok', 'Vite 前端构建 public/build');
+  }
 
   // 4. data
   const data = checkData();

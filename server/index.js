@@ -14,9 +14,11 @@
 //     MIME types incl. .mjs/.js text/javascript, .skel application/octet-stream, .atlas text/plain;
 //     gzip for text-like types, .skel and uncompressed fonts when the client accepts it (small files are
 //     compressed once and cached in memory); strong ETag + Last-Modified with 304s; Cache-Control
-//     (html & code/data: no-cache + revalidate; public/assets|fonts|vendor: 1 day; any `?v=` URL: immutable);
+//     (html & code/data: no-cache + revalidate; hashed public/build/assets: immutable;
+//      public/assets|fonts|vendor: 1 day; any `?v=` URL: immutable);
 //     single byte-range requests (206/416, used by <audio>); traversal & dotfile protection; 404 page.
 //   * GET /healthz → JSON status (protocol `version`, release `app`, rooms, matches, sessions, sockets).
+//   * GET /metrics → JSON operational diagnostics (persistence, workers, memory, caches, usage and configuration).
 //   * WebSocket (ws) at /ws, maxPayload 64 KB → server/net.js Network → server/lobby.js Lobby.
 //   * Env: PORT (default 3000), HOST (default 0.0.0.0), TRUST_PROXY ('auto' default: honour CF-Connecting-IP /
 //     X-Real-IP / X-Forwarded-For only from loopback/private peers such as a local cloudflared; '1' always; '0' never).
@@ -35,7 +37,7 @@
 //     rewritten the same way, so an optional client-side preload works without a CDN-less install (server/resources.js).
 //   * Per-network limits for internet clients (see net.js clientAddress; local/LAN peers are exempt): open sockets
 //     (maxConnectionsPerAddr, refused at upgrade with 429), rooms and running matches (lobby.js). The effective values
-//     are printed on boot, reported as `limits` on /healthz and can be overridden with SP_MAX_ROOMS,
+//     are printed on boot, reported as `limits` on /metrics and can be overridden with SP_MAX_ROOMS,
 //     SP_MAX_ROOMS_PER_ADDR, SP_MAX_MATCHES_PER_ADDR, SP_MAX_CONNECTIONS and SP_MAX_CONNECTIONS_PER_ADDR
 //     (docs/DEPLOY.md §3.4; an explicit startServer option wins, 0 = unlimited for the per-network caps).
 //   * Graceful shutdown on SIGINT/SIGTERM (rooms get room.closed{reason:'shutdown'}, sockets close 1001).
@@ -155,9 +157,10 @@ const MAX_URL_LENGTH = 4096;
  * without this signal a deployed fix could never reach a player who does not reload — a client-only battle fix
  * shipped exactly that way and stayed invisible on a page that had been opened before the deploy.
  *
- * `server/`, `data/` and `shared/` are deliberately NOT in here: this process read them once at startup, so when they
+ * In source mode `server/`, `data/` and `shared/` are deliberately NOT in here: this process read them once at startup, so when they
  * change without a restart the server still runs the old simulation and data — a page that reloaded into the new files
  * would be out of step with the server that validates its battles (and DEPLOY.md restarts the server for every update).
+ * A Vite build uses public/build plus the separately served resource worker modules instead (computeBuildTag).
  */
 export const BUILD_INPUTS = Object.freeze(['public/index.html', 'public/js', 'public/css']);
 
@@ -184,10 +187,12 @@ function buildEntries(abs, rel, out) {
   }
 }
 
-/** Short hash of the served browser runtime (size + mtime of every BUILD_INPUTS file); null when nothing is readable. */
-export function computeBuildTag(root = ROOT) {
+/** Short hash of the served browser runtime; built HTML/chunks take precedence over the source shell. */
+export function computeBuildTag(root = ROOT, { clientBuild = true } = {}) {
   const out = [];
-  for (const rel of BUILD_INPUTS) buildEntries(path.join(root, rel), rel, out);
+  const inputs = clientBuild && fs.existsSync(path.join(root, 'public/build/index.html'))
+    ? ['public/build', 'public/resource-sw.js', 'public/js/resources', 'shared/media.js'] : BUILD_INPUTS;
+  for (const rel of inputs) buildEntries(path.join(root, rel), rel, out);
   if (!out.length) return null;
   out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const h = createHash('sha1');
@@ -201,8 +206,8 @@ export function computeBuildTag(root = ROOT) {
  * let a half-finished deploy — or a file that changed while the process kept running — move the tag under a page.
  * @param {string} [root] used by the first call only (tests)
  */
-export function buildTag(root = ROOT) {
-  if (buildCache === null) buildCache = { tag: computeBuildTag(root) };
+export function buildTag(root = ROOT, options = {}) {
+  if (buildCache === null) buildCache = { tag: computeBuildTag(root, options) };
   return buildCache.tag;
 }
 
@@ -348,6 +353,8 @@ function ifRangeMatches(req, etag, lastModified) {
 
 function cacheControlFor(ext, mountName, segments, query) {
   if (ext === '.html' || ext === '.htm') return 'no-cache';
+  if (mountName === 'public' && segments.length === 3 && segments[0] === 'build' && segments[1] === 'assets'
+    && /-[A-Za-z0-9_-]{8,}\.(js|css)$/.test(segments[2])) return IMMUTABLE_CACHE;
   if (/(^|&)v=/.test(query)) return IMMUTABLE_CACHE;
   if (mountName === 'public' && segments.length > 1 && LONG_CACHE_DIRS.includes(segments[0])) return LONG_CACHE;
   return 'no-cache';
@@ -394,15 +401,17 @@ function splitUrl(url) {
 
 /**
  * Create the static request handler.
- * @param {{ publicDir: string, dataDir: string, sharedDir: string, simDir?: string, log?: object, cdnBase?: string, dataCdnBase?: string }} dirs
+ * @param {{ publicDir: string, dataDir: string, sharedDir: string, simDir?: string, log?: object, cdnBase?: string, dataCdnBase?: string, clientBuild?: boolean }} dirs
  * @returns {(req: http.IncomingMessage, res: http.ServerResponse, rawPath: string, query: string) => Promise<void>}
  */
 /** Optional per-machine art manifest (tools/local-extract) and the empty stand-in served when it is absent. */
 const LOCAL_ART_MANIFEST = 'local-assets.json';
 const EMPTY_LOCAL_ART = Buffer.from(JSON.stringify({ version: 1, source: 'none', count: 0, groups: {} }));
 
-export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), log = noopLog, cdnBase = '', dataCdnBase = '' }) {
+export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), log = noopLog, cdnBase = '', dataCdnBase = '', clientBuild = true }) {
   const cdn = typeof cdnBase === 'string' ? cdnBase : '';
+  const builtIndex = path.join(publicDir, 'build', 'index.html');
+  const useBuiltClient = clientBuild && fs.existsSync(builtIndex);
   // the preload manifest (docs/ASSETS.md「Preload」): built on first request, cached until the manifests change
   const resources = createResourceIndex({ dataDir, publicDir, cdnBase: cdn, rewrite: (v) => (cdn ? rewriteAssetPaths(v, cdn) : v), log });
   /** @type {Map<string, { mtimeMs: number, size: number, body: Buffer }>} rewritten manifests (per file path) */
@@ -426,6 +435,10 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
     try { decoded = decodeURIComponent(rawPath); } catch { sendError(req, res, 400, '请求地址无效 · Bad request'); return; }
     if (!decoded.startsWith('/') || decoded.includes('\0') || decoded.includes('\\')) {
       sendError(req, res, 400, '请求地址无效 · Bad request');
+      return;
+    }
+    if (useBuiltClient && (decoded === '/' || decoded === '/index.html')) {
+      await serveFile(req, res, builtIndex, await fsp.stat(builtIndex), 'public', ['build', 'index.html'], query, gzipCache, log);
       return;
     }
     // The runtime CDN setting is served by the game origin, independent of the data CDN.
@@ -774,7 +787,7 @@ function makeLogger(quiet) {
  *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number,
  *   store?: object | null, resume?: boolean, saveMs?: number, assetsCdn?: string, dataCdn?: string,
  *   workers?: number, workerQueue?: number, workerTimeoutMs?: number, workerPool?: SimulationPool | null,
- *   announcementsFile?: string | null, announcementPollMs?: number, wsCompression?: boolean,
+ *   announcementsFile?: string | null, announcementPollMs?: number, wsCompression?: boolean, clientBuild?: boolean,
  * }} [opts]
  * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: WebSocketServer,
  *                     lobby: Lobby, network: Network, registry: SessionRegistry, store: object | null,
@@ -789,6 +802,7 @@ export async function startServer(opts = {}) {
   const publicDir = opts.publicDir || path.join(ROOT, 'public');
   const dataDir = opts.dataDir || path.join(ROOT, 'data');
   const sharedDir = opts.sharedDir || path.join(ROOT, 'shared');
+  const clientBuild = opts.clientBuild ?? !process.argv.includes('--source-client');
   // assets CDN: a serving-time rewrite of the two manifests (docs/DEPLOY.md §3.2)
   const rawCdn = opts.assetsCdn != null ? opts.assetsCdn : (process.env.SP_ASSETS_CDN ?? process.env.ASSETS_CDN);
   const assetsCdn = parseAssetCdn(rawCdn);
@@ -867,11 +881,11 @@ export async function startServer(opts = {}) {
     broadcast: (msg) => network.broadcast(msg), log, pollMs: opts.announcementPollMs });
   await announcements.start();
   const serveApi = createPublicApi({ lobby, announcements, trustProxy: netOptions.trustProxy, sendJson, sendError });
-  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log, cdnBase: assetsCdn, dataCdnBase: dataCdn });
+  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log, cdnBase: assetsCdn, dataCdnBase: dataCdn, clientBuild });
   const startedAt = Date.now();
   // The tag is per process (see buildTag): read the browser runtime once, here, not on every /healthz.
   resetBuildTag();
-  buildTag();
+  buildTag(ROOT, { clientBuild });
 
   const server = http.createServer((req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -893,14 +907,19 @@ export async function startServer(opts = {}) {
       sendError(req, res, 405, '不支持的请求方法 · Method not allowed');
       return;
     }
-    if (parts.rawPath === '/healthz') {
-      const socketUsage = network.usage();
-      sendJson(req, res, 200, {
+    if (parts.rawPath === '/healthz' || parts.rawPath === '/metrics') {
+      const health = {
         ok: true, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         // the runtime the server is serving right now (public/js/ui/buildGuard.js): a page whose own build is
         // older than this reloads itself, so a deploy reaches clients that never reload
         build: buildTag(),
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
+      };
+      // Page version polling and health probes need only metadata and headline counts. Collect diagnostics on demand.
+      if (parts.rawPath === '/healthz') { sendJson(req, res, 200, health); return; }
+      const socketUsage = network.usage();
+      sendJson(req, res, 200, {
+        ...health,
         persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.checkpointKeys.size,
           snapshotBytes: persister.encoder.seed?.bytes.byteLength || 0, workerMemory: persister.encoder.memory } : null,
         workers: workerPool?.stats() || null,
@@ -926,7 +945,7 @@ export async function startServer(opts = {}) {
           verify: parseVerify(process.env.SP_VERIFY),
           botRehearsal: parseBotRehearsal(process.env.SP_BOT_REHEARSAL),
         },
-        // How close the busiest client network is to a cap (docs/DEPLOY.md §3.4). No addresses: /healthz is public and
+        // How close the busiest client network is to a cap (docs/DEPLOY.md §3.4). No addresses: /metrics is public and
         // the refusal logs (`room limit (16) reached for <ip>`) already name the network when it matters.
         usage: {
           ...lobby.usage(),

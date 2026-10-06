@@ -99,6 +99,10 @@ describe('resource manifest building', () => {
     }
     assert.equal(isResourcePath('/assets/x.png'), true);
     assert.equal(isResourcePath('/data/x.json'), false);
+    for (const url of ['/build/assets/index-AbCd1234.js', '/build/assets/index-AbCd1234.css', '/build/assets/x.png']) {
+      assert.equal(isResourcePath(url), false);
+      assert.equal(validateResourceUrl(url), false, 'bundled files are not preload resources');
+    }
     assert.equal(validateResourceUrl('/media/bgm/act1.mp3'), false, 'the manifest never lists the /media route (a CDN cannot resolve it)');
     assert.equal(resourceType('/assets/x.atlas'), 'text/plain; charset=utf-8');
     assert.equal(localPathFor('/assets/x.png', '/srv/public'), path.join(path.resolve('/srv/public'), 'assets/x.png'));

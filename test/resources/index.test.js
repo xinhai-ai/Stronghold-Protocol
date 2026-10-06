@@ -183,6 +183,11 @@ test('the worker entry (public/resource-sw.js) intercepts resources only', async
   };
   assert.equal(await fire(asset).then((r) => r.text()), 'cached-bytes', 'a cached resource is answered');
   assert.equal(fire(`${ORIGIN}/js/main.js`), null, 'code passes through');
+  for (const name of ['index-AbCd1234.js', 'index-AbCd1234.css', 'pixi.min-AbCd1234.js']) {
+    const url = `${ORIGIN}/build/assets/${name}`;
+    await (await caches.open(cacheName('sw'))).put(url, new Response('stale-build'));
+    assert.equal(fire(url), null, 'Vite files never call respondWith, even if an old cache contains them');
+  }
   assert.equal(fire(`${ORIGIN}/data/assets.json`), null, 'game data passes through');
   assert.equal(fire(`${ORIGIN}/assets/e2e/a.png`, 'POST'), null, 'only GET');
   assert.deepEqual(answered, [asset]);

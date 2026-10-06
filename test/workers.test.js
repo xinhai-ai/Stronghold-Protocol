@@ -287,11 +287,11 @@ test('ordinary takeover keeps natural release timing; disposal cancels running c
   assert.equal(m._workerTasks.size, 0);
 });
 
-test('server shares one pool across matches, reports health, and responds over WS during worker CPU work', async (t) => {
+test('server shares one pool across matches, reports metrics, and responds over WS during worker CPU work', async (t) => {
   const srv = await startServer({ host: '127.0.0.1', port: 0, quiet: true, workers: 1, store: null });
   t.after(() => srv.close());
   assert.equal(srv.lobby.workerPool, srv.workerPool);
-  const health = await (await fetch(`${srv.url}/healthz`)).json();
+  const health = await (await fetch(`${srv.url}/metrics`)).json();
   assert.equal(health.workers.size, 1);
   assert.equal(health.workers.avgComputeMs, 0);
   const cpu = fixturePool();

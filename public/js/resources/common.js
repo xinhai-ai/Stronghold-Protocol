@@ -65,6 +65,8 @@ export function resourceType(url) {
  * extension-less audio route (answered from the stored `/assets/audio/…` entry — `mediaCandidates`). */
 export function isResourcePath(pathname) {
   const p = String(pathname || '');
+  // Vite calls its output directory "assets" too; bundles use HTTP caching and must bypass this worker entirely.
+  if (p.startsWith('/build/')) return false;
   return /\/(?:assets|fonts)\//.test(p) || p.startsWith(MEDIA_PREFIX);
 }
 

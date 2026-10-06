@@ -71,7 +71,9 @@ export function resourceType(url) {
 
 /** Whether a URL path is served from the asset trees the preload may cache. */
 export function isResourcePath(pathname) {
-  return /\/(?:assets|fonts)\//.test(String(pathname || ''));
+  const p = String(pathname || '');
+  if (p.startsWith('/build/')) return false;
+  return /\/(?:assets|fonts)\//.test(p);
 }
 
 /**

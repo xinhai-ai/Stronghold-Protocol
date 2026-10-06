@@ -30,9 +30,13 @@ COPY package.json package-lock.json ./
 # --ignore-scripts: the postinstall (tools/vendor.mjs) runs in the next stage, once the sources are there
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
 
-# ---- 2. vendor libs + optional art download ---------------------------------------------------------
-FROM deps AS build
+# ---- 2. Vite client + vendor libs + optional art download -------------------------------------------
+FROM ${NODE_IMAGE} AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev --ignore-scripts --no-audit --no-fund
 ARG FETCH_ASSETS=0
+COPY vite.config.js ./
 COPY shared ./shared
 COPY server ./server
 COPY tools ./tools
@@ -41,6 +45,7 @@ COPY public ./public
 COPY config ./config
 COPY docs/research ./docs/research
 RUN node tools/vendor.mjs \
+ && node node_modules/vite/bin/vite.js build \
  && if [ "$FETCH_ASSETS" = "1" ]; then \
       node tools/fetch-assets.mjs || echo "WARNING: art download incomplete; the image falls back to placeholder art"; \
     fi \

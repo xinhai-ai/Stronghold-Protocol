@@ -63,10 +63,10 @@ test('settled Worker cancel handles release task inputs and progress callbacks',
   assert.equal(pool.stats().cancelled, 0);
 });
 
-test('health exposes process RSS, main heap, bounded cache, and socket send queues', async (t) => {
+test('metrics exposes process RSS, main heap, bounded cache, and socket send queues', async (t) => {
   const srv = await startServer({ port: 0, quiet: true, workers: 0, store: null });
   t.after(() => srv.close());
-  const health = await (await fetch(srv.url + '/healthz')).json();
+  const health = await (await fetch(srv.url + '/metrics')).json();
   assert.ok(health.memory.rss > 0);
   assert.ok(health.memory.heapUsed > 0);
   assert.ok(health.memory.heapUsed <= health.memory.heapTotal);

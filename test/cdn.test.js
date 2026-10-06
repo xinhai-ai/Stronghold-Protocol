@@ -205,13 +205,13 @@ test('startServer reads SP_DATA_CDN, reports it and allows an explicit option to
   try {
     srv = await startServer(opts);
     let fake = { address: () => ({ port: srv.port }) };
-    assert.equal(JSON.parse((await get(fake, '/healthz')).body).dataCdn, 'https://data.example.com/v1');
+    assert.equal(JSON.parse((await get(fake, '/metrics')).body).dataCdn, 'https://data.example.com/v1');
     assert.equal((await get(fake, '/data/config.json')).headers.location, 'https://data.example.com/v1/data/config.json');
     await srv.close();
     srv = null;
     srv = await startServer({ ...opts, dataCdn: '' });
     fake = { address: () => ({ port: srv.port }) };
-    assert.equal(JSON.parse((await get(fake, '/healthz')).body).dataCdn, null);
+    assert.equal(JSON.parse((await get(fake, '/metrics')).body).dataCdn, null);
     const r = await get(fake, '/data/config.json');
     assert.equal(r.status, 200);
     assert.deepEqual(JSON.parse(r.body), { note: '/assets/not-a-manifest.json' });
@@ -287,14 +287,14 @@ test('a same-origin CDN prefix works too', async () => {
   }
 });
 
-test('startServer picks up SP_ASSETS_CDN and reports it on /healthz', async () => {
+test('startServer picks up SP_ASSETS_CDN and reports it on /metrics', async () => {
   const dir = writeDataDir();
   const prev = process.env.SP_ASSETS_CDN;
   process.env.SP_ASSETS_CDN = 'https://cdn.example.com/stronghold/';
   const srv = await startServer({ port: 0, quiet: true, dataDir: dir, store: null, log: { info() {}, warn() {}, error() {}, debug() {} } });
   const fake = { address: () => ({ port: srv.port }) };
   try {
-    const health = JSON.parse((await get(fake, '/healthz')).body);
+    const health = JSON.parse((await get(fake, '/metrics')).body);
     assert.equal(health.assetsCdn, 'https://cdn.example.com/stronghold', 'trailing slash dropped');
     assert.equal(health.persist ?? null, null, 'no Redis configured in this test');
     const doc = JSON.parse((await get(fake, '/data/assets.json')).body);

@@ -58,9 +58,10 @@ LICENSE / NOTICE.md / THIRD-PARTY-NOTICES.md
 （`.env`、`.venv*`、`.claude/`、`scripts/service.env.cmd` …）**天然进不了包** ——
 它们里面可能有密钥或本机路径，旧实现用一张窄表整树复制，漏一项就是把它打进别人下载的压缩包。
 
-在此之上额外放入三份不进版本库、但游戏必需的资源，以及用 `npm ci --omit=dev` **重新装好的生产依赖**：
+在此之上额外放入不进版本库、但游戏必需的资源，以及用 `npm ci --omit=dev` **重新装好的生产依赖**：
 
 * `public/assets`、`public/fonts`、`public/vendor`（由 `tools/setup.mjs` 下载 / 生成）；
+* `public/build`：制作便携包时先在源仓库运行 Vite 构建，再复制压缩页面和带哈希的 JS/CSS；包内运行无需 Vite；
 * `node_modules` 只含生产依赖 —— `puppeteer-core` 这类 devDependency 是开发测试用的，打进发行包只会白涨体积；
 * `data/local-assets.json`（本机提取过 3D 棋盘贴图时才有）：贴图本体在 `public/assets/local`（约 68 MB，会随
   `public/assets` 进包），但游戏是靠这份 JSON 才知道有哪些贴图可用 —— 只带贴图不带清单，玩家拿到的是 68 MB

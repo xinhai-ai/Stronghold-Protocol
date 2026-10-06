@@ -1134,7 +1134,7 @@ describe('websocket lobby', () => {
     assert.ok(h.sessions >= 1);
   });
 
-  test('WebSocket permessage-deflate is enabled by default, configurable, and reported by healthz', async () => {
+  test('WebSocket permessage-deflate is enabled by default, configurable, and reported by metrics', async () => {
     assert.equal(parseWsCompression(undefined), true);
     assert.equal(parseWsCompression('off'), false);
     assert.equal(parseWsCompression('0'), false);
@@ -1146,8 +1146,8 @@ describe('websocket lobby', () => {
     try {
       assert.match(a.ws.extensions, /permessage-deflate/);
       assert.equal(b.ws.extensions, '');
-      const onHealth = JSON.parse((await httpReq(on.port, '/healthz')).body.toString());
-      const offHealth = JSON.parse((await httpReq(off.port, '/healthz')).body.toString());
+      const onHealth = JSON.parse((await httpReq(on.port, '/metrics')).body.toString());
+      const offHealth = JSON.parse((await httpReq(off.port, '/metrics')).body.toString());
       assert.deepEqual(onHealth.websocket, { compression: true, threshold: 1024 });
       assert.deepEqual(offHealth.websocket, { compression: false, threshold: 1024 });
     } finally { await a.close(); await b.close(); await on.close(); await off.close(); }
@@ -1796,7 +1796,7 @@ describe('per-network limits', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------
-// Limit overrides (docs/DEPLOY.md §3.4): SP_MAX_* environment variables, the boot line and /healthz
+// Limit overrides (docs/DEPLOY.md §3.4): SP_MAX_* environment variables, the boot line and /metrics
 // ---------------------------------------------------------------------------------------------------
 
 const LIMIT_ENVS = ['SP_MAX_ROOMS', 'SP_MAX_ROOMS_PER_ADDR', 'SP_MAX_MATCHES_PER_ADDR', 'SP_MAX_CONNECTIONS', 'SP_MAX_CONNECTIONS_PER_ADDR', 'SP_BOT_REHEARSAL'];
@@ -1825,9 +1825,9 @@ describe('limit overrides', () => {
       c.id = w.playerId;
       return c;
     };
-    const healthz = async () => JSON.parse((await httpReq(srv.port, '/healthz')).body.toString());
+    const metrics = async () => JSON.parse((await httpReq(srv.port, '/metrics')).body.toString());
     const close = async () => { await Promise.all([...open].map((c) => c.terminate().catch(() => {}))); await srv.close(); };
-    return { srv, warns, player, healthz, close };
+    return { srv, warns, player, metrics, close };
   }
 
   test('parseEnvLimit: a value from the environment wins, 0 means unlimited, junk keeps the default', () => {
@@ -1842,15 +1842,15 @@ describe('limit overrides', () => {
     assert.equal(parseEnvLimit('50', 16, 'X'), 50);
   });
 
-  test('the environment raises and lowers the caps; /healthz reports them and the boot line prints them', async () => {
+  test('the environment raises and lowers the caps; /metrics reports them and the boot line prints them', async () => {
     process.env.SP_MAX_ROOMS = '7';
     process.env.SP_MAX_ROOMS_PER_ADDR = '3';
     process.env.SP_MAX_MATCHES_PER_ADDR = '2';
     process.env.SP_MAX_CONNECTIONS = '500';
     process.env.SP_MAX_CONNECTIONS_PER_ADDR = '0';
-    const { srv, healthz, close } = await boot();
+    const { srv, metrics, close } = await boot();
     try {
-      assert.deepEqual((await healthz()).limits, {
+      assert.deepEqual((await metrics()).limits, {
         maxRooms: 7, maxRoomsPerAddr: 3, maxMatchesPerAddr: 2, maxConnections: 500, maxConnectionsPerAddr: 0,
       });
       assert.equal(srv.lobby.opts.maxRooms, 7);
@@ -1861,9 +1861,9 @@ describe('limit overrides', () => {
   test('an explicit startServer option wins over the environment, the default stays when neither is set', async () => {
     process.env.SP_MAX_ROOMS_PER_ADDR = '9';
     process.env.SP_MAX_ROOMS = '3';
-    const { healthz, close } = await boot({ maxRoomsPerAddr: 5 });
+    const { metrics, close } = await boot({ maxRoomsPerAddr: 5 });
     try {
-      const l = (await healthz()).limits;
+      const l = (await metrics()).limits;
       assert.equal(l.maxRoomsPerAddr, 5, 'the option wins');
       assert.equal(l.maxRooms, 3, 'the environment applies to the rest');
       assert.equal(l.maxMatchesPerAddr, LOBBY_DEFAULTS.maxMatchesPerAddr);
@@ -1873,9 +1873,9 @@ describe('limit overrides', () => {
   test('an unusable value warns and keeps the default (a typo never removes a protection)', async () => {
     process.env.SP_MAX_ROOMS = 'lots';
     process.env.SP_MAX_ROOMS_PER_ADDR = '-2';
-    const { warns, healthz, close } = await boot();
+    const { warns, metrics, close } = await boot();
     try {
-      const l = (await healthz()).limits;
+      const l = (await metrics()).limits;
       assert.equal(l.maxRooms, LOBBY_DEFAULTS.maxRooms);
       assert.equal(l.maxRoomsPerAddr, LOBBY_DEFAULTS.maxRoomsPerAddr);
       assert.ok(warns.some((w) => /SP_MAX_ROOMS=lots ignored/.test(w)), warns.join(' | '));
@@ -1883,11 +1883,11 @@ describe('limit overrides', () => {
     } finally { await close(); }
   });
 
-  test('/healthz reports aggregate usage per network, and never a client address', async () => {
+  test('/metrics reports aggregate usage per network, and never a client address', async () => {
     process.env.SP_MAX_ROOMS_PER_ADDR = '2';
     process.env.SP_MAX_MATCHES_PER_ADDR = '1';
     process.env.SP_MAX_CONNECTIONS_PER_ADDR = '2';
-    const { player, healthz, close } = await boot();
+    const { player, metrics, close } = await boot();
     try {
       const A = '203.0.113.240';
       const B = '198.51.100.10';
@@ -1900,7 +1900,7 @@ describe('limit overrides', () => {
       const b1 = await player('b1', B);
       await expectOk(b1, { t: 'room.create', mode: 'solo', difficulty: 'FUNNY' });
 
-      const h = await healthz();
+      const h = await metrics();
       assert.deepEqual(h.usage, {
         rooms: 3,
         matches: 1,
@@ -1917,11 +1917,11 @@ describe('limit overrides', () => {
     } finally { await close(); }
   });
 
-  test('SP_BOT_REHEARSAL reaches the running match, and /healthz reports the tuning', async () => {
+  test('SP_BOT_REHEARSAL reaches the running match, and /metrics reports the tuning', async () => {
     process.env.SP_BOT_REHEARSAL = '0';
-    const { srv, player, healthz, close } = await boot({ MatchClass: RealMatch });
+    const { srv, player, metrics, close } = await boot({ MatchClass: RealMatch });
     try {
-      assert.deepEqual((await healthz()).tuning, { combat: 'client', verify: 'off', botRehearsal: 0 });
+      assert.deepEqual((await metrics()).tuning, { combat: 'client', verify: 'off', botRehearsal: 0 });
       const c = await player('tuner');
       await expectOk(c, { t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
       const st = await c.waitFor('room.state', (x) => !!x.code);

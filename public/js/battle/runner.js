@@ -128,8 +128,12 @@ function deepFreeze(root) {
  * content bug that writes into a record fails identically on both sides).
  */
 export async function loadBrowserSim({ base = '/sim/', dataBase = '/data/', fetchFn = (...a) => globalThis.fetch(...a) } = {}) {
-  const [spec, simdata, support] = await Promise.all([
-    import(`${base}spec.js`), import(`${base}simdata.js`), import(`${base}content/support/index.js`),
+  // Literal imports let the production build emit a lazy simulation chunk. Custom bases remain usable by tools/tests.
+  const [spec, simdata, support] = await Promise.all(base === '/sim/' ? [
+    import('/sim/spec.js'), import('/sim/simdata.js'), import('/sim/content/support/index.js'),
+  ] : [
+    import(/* @vite-ignore */ `${base}spec.js`), import(/* @vite-ignore */ `${base}simdata.js`),
+    import(/* @vite-ignore */ `${base}content/support/index.js`),
   ]);
   const fetchOnce = async (n) => {
     try {

@@ -44,6 +44,9 @@ jobs:
       - name: Setup check (no downloads)
         run: node tools/setup.mjs --check --no-local
 
+      - name: Build production client
+        run: npm run build
+
       - name: Unit & integration tests
         run: node --test
 

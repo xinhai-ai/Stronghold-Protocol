@@ -13,7 +13,7 @@
 | 磁盘 | 素材约 270 MB（`public/assets`）+ 依赖约 125 MB（`node_modules`）；可选的本地提取约 40 MB（`.venv-extract`）+ 70 MB 贴图（见第 6 节）。 |
 | 玩家设备 | 支持 WebGL 的现代浏览器（Chrome / Edge / Firefox / Safari 最新版），电脑或手机平板（横屏）。老旧设备可在设置里调低画质或访问 `/?board=2d`。 |
 
-WebSocket 默认启用 `permessage-deflate`，仅压缩不小于 1 KB 的消息，并关闭客户端和服务端上下文复用。大型 `m.public` / `b.snap` 消息通常能显著减少带宽，小消息不会增加压缩开销；压缩会消耗 CPU，真实容量应在目标机器上压测。设置 `SP_WS_COMPRESSION=off` 或 `0` 可关闭；`/healthz.websocket` 会报告当前开关和阈值。
+WebSocket 默认启用 `permessage-deflate`，仅压缩不小于 1 KB 的消息，并关闭客户端和服务端上下文复用。大型 `m.public` / `b.snap` 消息通常能显著减少带宽，小消息不会增加压缩开销；压缩会消耗 CPU，真实容量应在目标机器上压测。设置 `SP_WS_COMPRESSION=off` 或 `0` 可关闭；`/metrics.websocket` 会报告当前开关和阈值。
 
 服务器默认**无状态**：房间和对局只存在内存里，没有数据库和存档，不需要备份。重启服务器会结束正在进行的对局（包括断线后本可在 24 小时内回来继续的独立模拟）。想让容器/进程重启后玩家仍回到原座位，设置 `SP_REDIS_URL` 使用你自己的 Redis 做状态存档，见 §3.1「断点续玩」；也可以把素材放到 CDN，见 §3.2。
 
@@ -37,6 +37,24 @@ WebSocket 默认启用 `permessage-deflate`，仅压缩不小于 1 KB 的消息�
 4. 窗口里会打印朋友可用的地址，例如 `http://192.168.1.23:3000`。用另一台设备打开它确认能进入。关闭窗口即停止服务器。
 
 等价的手动命令：`npm ci`、`node tools/setup.mjs`、`npm start`。
+
+### 前端构建与缓存
+
+从源码生产部署时运行：
+
+```bash
+npm ci
+npm run build
+npm start
+```
+
+`npm run build` 先准备前端库，再由 Vite 将页面 JS/CSS 打包到 `public/build/`。服务器在该目录有 `index.html` 时自动使用构建页面；HTML 保持 `no-cache`，`/build/assets/` 下带内容哈希的 JS/CSS 使用 `public, max-age=31536000, immutable`，并继续支持 gzip 与 ETag。基础 UI 库独立分包，渲染器、战斗模拟和 Three.js 按需加载。素材、字体、游戏 JSON、素材预载 Service Worker 仍通过现有路由提供；`SP_ASSETS_CDN` 和 `SP_DATA_CDN` 仍可在启动时配置，无需为不同 CDN 重新构建。
+
+`setup` 在安装了 Vite 时自动构建；Docker 构建和 Windows 便携包制作也包含前端构建，运行容器/便携包无需安装 Vite。仅安装生产依赖（`npm ci --omit=dev`）时，应先在构建机器上生成 `public/build/` 并一同部署。
+
+开发时使用 `npm run dev`，会强制提供源码页面，刷新浏览器即可看到修改。没有构建产物时普通启动也会回退到源码页面。每次生产更新都需要重新构建并重启服务，已有构建不会自动跟随源码变化。
+
+构建不会删除旧哈希文件，以便已经打开的页面继续加载旧版分包。在线更新时先上传新增的 `build/assets/` 文件，再替换 `build/index.html`，保留旧分包；定期清理请在维护停服期间进行。不要直接删除整个 `public/build/` 后在线重建。
 
 ### 1.2 防火墙
 
@@ -252,7 +270,7 @@ volumes:
 - 状态键默认前缀 `stronghold:`、TTL 25 小时（`SP_REDIS_TTL`，兜底清理）。多个实例共用一个 Redis 时用 `SP_REDIS_PREFIX` 分开。
 - 不要把 Redis 配成 `maxmemory-policy allkeys-lru`，否则状态键可能被淘汰。
 - 想清空存档（所有人从头开始）：删除状态键即可，`redis-cli DEL stronghold:state`。
-- 验证：`GET /healthz` 会返回 `persist: { redis: true, writes, checkpoints }`；启动日志会打印 `State: Redis (…)` 与 `[persist] state loaded (…)`。
+- 验证：`GET /metrics` 会返回 `persist: { redis: true, writes, checkpoints }`；启动日志会打印 `State: Redis (…)` 与 `[persist] state loaded (…)`。
 
 ### 3.2 素材放 CDN
 
@@ -270,7 +288,7 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 - 没设置该变量时行为完全不变（服务器照旧自己提供 `/assets/…`），设置后本地 `/assets/` 仍然可用，可随时回退。
 - 只想换目录名 / 走同源反代前缀也行：`SP_ASSETS_CDN=/cdn`。
 
-验证：`GET /healthz` 里 `assetsCdn` 会显示当前地址；浏览器网络面板里素材请求应指向 CDN。
+验证：`GET /metrics` 里 `assetsCdn` 会显示当前地址；浏览器网络面板里素材请求应指向 CDN。
 
 **数据也放 CDN：** 设置独立的 `SP_DATA_CDN`，把与游戏服务器同一版本的 `data/` 上传到 CDN 根目录下的 `data/`：
 
@@ -285,7 +303,7 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 - `assets.json`、`asset-hashes.json` 也跳转到数据 CDN，**直接上传原始 JSON**，无需执行导出命令或提前改写地址。浏览器读取素材清单后，根据服务器通过 `/js/asset-cdn.js` 提供的 `SP_ASSETS_CDN` 改写 `/assets/…`；已有的绝对地址保持原样。素材 CDN 与数据 CDN 可以使用不同域名。
 - `local-assets.json` 保留在游戏服务器上，继续支持本地素材地址改写和未提取时的空清单；动态 `resource-manifest.json` 也保留在服务器上，并使用本地素材清单和哈希表生成。
 - **服务器的本地 `data/` 必须保留**，游戏逻辑与战斗计算仍从本地读取。CDN 侧允许 JSON 跨域读取（例如 `Access-Control-Allow-Origin: *`），并设置 `Cache-Control: no-cache` 配合 ETag / Last-Modified；更新时同步上传并刷新 CDN 缓存，或者使用带版本号的 CDN 根目录，避免客户端与服务器数值不一致。
-- 两个 CDN 变量可以独立配置。`GET /healthz` 的 `dataCdn` 显示当前数据 CDN 根目录；未配置时为 `null`。
+- 两个 CDN 变量可以独立配置。`GET /metrics` 的 `dataCdn` 显示当前数据 CDN 根目录；未配置时为 `null`。
 
 更新资源后同步上传原始 JSON，并刷新 CDN 缓存。`/js/asset-cdn.js` 由游戏服务器提供，使用 `no-cache` 和 ETag 校验；代理应保留此缓存策略，以便切换素材 CDN 后浏览器取得新地址。
 
@@ -333,8 +351,8 @@ location = /resource-sw.js {
 - 若把 `TRUST_PROXY` 设为 `0`，经本机反代的流量全部算作「本地」→ 单网络上限**完全不生效**，只剩全局兜底；默认 `auto` 才会按真实玩家 IP 计数。
 - 房间只在真的变空时才释放：大厅断线满 60 秒，或对局中重连窗口结束（同盟 10 分钟、**独立 24 小时**）。**打完一局不会释放房间**（只是回到大厅，仍计入上限）。
 - 程序内调用还可以直接传 `startServer({ maxRooms, maxRoomsPerAddr, ... })`；显式传的参数优先于环境变量（便于测试），环境变量优先于代码默认值。值写错了（负数、小数、非数字）会记一条 warn 并继续用默认值——不会因为一个手误把防护关掉。
-- **容量与 CPU**（单机实测，见本节末尾的容量说明）：一局 4 人合作在 **客户端战斗**（默认）下约用 **8–10 s CPU**，其中 AI 席位的"预演摆位"占约 70%（`SP_BOT_REHEARSAL=0` 可降到 2.7–3.5 s）。摊到 25–30 分钟的一局就是 **每房约 0.5–0.7% 单核**；1000 名玩家 = 250 房 ≈ **1.3–1.8 核**（这还是"每个房间都塞满 AI 席位在预演"的最坏情况）。真正会把它打爆的是 `SP_COMBAT=server`（改为按 tick 推快照，数量级上升）与 `SP_VERIFY=all`（每局客户端上报的战斗服务器再算一遍）；Redis 在 250 个活对局时约 3.6 MB/10 s（≈370 KB/s，AOF 约 32 GB/天，可用 RDB 快照或把 `SP_REDIS_SAVE_MS` 调到 30 s 降下来）。启动日志里 `[match] tuning:` 一行和 `GET /healthz` 的 `tuning` 字段会报出当前生效的 `combat` / `verify` / `botRehearsal`。
-- 观察方式：启动日志有一行 `[http] limits: rooms 1000 (16/network), matches 8/network, sockets 2000 (64/network)`；`GET /healthz` 的 `limits` 是当前生效值，`usage` 告诉你**最忙的那条网络离上限还有多远**：
+- **容量与 CPU**（单机实测，见本节末尾的容量说明）：一局 4 人合作在 **客户端战斗**（默认）下约用 **8–10 s CPU**，其中 AI 席位的"预演摆位"占约 70%（`SP_BOT_REHEARSAL=0` 可降到 2.7–3.5 s）。摊到 25–30 分钟的一局就是 **每房约 0.5–0.7% 单核**；1000 名玩家 = 250 房 ≈ **1.3–1.8 核**（这还是"每个房间都塞满 AI 席位在预演"的最坏情况）。真正会把它打爆的是 `SP_COMBAT=server`（改为按 tick 推快照，数量级上升）与 `SP_VERIFY=all`（每局客户端上报的战斗服务器再算一遍）；Redis 在 250 个活对局时约 3.6 MB/10 s（≈370 KB/s，AOF 约 32 GB/天，可用 RDB 快照或把 `SP_REDIS_SAVE_MS` 调到 30 s 降下来）。启动日志里 `[match] tuning:` 一行和 `GET /metrics` 的 `tuning` 字段会报出当前生效的 `combat` / `verify` / `botRehearsal`。
+- 观察方式：启动日志有一行 `[http] limits: rooms 1000 (16/network), matches 8/network, sockets 2000 (64/network)`；`GET /metrics` 的 `limits` 是当前生效值，`usage` 告诉你**最忙的那条网络离上限还有多远**：
 
   ```json
   "usage": { "rooms": 3, "matches": 1, "networks": 2, "worstRooms": 2, "worstMatches": 1,
@@ -342,7 +360,7 @@ location = /resource-sw.js {
   ```
 
   `networks` = 当前占用房间/连接的客户端网络数，`worst*` = 最忙那条网络占用的房间 / 对局 / 连接数，`over*` = 已经达到上限的网络数（**> 0 就说明有网络正在被限流**）。判断方法：如果 `overRooms` 一直大于 0、`worstRooms` 贴着 `maxRoomsPerAddr`，就是某条出口 IP（宿舍 / 公司 / CGNAT）挤爆了，调大它比调大全局上限更对症。
-  出于隐私，`/healthz` 是公开端点，**不会列出客户端地址**；具体是哪个 IP 被拒只出现在服务端日志里（`[lobby] room limit (N) reached for <ip>` / `match limit (N) reached for <ip>`，同一条 10 秒内只打一次并附上被合并的次数）。
+  出于隐私，`/metrics` 是公开端点，**不会列出客户端地址**；具体是哪个 IP 被拒只出现在服务端日志里（`[lobby] room limit (N) reached for <ip>` / `match limit (N) reached for <ip>`，同一条 10 秒内只打一次并附上被合并的次数）。
 
 ### 3.5 多核计算：固定 Worker 池
 
@@ -360,13 +378,13 @@ location = /resource-sw.js {
 
 准备阶段结束、玩家退出、战场被替换或对局销毁时，相关任务会取消，晚到的结果不能覆盖新状态。服务器关闭时停止计算池。虚拟时间工具和注入自定义 Battle 的测试保持同步执行。
 
-启动日志的 `[workers]` 和 `/healthz` 的 `workers` 可查看线程上限、已启动线程、忙线程、队列长度，以及完成、失败、取消、拒绝计数；`queueMs` / `computeMs` 是累计排队/运行毫秒数，`avgComputeMs` 是成功完成任务的平均计算毫秒数（不含排队、超时和取消；运行时间包含首次线程初始化）。队列持续积压时，应降低开局速率或增加资源，避免依赖分片回退维持过载。
+启动日志的 `[workers]` 和 `/metrics` 的 `workers` 可查看线程上限、已启动线程、忙线程、队列长度，以及完成、失败、取消、拒绝计数；`queueMs` / `computeMs` 是累计排队/运行毫秒数，`avgComputeMs` 是成功完成任务的平均计算毫秒数（不含排队、超时和取消；运行时间包含首次线程初始化）。队列持续积压时，应降低开局速率或增加资源，避免依赖分片回退维持过载。
 
 本机基准：`node tools/workerbench.mjs --workers 4 --battles 24`。工具先预热，再比较相同战斗的同步执行和 Worker 池执行，输出结果摘要一致性、吞吐及主线程定时器最大延迟。它不包含真实 WebSocket 流量、Redis 写入或完整对局，不能作为在线玩家容量承诺。
 
-**内存诊断**：Docker 的 `MEM USAGE` 是容器总内存。`/healthz.memory.rss` 是整个 Node 进程的驻留内存（含所有 Worker）；同一对象的 `heapUsed` / `heapTotal` / `external` / `arrayBuffers` 是主线程计数，单位均为字节，`arrayBuffers` 已包含在 `external` 中，不能再相加。`workers.memory[].sample` 与 `persist.workerMemory` 是各线程最近完成任务时的采样，`sampledAt` 是采样时间，包含尚未 GC 的临时对象，不是当前实时堆。
+**内存诊断**：Docker 的 `MEM USAGE` 是容器总内存。`/metrics.memory.rss` 是整个 Node 进程的驻留内存（含所有 Worker）；同一对象的 `heapUsed` / `heapTotal` / `external` / `arrayBuffers` 是主线程计数，单位均为字节，`arrayBuffers` 已包含在 `external` 中，不能再相加。`workers.memory[].sample` 与 `persist.workerMemory` 是各线程最近完成任务时的采样，`sampledAt` 是采样时间，包含尚未 GC 的临时对象，不是当前实时堆。
 
-模拟 Worker 各有独立 JS 堆和游戏数据副本，启动后为复用而保持存活。`SP_WORKERS=4` 比默认最多 8 个线程节省内存，但会减少计算并发度，调低后应观察任务队列和超时。静态 gzip 缓存按字节淘汰，上限 96 MiB，实际占用见 `staticCache.gzipBytes`；WebSocket 发送积压见 `socketBuffers.total` / `max`；`persist.snapshotBytes` 是最近保存的 JSON 字节数。房间数不等于活跃对局数，`matches` 包含所有运行对局，`roomMatches` / `standaloneMatches` 区分房间与无房间匹配。
+模拟 Worker 各有独立 JS 堆和游戏数据副本，启动后为复用而保持存活。`SP_WORKERS=4` 比默认最多 8 个线程节省内存，但会减少计算并发度，调低后应观察任务队列和超时。静态 gzip 缓存按字节淘汰，上限 96 MiB，实际占用见 `/metrics` 的 `staticCache.gzipBytes`；WebSocket 发送积压见 `socketBuffers.total` / `max`；`persist.snapshotBytes` 是最近保存的 JSON 字节数。房间数不等于活跃对局数，`matches` 包含所有运行对局，`roomMatches` / `standaloneMatches` 区分房间与无房间匹配。
 
 本地检查可运行 `node --expose-gc tools/memorybench.mjs`：比较 276 个信息确认阶段房间创建 / 销毁前后的主线程堆，以及 1 / 4 / 8 个 Worker 完成真实战斗后的进程 RSS。仅对主线程显式 GC，不采集生产环境，也不模拟 276 场同时战斗，不能当作生产内存上限。房间 / 对局销毁后主线程已用堆下降，而 RSS 不马上下降，可能是其他线程、V8 保留的堆或原生分配器的高水位；应结合持续采样判断是否泄漏，不能只凭一个 Docker 数值定性。
 
@@ -400,7 +418,7 @@ location = /resource-sw.js {
 - `level`：`info`（普通，默认）、`warning`（提醒）或 `urgent`（紧急）。
 - `enabled`：布尔值，默认 true；设为 false、删除该条目或清空数组可撤回。
 
-配置最多 100 条，总文件最多 128 KiB。重叠公告仅显示等级最高的一条；同等级先显示触发时间较早的，同一触发时间按文件顺序。等待中的公告仍按原计划到期，不延长有效期。配置格式有误、文件不可读或保存时暂时缺失时，保留上一份有效配置直到它到期；日志和 `/healthz.announcements.configError` 可定位原因。清空时请写入合法的 `{"announcements": []}`，不要用删除文件代替撤回。
+配置最多 100 条，总文件最多 128 KiB。重叠公告仅显示等级最高的一条；同等级先显示触发时间较早的，同一触发时间按文件顺序。等待中的公告仍按原计划到期，不延长有效期。配置格式有误、文件不可读或保存时暂时缺失时，保留上一份有效配置直到它到期；日志和 `/metrics.announcements.configError` 可定位原因。清空时请写入合法的 `{"announcements": []}`，不要用删除文件代替撤回。
 
 PowerShell 立即发布一条持续 60 秒的通知（会替换现有列表）：
 
@@ -471,7 +489,7 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 | 本地提取失败 | 游戏照常运行，只是第 6 节表格里的几样换成替代样式。确认客户端已下载全部资源；Python 版本太新导致依赖安装失败时，安装 Python 3.12 后删除 `.venv-extract` 再运行 `node tools/setup.mjs --local` |
 | 3D 棋盘没出现 | 需要本地提取的棋盘贴图（`node tools/doctor.mjs` 会显示「3D 棋盘可用」），以及支持 WebGL2 的浏览器。没有客户端的服务器可以从同一版本的整合包复制本地素材（第 6 节） |
 | 断线 | 同盟模拟 10 分钟内、独立模拟 24 小时内（`config.constants.singleReconnectTime`）用同一浏览器重新打开页面，自动回到原座位。同盟掉线期间按原阵容自动作战、到时自动准备（不会代为购买；想让 AI 代打请用「离开模拟 → 暂离（AI 托管）」）；独立模拟不计时，等你回来 |
-| 重启（容器 / 进程）后玩家回不到房间 | 没设 `SP_REDIS_URL` 时这是预期行为（纯内存）。设了之后看启动日志的 `State:` 行和 `[persist] state loaded (…)`；`GET /healthz` 的 `persist.writes` 应持续增长。宕机超过重连窗口（同盟 10 分钟 / 独立 24 小时）的会话必然丢弃 |
+| 重启（容器 / 进程）后玩家回不到房间 | 没设 `SP_REDIS_URL` 时这是预期行为（纯内存）。设了之后看启动日志的 `State:` 行和 `[persist] state loaded (…)`；`GET /metrics` 的 `persist.writes` 应持续增长。宕机超过重连窗口（同盟 10 分钟 / 独立 24 小时）的会话必然丢弃 |
 | 日志刷 `[redis] connect failed / write failed` | Redis 不可达或权限不对；对局本身照常进行（只是重启后回不到房间，同上一行）。确认地址（`redis://主机:端口/库号`）、有没有设密码（`redis://:密码@主机:6379/0`）、容器网络里主机名是否是服务名 |
 | 设为 CDN 后素材 404 / 控制台报跨域 | CDN 目录结构必须与 `public/assets/` 一致；Spine 的 `.skel` / `.atlas` 靠 `fetch` 读取，需要 `Access-Control-Allow-Origin`。先直接访问 `<CDN>/assets/char/avatar/char_002_amiya.png` 确认能打开 |
 

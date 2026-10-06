@@ -17,7 +17,7 @@ The server rewrites every `/assets/…` URL of the two manifests it serves — `
 `data/local-assets.json` — to `<SP_ASSETS_CDN>/assets/…` (images,
 Spine skeletons/atlases, audio and the local-client extraction all follow the manifest). A same-origin prefix works too
 (`SP_ASSETS_CDN=/cdn`). Leave it unset and the server serves `/assets/…` itself, exactly as before; when it is set, the
-local copy still works, so you can roll back at any time. `GET /healthz` reports the active base as `assetsCdn`.
+local copy still works, so you can roll back at any time. `GET /metrics` reports the active base as `assetsCdn`.
 
 The CDN must mirror the `public/assets/` layout (upload the directory as-is) and must allow cross-origin reads: the
 client fetches Spine `.skel` / `.atlas` files with `fetch` and loads images with `crossOrigin="anonymous"`, so send
@@ -36,7 +36,7 @@ after reading the JSON, using the server's `SP_ASSETS_CDN` supplied by `/js/asse
 root-relative asset URLs continue to use the game origin. No export command or preprocessing is needed;
 hash-map keys and server-side source files stay unchanged.
 `local-assets.json` and the generated `resource-manifest.json` stay on the game server for optional art and preloading.
-The two CDN settings are independent; `/healthz.dataCdn` reports the data base, and unsetting `SP_DATA_CDN` restores
+The two CDN settings are independent; `/metrics.dataCdn` reports the data base, and unsetting `SP_DATA_CDN` restores
 local data responses. See [DEPLOY.md §3.2](DEPLOY.md#32-素材放-cdn).
 
 ## Preload (optional asset preloading)

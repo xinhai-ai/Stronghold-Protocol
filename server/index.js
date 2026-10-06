@@ -30,8 +30,8 @@
 //     changes, and an unreachable Redis only logs a warning (server/redis.js, server/persist.js).
 //   * Assets CDN (docs/DEPLOY.md §3.2): SP_ASSETS_CDN rewrites the /assets/… URLs of the manifests served under
 //     /data/ (data/assets.json, data/local-assets.json) to the CDN directory — the client needs no change.
-//   * Data CDN: SP_DATA_CDN is supplied at runtime for direct browser requests to <base>/data/*.json; /data/ redirects
-//     remain for older pages. Local-art and generated resource manifests stay here; game logic reads local data.
+//   * Data CDN: SP_DATA_CDN is supplied at runtime for direct browser requests to <base>/data/*.json. Requests to this
+//     server's /data/ always serve local data; local-art and generated resource manifests stay on the game origin.
 //   * Asset preload (docs/ASSETS.md「Preload」): GET /data/resource-manifest.json lists every asset file the client
 //     may preload into Cache Storage (tier 1 essential → tier 2 the rest), derived from those same manifests and
 //     rewritten the same way, so an optional client-side preload works without a CDN-less install (server/resources.js).
@@ -545,15 +545,6 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
         log.error('[http] stat failed', e);
         sendError(req, res, 500, '服务器内部错误 · Internal error');
       }
-      return;
-    }
-    // Redirect original static JSON, including assets.json and asset-hashes.json. Browser loaders rewrite the
-    // raw asset URLs using /js/asset-cdn.js. Optional local art stays local.
-    if (dataCdnBase && mount.name === 'data' && segments.length === 1
-      && path.extname(segments[0]).toLowerCase() === '.json' && segments[0].toLowerCase() !== LOCAL_ART_MANIFEST) {
-      const location = `${dataCdnBase}/data/${encodeURIComponent(segments[0])}${query ? `?${query}` : ''}`;
-      res.writeHead(307, { Location: location, 'Cache-Control': 'no-store', 'Content-Length': 0 });
-      res.end();
       return;
     }
     // assets CDN: the manifests are rewritten on the way out, so every client keeps requesting /data/assets.json

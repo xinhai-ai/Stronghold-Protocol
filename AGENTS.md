@@ -34,8 +34,8 @@
 - 页面素材与数据 CDN 地址来自服务器动态生成的 `/js/asset-cdn.js`，分别导出 `ASSETS_CDN` 和 `DATA_CDN`，并非 `/healthz` 或 `/metrics`。磁盘上的 `public/js/asset-cdn.js` 是两者均为空的配置回退。任一 CDN 设置变化都必须改变运行时模块的 ETag。
 - Vite 必须将此模块保留为外部的同源绝对 URL。保留 `makeAbsoluteExternalsRelative: false`，避免把 `/js/asset-cdn.js` 当成文件系统路径改写。
 - 同一份构建可以通过启动时的 `SP_ASSETS_CDN` 和 `SP_DATA_CDN` 使用不同 CDN。不要在构建时固化环境配置，也不要把磁盘上的空 CDN 配置直接内联。
-- 页面数据加载器、浏览器模拟和独立素材加载器直接读取数据 CDN 的静态 JSON；`shared/cdn.js` 的 `dataUrl()` 保留 `/data/local-assets.json` 与 `/data/resource-manifest.json` 的同源例外。显式传入的加载器 `base` / `url` / `dataBase` 仍优先，不能被运行时 CDN 覆盖。保留 Node 对旧页面的 307 兼容路由和素材清单 URL 改写，合并后运行 CDN 测试。
-- CDN 回源 `/data/` 必须提供静态文件，不能再经过 Node 的数据跳转；游戏源站的运行时配置、本地素材清单和动态预载清单继续由 Node 提供。
+- 页面数据加载器、浏览器模拟和独立素材加载器直接读取数据 CDN 的静态 JSON；`shared/cdn.js` 的 `dataUrl()` 保留 `/data/local-assets.json` 与 `/data/resource-manifest.json` 的同源例外。显式传入的加载器 `base` / `url` / `dataBase` 仍优先，不能被运行时 CDN 覆盖。Node 的 `/data/` 始终提供本地数据，已移除数据 CDN 的 307 跳转，不要在合并时恢复；保留素材清单 URL 改写，合并后运行 CDN 测试。
+- CDN 回源可使用 Nginx 静态文件或 Node 的本地数据响应，配置 JSON 跨域响应头并保持数据版本一致；游戏源站的运行时配置、本地素材清单和动态预载清单继续由 Node 提供。
 - `public/js/render/boardArt.js` 读取静态 `tiles.json` 后也要改写 `source` 中的素材路径；仅让裁切表走 CDN 不够，否则 D、common_D、BG 图片会回到源站。保留无 CDN 和已有绝对 URL 的行为，用 `test/render/boardart.test.js` 验证。
 
 ## HTTP 缓存、Service Worker 与更新检测

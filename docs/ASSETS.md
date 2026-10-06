@@ -27,8 +27,8 @@ so a long `Cache-Control` is safe only if you invalidate on update — the serve
 
 Game data can also use a CDN: set `SP_DATA_CDN=https://cdn.example.com/stronghold` and upload the matching release's
 `data/` directory under that base. Page, simulation and standalone asset loaders read the runtime `DATA_CDN` from
-`/js/asset-cdn.js` and request `<SP_DATA_CDN>/data/<file>.json` directly. Older pages requesting origin `/data/*.json`
-still receive a temporary redirect for compatibility. The CDN must allow CORS for JSON and should use
+`/js/asset-cdn.js` and request `<SP_DATA_CDN>/data/<file>.json` directly. Origin `/data/*.json` requests always read
+local data without a CDN redirect, retaining GET/HEAD and HTTP cache validators. The CDN must allow CORS for JSON and should use
 `Cache-Control: no-cache` with validators, or a release-specific base URL, to keep browser and server data in sync.
 Keep the local data directory: the server still reads it for game logic. `assets.json` and `asset-hashes.json` also
 come directly from the data CDN. Upload the original JSON files as-is: browser data and asset loaders rewrite `/assets/…`
@@ -40,8 +40,8 @@ hash-map keys and server-side source files stay unchanged.
 The two CDN settings are independent; `/metrics.dataCdn` reports the data base, and unsetting `SP_DATA_CDN` restores
 local data responses. See [DEPLOY.md §3.2](DEPLOY.md#32-素材放-cdn).
 
-The CDN's data origin must serve static files rather than proxying back to the Node data redirect route, which would
-redirect to itself. Keep `/data/local-assets.json`, `/data/resource-manifest.json` and `/js/asset-cdn.js` on the game
+The CDN's data origin can serve static files or proxy to Node's local data responses; Node no longer redirects data
+requests. Configure CORS on the CDN. Keep `/data/local-assets.json`, `/data/resource-manifest.json` and `/js/asset-cdn.js` on the game
 origin backed by Node. Rebuild the client for this upgrade; subsequent CDN configuration changes only require a server
 restart and page refresh.
 

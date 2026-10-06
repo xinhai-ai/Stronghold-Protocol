@@ -66,8 +66,10 @@ test('built HTML, hashed assets, runtime CDN and data routes preserve the produc
   assert.match(configText, /export const DATA_CDN = "https:\/\/data\.example\.com\/game"/);
   assert.ok(allJs.some((s) => /DATA_CDN/.test(s)), 'built loaders consume the runtime data CDN');
   const data = await fetch(origin + '/data/chess.json', { redirect: 'manual' });
-  assert.equal(data.status, 307);
-  assert.equal(data.headers.get('location'), 'https://data.example.com/game/data/chess.json');
+  assert.equal(data.status, 200);
+  assert.equal(data.headers.get('location'), null);
+  assert.equal(data.headers.get('cache-control'), 'no-cache');
+  assert.deepEqual(await data.json(), JSON.parse(await fs.readFile(path.join(root, 'data/chess.json'), 'utf8')));
   // Explicit source mode works even with built files present.
   const source = createStaticHandler({ publicDir, dataDir: path.join(root, 'data'), sharedDir: path.join(root, 'shared'), clientBuild: false });
   const srv = http.createServer((req, res) => source(req, res, '/', ''));

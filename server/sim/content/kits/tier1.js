@@ -476,10 +476,17 @@ export default {
     return {
       skills: { 'skcom_magic_rage[3]': { kind: 'duration', mods: { aspd: num(skillBbOf(chess, 'skcom_magic_rage[3]').attack_speed) } } },
       trait: {
-        afterHit(battle, u, target, info) {
-          if (!(info.dealt > 0)) return;
-          const ally = protege(u) ?? battle.lowestHpAllyInRange(u);
-          if (ally) battle.heal(u, ally, info.dealt * (u.profile.healRatio ?? 0.5), { tags: ['incantation'] });
+        // 咒愈师 trait: EVERY damage she deals heals an ally for 50 % of it (professions.js `installIncantation`,
+        // buff_template_data `vendla_tr` = ON_AFTER_OUTPUT_DAMAGE) — while 荆藤庇荫 runs her S2 says "仅对该角色触发刺玫
+        // 特性", so her protégé is the target then; otherwise it is the lowest-HP ally in range.
+        install(battle, u) {
+          battle.on('damaged', (c) => {
+            const t = c.target;
+            if (c.source !== u || !u.alive || !t || t.side !== 'enemy' || !(c.amount > 0)) return;
+            if (c.type === 'element' || c.type === 'elemental') return;
+            const ally = (c.dmg && c.dmg.traitAlly) || protege(u) || battle.lowestHpAllyInRange(u);
+            if (ally) battle.heal(u, ally, c.amount * (u.profile.healRatio ?? 0.5), { tags: ['incantation'] });
+          }, { owner: u });
         },
       },
       skill: {
@@ -501,9 +508,10 @@ export default {
         battle.on('damaged', (ctx) => {
           const p = protege(unit);
           if (!p || ctx.target !== p || !byEnemyAttack(ctx) || !ctx.source.alive || !unit.canAct) return;
-          const dealt = battle.dealDamage(unit, ctx.source, { amount: unit.s.atk * num(bb.atk_scale), type: 'arts', isSkill: true, canDodge: false, tags: ['counter'] });
+          // "并仅对该角色触发刺玫特性": this counter damage is healed by the trait (install above) for the protégé — the
+          // damage instance names her, so no separate heal here (it would double)
+          battle.dealDamage(unit, ctx.source, { amount: unit.s.atk * num(bb.atk_scale), type: 'arts', isSkill: true, canDodge: false, tags: ['counter'], traitAlly: p });
           battle.fx('counter', { x: ctx.source.x, y: ctx.source.y, id: unit.id });
-          if (dealt > 0) battle.heal(unit, p, dealt * (unit.profile.healRatio ?? 0.5), { tags: ['incantation'] });
         }, { owner: unit });
         if (hs !== 1) {
           let cacheT = -1, top = null;
@@ -893,7 +901,6 @@ export default {
   // hp_recovery_per_sec_by_max_hp_ratio × max HP per second (the 生命回复速度 attribute: works under her 武者 no-heal).
   chess_char_1_18_a: (bb, chess) => {
     const t = talentBb(chess, 0);
-    const buffKey = 'utage:s2';
     const s1 = skillBbOf(chess, 'skchr_utage_1');
     return {
       skills: {
@@ -905,16 +912,16 @@ export default {
         },
       },
       skill: {
-        kind: 'passive',
+        kind: 'duration', activateOnDeploy: true, duration: num(bb.duration), spCost: 0, spType: 'none', trigger: 'NEVER',
+        mods: { atkPct: num(bb.atk) },
         onStart({ battle, unit }) {
           const loss = unit.hp * num(bb.hp_ratio);
           if (loss > 0 && unit.hp - loss >= 1) battle.loseHp(unit, loss, { source: unit });
-          battle.addBuff(unit, { key: buffKey, duration: num(bb.duration), mods: { atkPct: num(bb.atk) }, tags: ['skill'], visible: true });
           battle.fx('aoe', { x: unit.x, y: unit.y, radius: 1, id: unit.id, skill: 'breach' });
         },
       },
       talents: [{ install(battle, unit) {
-        onHitBy(battle, unit, ({ dmg }) => { if (dmg.isAttack && dmg.type === 'phys' && unit.findBuff(buffKey)) dmg.type = 'arts'; });
+        onHitBy(battle, unit, ({ dmg }) => { if (dmg.isAttack && dmg.type === 'phys' && unit.skill?.id === 'skchr_utage_2' && unit.skill.active) dmg.type = 'arts'; });
         const maxAs = num(t.min_attack_speed), minHp = num(t.min_hp_ratio);
         if (maxAs > 0 && minHp < 1) {
           battle.on('tick', () => {
@@ -957,11 +964,8 @@ export default {
     return {
       skills: {
         skchr_wildmn_1: {
-          kind: 'passive',
-          onStart({ battle, unit }) {
-            const d = num(r1?.duration);
-            if (d > 0) battle.addBuff(unit, { key: 'wildmn:s1', duration: d, mods: { aspd: num(r1?.bb?.attack_speed) }, tags: ['skill'], visible: true });
-          },
+          kind: 'duration', activateOnDeploy: true, duration: num(r1?.duration), spCost: 0, spType: 'none', trigger: 'NEVER',
+          mods: { aspd: num(r1?.bb?.attack_speed) },
         },
       },
       skill: {

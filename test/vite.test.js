@@ -11,6 +11,7 @@ import { createStaticHandler, computeBuildTag } from '../server/index.js';
 import { getData } from '../server/data.js';
 import * as nativeSpec from '../server/sim/spec.js';
 import { DataSource } from '../server/sim/simdata.js';
+import { scenariosOf } from '../tools/golden.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let temp, publicDir, outDir, manifest, server, origin;
@@ -117,6 +118,34 @@ test('built simulation retains operator kits and domain mechanics: same determin
     assert.equal(built.errors.length, 0);
     assert.deepEqual(spec.compactResult(built.result()), nativeSpec.compactResult(native.result()), `seed ${seed}`);
     assert.deepEqual(built.allyUnits.map((u) => Object.keys(u.kit || {})), native.allyUnits.map((u) => Object.keys(u.kit || {})));
+  }
+});
+
+test('built simulation matches Node for 0.1.4 sleep, deploy skills and Egir devour mechanics', async () => {
+  const simulation = Object.values(manifest).find((m) => m.name === 'simulation');
+  const namespaces = Object.values(await import(pathToFileURL(path.join(outDir, simulation.file)).href));
+  const spec = namespaces.find((n) => typeof n?.createBattleFromSpec === 'function');
+  const simdata = namespaces.find((n) => typeof n?.setSimData === 'function');
+  const raw = getData({ log: { warn() {} } });
+  simdata.setSimData(raw);
+  const selected = [
+    ...scenariosOf('roster').filter((sc) => ['roster-039', 'roster-042'].includes(sc.id)),
+    ...scenariosOf('bonds').filter((sc) => sc.id === 'bond-egirShip-high'),
+  ];
+  assert.equal(selected.length, 3, 'representative upstream scenarios exist');
+  for (const sc of selected) {
+    const input = nativeSpec.buildBattleSpec({ ...sc, battleId: sc.id, fieldId: sc.fieldId ?? 'g', content: 'full' });
+    const options = { quiet: true, recordEvents: true };
+    const native = nativeSpec.createBattleFromSpec(input, new DataSource(raw), options);
+    const built = spec.createBattleFromSpec(input, new simdata.DataSource(raw), options);
+    native.runToEnd(sc.cap ?? 300);
+    built.runToEnd(sc.cap ?? 300);
+    assert.ok(native.finished && built.finished, sc.id);
+    assert.equal(native.errors.length, 0, sc.id);
+    assert.equal(built.errors.length, 0, sc.id);
+    assert.deepEqual(spec.compactResult(built.result()), nativeSpec.compactResult(native.result()), sc.id);
+    assert.deepEqual(built.snapshot(), native.snapshot(), `${sc.id}: final state`);
+    assert.deepEqual(built.drainEvents(), native.drainEvents(), `${sc.id}: battle events`);
   }
 });
 

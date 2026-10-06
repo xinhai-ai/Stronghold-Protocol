@@ -1470,7 +1470,7 @@ function reed2(bb, chess, def) {
         }
       },
       onTick({ battle, unit, dt }) {
-        const cd = Math.max(0.1, num(bb.cooldown, 1.5)), ratio = num(unit.profile?.healRatio, num(tb.scale, 0.5));
+        const cd = Math.max(0.1, num(bb.cooldown, 1.5));
         for (const F of unit.mem.reedFire || []) {
           if (!live(F.a)) continue;
           F.acc += dt;
@@ -1480,9 +1480,10 @@ function reed2(bb, chess, def) {
           if (!c.length) c = enemiesIn(battle, unit);
           if (!c.length) continue;
           sortEnemyTargets(battle, F.a, c, null);
-          const dealt = battle.dealDamage(unit, c[0], { amount: unit.s.atk * num(bb.atk_scale, 1), type: 'arts', isSkill: true, tags: ['skill', 'fireball'] });
+          // "每1.5秒对一名敌人造成…法术伤害并仅对该干员触发焰影苇草特性": the trait heal (professions.js
+          // installIncantation) runs for this damage and names the carrier instead of the lowest-HP ally in range
+          battle.dealDamage(unit, c[0], { amount: unit.s.atk * num(bb.atk_scale, 1), type: 'arts', isSkill: true, tags: ['skill', 'fireball'], traitAlly: F.a });
           battle.fx('strike', { x: c[0].x, y: c[0].y, id: c[0].id, src: F.a.id });
-          if (dealt > 0 && ratio > 0) battle.heal(unit, F.a, dealt * ratio, { tags: ['incantation'] });
         }
       },
       onEnd({ battle, unit }) {
@@ -2678,23 +2679,24 @@ function nearl2(bb, chess, def) {
     // (whole hits negated); then she withdraws and this redeploy time is ×respawn_time (×1 when the operator deployed
     // right before her is 【卡西米尔】)
     skchr_nearl2_2: {
-      kind: 'passive',
+      kind: 'duration', activateOnDeploy: true, duration: num(def?.skill?.duration, 22), spCost: 0, spType: 'none', trigger: 'NEVER',
+      mods: { atkPct: num(bb.atk) },
       onStart({ battle, unit, skill }) {
         const dur = num(skill.duration, num(def?.skill?.duration, 22));
         if (!(dur > 0)) return;
         const prev = lastOps.map?.get(unit.ownerId);
-        const combo = !!prev && prev !== unit && hasBond(prev, 'kazimierzShip');
-        battle.addBuff(unit, { key: 'nearl2:night', mods: { atkPct: num(bb.atk) }, duration: dur, visible: true });
+        unit.mem.nearl2Combo = !!prev && prev !== unit && hasBond(prev, 'kazimierzShip');
         const hits = Math.floor(num(bb.times));
         if (hits > 0) battle.addBuff(unit, { key: 'nearl2:shield', shieldHits: hits, duration: dur, visible: true });
-        const seq = unit.deploySeq;
-        battle.after(dur, () => {
-          if (!live(unit) || unit.deploySeq !== seq) return;
-          battle.retreat(unit, { reason: 'retreat' });
-          const mul = combo ? num(bb['nearl2_s_2[withdraw][combo].respawn_time'], 1) : num(bb.respawn_time, 1);
-          if (Number.isFinite(unit.respawnAt) && mul !== 1) unit.respawnAt = battle.time + (unit.respawnAt - battle.time) * mul;
-          battle.fx('disappear', { x: unit.x, y: unit.y, id: unit.id, combo });
-        }, { owner: unit });
+      },
+      onEnd({ battle, unit, reason }) {
+        battle.removeBuff(unit, 'nearl2:shield');
+        if (reason !== 'duration' || !live(unit)) return;
+        const combo = unit.mem.nearl2Combo;
+        battle.retreat(unit, { reason: 'retreat' });
+        const mul = combo ? num(bb['nearl2_s_2[withdraw][combo].respawn_time'], 1) : num(bb.respawn_time, 1);
+        if (Number.isFinite(unit.respawnAt) && mul !== 1) unit.respawnAt = battle.time + (unit.respawnAt - battle.time) * mul;
+        battle.fx('disappear', { x: unit.x, y: unit.y, id: unit.id, combo });
       },
     },
   };

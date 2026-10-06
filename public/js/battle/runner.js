@@ -67,6 +67,8 @@ import { store as appStore } from '../store.js';
 import { unitStatsEntry, fxForm } from '../../../shared/protocol.js';
 import { DATA_CDN } from '../asset-cdn.js';
 
+import { spectateEffects } from './observe.js';
+
 const TICK = 1 / 30;
 /** Fast-forward budget per frame (ticks) when far behind. */
 export const CATCHUP_TICKS = 240;
@@ -456,6 +458,9 @@ export function createBattleRunner(deps) {
       } catch (err) { console.warn('[runner] result failed', err); }
       if (result) {
         e.result = result;
+        // the view answers with the settlement voice of this battle (screens/game.js → audio.voice result*): the
+        // compact result carries the leaks and the kill count the slot is picked from
+        emit('result', { fieldId: e.fieldId, battleId: e.battleId, own: !!e.own, result });
         deliver(e);
       }
     }
@@ -566,6 +571,8 @@ export function createBattleRunner(deps) {
     const field = {
       t: 'm.field', ...meta, fieldId: e.fieldId, kind: e.kind, rect: meta.rect ?? e.spec.rect, stageId: meta.stageId ?? e.spec.stageId,
       live: !e.done, battleId: e.battleId, players: e.members.slice(), local: true, speed: e.speed,
+      // the watched player's effects column (user playtest #2; undefined for 联防 / boss pairs and server-run fields)
+      effects: spectateEffects(e.spec, e.members),
       // which half each player holds (联防: the first helper takes the right half; boss pairs: L / R)
       sides: Object.fromEntries((e.spec.players || []).filter((p) => p && p.playerId).map((p) => [p.playerId, p.side === 'R' || Number(p.colOffset) >= 8 ? 'R' : 'L'])),
     };

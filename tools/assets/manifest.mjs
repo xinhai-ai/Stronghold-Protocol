@@ -112,7 +112,12 @@ export function resolveTemplate(template, { root, spine, sourceOf = () => undefi
       for (const u of [e.skel, e.atlas, ...e.textures]) files.add(u.replace(/^\/assets\//, ''));
       return e;
     }
-    if (Array.isArray(node)) return node.map((x, i) => walk(x, `${path}[${i}]`)).filter((x) => x !== undefined);
+    if (Array.isArray(node)) {
+      const lines = node.map((x, i) => walk(x, `${path}[${i}]`)).filter((x) => x !== undefined);
+      // An array whose every line is missing on disk is a missing entry, like a missing leaf (e.g. a voice slot whose
+      // lines were never downloaded here): dropped, never an empty [] that reads as a slot with no lines.
+      return lines.length || !node.length ? lines : undefined;
+    }
     if (typeof node !== 'object') return node;
     const out = {};
     for (const [k, v] of Object.entries(node)) {

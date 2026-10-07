@@ -30,6 +30,7 @@
 
 import { BOSS_ROW_OFFSET, COLS, BOSS_POOL_MIN_HP } from '../sim/constants.js';
 import { mirrorDir, normDir } from '../sim/dir.js';
+import { bossPoolShareOf } from './gamedata.js';
 
 /**
  * BOSS_HIT ticker thresholds (activity_table autoChessData.broadcastList comment_boss_hit_1..3, paramList 0.2 / 0.5 /
@@ -57,7 +58,7 @@ export function pairPlayers(alive) {
   return groups;
 }
 
-/** Shared boss HP for a boss id with `aliveCount` alive players (GameData.bossPoolShare; omitted ⇒ a full team). */
+/** Shared boss HP for a boss id with `aliveCount` alive players (GameData.bossPoolShare / bossPoolShareOf; omitted ⇒ a full team). */
 export function bossPoolHp(gd, bossId, aliveCount) {
   const boss = gd.boss(bossId);
   const diff = gd.difficulty;
@@ -65,22 +66,8 @@ export function bossPoolHp(gd, bossId, aliveCount) {
   if (base == null && boss && boss.bloodPoint) base = Object.values(boss.bloodPoint).find((v) => Number.isFinite(v)) ?? null;
   if (base == null) base = 500000;
   const tune = typeof gd.bossHpMul === 'function' ? gd.bossHpMul(bossId) : 1;
-  let share;
-  if (typeof gd.bossPoolShare === 'function') share = gd.bossPoolShare(aliveCount);
-  else {
-    const scale = gd.mode.bossHpScale && typeof gd.mode.bossHpScale === 'object' ? gd.mode.bossHpScale : {};
-    const cfg = gd.config.bossHpScale && typeof gd.config.bossHpScale === 'object' ? gd.config.bossHpScale : {};
-    const pick = (key, fallback) => Number.isFinite(scale[key]) && scale[key] > 0 ? scale[key]
-      : Number.isFinite(cfg[key]) && cfg[key] > 0 ? cfg[key] : fallback;
-    if (gd.isSolo) share = pick('solo', 1);
-    else {
-      const scaling = typeof scale.aliveScaling === 'boolean' ? scale.aliveScaling : cfg.aliveScaling === true;
-      const full = Math.max(1, Math.floor(pick('aliveFull', 4)));
-      const n = Number(aliveCount);
-      const alive = scaling && Number.isFinite(n) && n >= 1 ? Math.min(full, Math.floor(n)) : full;
-      share = pick('coop', 4) * alive / full;
-    }
-  }
+  const share = typeof gd.bossPoolShare === 'function' ? gd.bossPoolShare(aliveCount)
+    : bossPoolShareOf(gd.mode?.bossHpScale, gd.config?.bossHpScale, !!gd.isSolo, aliveCount);
   return Math.max(1, Math.round(base * share * tune));
 }
 

@@ -1,776 +1,60 @@
-// server/index.js — process entry & boot (DESIGN §1, §2).
+// server/index.js — process entry & boot (DESIGN §1, §2). Plain node:http + ws, no framework: startServer() below
+// wires the modules under server/http/, in this order —
 //
-//   * node:http static server:  /        → public/      (index.html for directories)
-//                                /data/   → data/        (generated game data)
-//                                /shared/ → shared/      (ESM shared with the browser)
-//                                /sim/    → server/sim/  (the battle simulation, read-only, `.js` only — client-side
-//                                                         combat, DESIGN §14; the Node-only loader nodeData.js is not served)
-//                                /data.js → a generated browser stand-in of server/data.js (the sim's content modules
-//                                           import `../../../data.js`; in the browser it serves the data injected with
-//                                           /sim/simdata.js setSimData). No other server file is ever served.
-//                                /media/bgm/act1 → public/assets/audio/bgm/act1.mp3 — the same audio files, addressed
-//                                           **without** an extension so download managers (IDM / 迅雷 …) stop popping a
-//                                           "下载文件信息" dialog for every BGM track (shared/media.js, public/js/media.js)
-//     MIME types incl. .mjs/.js text/javascript, .skel application/octet-stream, .atlas text/plain;
-//     gzip for text-like types, .skel and uncompressed fonts when the client accepts it (small files are
-//     compressed once and cached in memory); strong ETag + Last-Modified with 304s; Cache-Control
-//     (html & code/data: no-cache + revalidate; hashed public/build/assets: immutable;
-//      public/assets|fonts|vendor: 1 day; any `?v=` URL: immutable);
-//     single byte-range requests (206/416, used by <audio>); traversal & dotfile protection; 404 page.
-//   * GET /healthz → JSON status (protocol `version`, release `app`, rooms, matches, sessions, sockets).
-//   * GET /metrics → JSON operational diagnostics (persistence, workers, memory, caches, usage and configuration).
-//   * WebSocket (ws) at /ws, maxPayload 64 KB → server/net.js Network → server/lobby.js Lobby.
-//   * Env: PORT (default 3000), HOST (default 0.0.0.0), TRUST_PROXY ('auto' default: honour CF-Connecting-IP /
-//     X-Real-IP / X-Forwarded-For only from loopback/private peers such as a local cloudflared; '1' always; '0' never).
-//     Prints LAN URLs on boot; it also prints the effective limits (rooms/matches/sockets).
-//   * State (docs/DEPLOY.md §3.1): with SP_REDIS_URL (or REDIS_URL) the server writes a state document — sessions,
-//     rooms and the match checkpoints of server/match/snapshot.js — to Redis every SP_REDIS_SAVE_MS (default 10 s) and
-//     once on shutdown, and reads it back before it starts listening, so a container restart keeps every player on
-//     their seat and resumes a running match at its last checkpoint. Redis is optional: without the variable nothing
-//     changes, and an unreachable Redis only logs a warning (server/redis.js, server/persist.js).
-//   * Assets CDN (docs/DEPLOY.md §3.2): SP_ASSETS_CDN rewrites the /assets/… URLs of the manifests served under
-//     /data/ (data/assets.json, data/local-assets.json) to the CDN directory — the client needs no change.
-//   * Data CDN: SP_DATA_CDN is supplied at runtime for direct browser requests to <base>/data/*.json. Requests to this
-//     server's /data/ always serve local data; local-art and generated resource manifests stay on the game origin.
-//   * Asset preload (docs/ASSETS.md「Preload」): GET /data/resource-manifest.json lists every asset file the client
-//     may preload into Cache Storage (tier 1 essential → tier 2 the rest), derived from those same manifests and
-//     rewritten the same way, so an optional client-side preload works without a CDN-less install (server/resources.js).
-//   * Per-network limits for internet clients (see net.js clientAddress; local/LAN peers are exempt): open sockets
-//     (maxConnectionsPerAddr, refused at upgrade with 429), rooms and running matches (lobby.js). The effective values
-//     are printed on boot, reported as `limits` on /metrics and can be overridden with SP_MAX_ROOMS,
-//     SP_MAX_ROOMS_PER_ADDR, SP_MAX_MATCHES_PER_ADDR, SP_MAX_CONNECTIONS and SP_MAX_CONNECTIONS_PER_ADDR
-//     (docs/DEPLOY.md §3.4; an explicit startServer option wins, 0 = unlimited for the per-network caps).
-//   * Graceful shutdown on SIGINT/SIGTERM (rooms get room.closed{reason:'shutdown'}, sockets close 1001).
+//   http/config.js     ROOT, the served directories, the environment (PORT 3000, HOST 0.0.0.0, TRUST_PROXY auto, DEBUG),
+//                      which startServer() options go to net.js / lobby.js, the console logger
+//   http/websocket.js  session wiring (SessionRegistry → Lobby → Network) and the WebSocket at /ws (maxPayload 64 KB;
+//                      refused at upgrade with 404 / 429 per network / 503)
+//   http/static.js     the static mounts (/ → public/, /data/, /shared/, /sim/ `.js` only), the /data.js browser stand-in,
+//                      the content packs (/packs/index.json, /packs/<id>/<file> — the registry is packs.js)
+//   http/media.js      /media/bgm/act1 → public/assets/audio/bgm/act1.mp3 (audio addressed without its extension)
+//   http/files.js      one file → response: MIME, gzip + memory cache, ETag / Last-Modified / 304, Cache-Control, ranges
+//   http/buildTag.js   the build tag of the served browser runtime (/healthz `build`, public/js/ui/buildGuard.js)
+//   http/routes.js     the request listener: security headers, 414 / 400 / 405, GET /healthz → JSON status, else static
+//   http/common.js     what every answer shares: security headers, URL split, error page, JSON replies, bare 400
+//   http/boot.js       banner (Local / LAN / tunnel URLs), port-in-use hint, graceful shutdown on SIGINT / SIGTERM
+//
+// Per-network limits for internet clients (see net.js clientAddress; local/LAN peers are exempt): open sockets
+// (maxConnectionsPerAddr, refused at upgrade with 429), rooms and running matches (lobby.js).
 //
 // Programmatic use (tests): `const srv = await startServer({ port: 0, quiet: true }); … await srv.close();`
 // The server only auto-listens when this file is the process entry point.
 
 import http from 'node:http';
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
-import zlib from 'node:zlib';
-import { createHash } from 'node:crypto';
-import { promisify } from 'node:util';
-import { pipeline } from 'node:stream/promises';
-import { fileURLToPath } from 'node:url';
-import { WebSocketServer } from 'ws';
-import { Network, SessionRegistry, NET_DEFAULTS, send } from './net.js';
-import { Lobby, LOBBY_DEFAULTS } from './lobby.js';
-import { getData, loadData } from './data.js';
-import { parseBotRehearsal, parseCombat, parseVerify } from './match/Match.js';
+import { parseAssetCdn, parseEnvLimit, parseWsCompression } from './http/config.js';
 import { openStoreFromEnv } from './redis.js';
 import { Persister, restoreServer, SAVE_MS } from './persist.js';
 import { SimulationPool, workerSettings } from './workers/pool.js';
 import { Announcements } from './announcements.js';
 import { createPublicApi } from './publicApi.js';
-import { createResourceIndex, RESOURCE_MANIFEST_FILE } from './resources.js';
-import { PROTOCOL_VERSION, APP_VERSION } from '../shared/constants.js';
-import { MEDIA_PREFIX, AUDIO_EXTS } from '../shared/media.js';
-import { rewriteAssetPaths } from '../shared/cdn.js';
+import { sendJson, sendError } from './http/common.js';
+export { parseAssetCdn, parseEnvLimit, parseWsCompression } from './http/config.js';
+export { WS_DEFLATE_THRESHOLD } from './http/websocket.js';
 export { rewriteAssetPaths } from '../shared/cdn.js';
 
-/** Repository root. */
-export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+import { getData, loadData } from './data.js';
+import { ROOT, listenAddress, serveDirs, makeLogger, parseTrustProxy } from './http/config.js';
+import { WS_MAX_PAYLOAD, createSessionStack, attachWebSocket } from './http/websocket.js';
+import { DATA_SHIM_JS, createStaticHandler } from './http/static.js';
+import { createPackRegistry } from './packs.js';
+import { MIME, COMPRESSIBLE, acceptsGzip, parseRange } from './http/files.js';
+import { BUILD_INPUTS, computeBuildTag, buildTag, resetBuildTag } from './http/buildTag.js';
+import { createRequestHandler } from './http/routes.js';
+import { answerClientError } from './http/common.js';
+import { lanUrls, isProcessEntry, runMain } from './http/boot.js';
 
-/** Inbound WebSocket frame limit (DESIGN §8). */
-export const WS_MAX_PAYLOAD = 64 * 1024;
-/** Compress only messages at least this large; small intents gain nothing from deflate framing. */
-export const WS_DEFLATE_THRESHOLD = 1024;
-
-/** Browser stand-in of server/data.js, served at /data.js (see the header). */
-export const DATA_SHIM_JS = `// Generated by server/index.js — browser stand-in for server/data.js (DESIGN §14 client-side combat).
-// The simulation's content modules (/sim/content/support/index.js) import getData() from here; it returns the game data
-// the page injected with /sim/simdata.js setSimData(data).
-import { getSimData } from './sim/simdata.js';
-export function getData() { return getSimData() || {}; }
-export function resetData() {}
-`;
-/** Files under server/sim that are never served (Node-only). */
-const SIM_PRIVATE = new Set(['nodedata.js']); // lower-case (compared case-insensitively)
-
-/** Extension → Content-Type. */
-export const MIME = Object.freeze({
-  '.html': 'text/html; charset=utf-8',
-  '.htm': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.map': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8',
-  '.md': 'text/markdown; charset=utf-8',
-  '.csv': 'text/csv; charset=utf-8',
-  '.xml': 'application/xml; charset=utf-8',
-  '.atlas': 'text/plain; charset=utf-8',
-  '.skel': 'application/octet-stream',
-  '.bin': 'application/octet-stream',
-  '.wasm': 'application/wasm',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.avif': 'image/avif',
-  '.svg': 'image/svg+xml; charset=utf-8',
-  '.ico': 'image/x-icon',
-  '.mp3': 'audio/mpeg',
-  '.ogg': 'audio/ogg',
-  '.oga': 'audio/ogg',
-  '.opus': 'audio/ogg',
-  '.wav': 'audio/wav',
-  '.m4a': 'audio/mp4',
-  '.aac': 'audio/aac',
-  '.webm': 'video/webm',
-  '.mp4': 'video/mp4',
-  '.woff2': 'font/woff2',
-  '.woff': 'font/woff',
-  '.otf': 'font/otf',
-  '.ttf': 'font/ttf',
-});
-
-/** Extensions worth gzipping (text-like, .skel, uncompressed fonts). */
-export const COMPRESSIBLE = new Set([
-  '.html', '.htm', '.js', '.mjs', '.css', '.json', '.map', '.webmanifest', '.txt', '.md', '.csv', '.xml',
-  '.atlas', '.skel', '.bin', '.wasm', '.svg', '.ico', '.otf', '.ttf', '.wav',
-]);
-
-const GZIP_MIN_BYTES = 512;
-const GZIP_CACHE_MAX_FILE = 8 << 20;      // larger files are gzip-streamed on the fly
-const GZIP_CACHE_MAX_TOTAL = 96 << 20;
-// Asset URLs carry no content hash yet, and tools/fetch-assets.mjs / tools/vendor.mjs can rewrite files in
-// place (atlas + png + skel must stay consistent), so "long" is one day; revalidation after that is a cheap 304.
-const LONG_CACHE = 'public, max-age=86400';          // 1 day
-const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
-const LONG_CACHE_DIRS = ['assets', 'fonts', 'vendor']; // first path segment under public/
-const MAX_URL_LENGTH = 4096;
-
-// ---------------------------------------------------------------------------------------------------
-// build tag — the "your page is stale" signal (public/js/ui/buildGuard.js)
-// ---------------------------------------------------------------------------------------------------
-
-/**
- * The files that make up the runtime the BROWSER loads. A change in any of them is a new build: an already-open page
- * keeps the modules it imported at load time (ES modules live in the page's module map for its whole lifetime), so
- * without this signal a deployed fix could never reach a player who does not reload — a client-only battle fix
- * shipped exactly that way and stayed invisible on a page that had been opened before the deploy.
- *
- * In source mode `server/`, `data/` and `shared/` are deliberately NOT in here: this process read them once at startup, so when they
- * change without a restart the server still runs the old simulation and data — a page that reloaded into the new files
- * would be out of step with the server that validates its battles (and DEPLOY.md restarts the server for every update).
- * A Vite build uses public/build plus the separately served resource worker modules instead (computeBuildTag).
- */
-export const BUILD_INPUTS = Object.freeze(['public/index.html', 'public/js', 'public/css']);
-
-/** Names the static server never serves: dot files (`.DS_Store`, `.main.js.swp`) and editor backups (`main.js~`). */
-const isIgnoredBuildName = (name) => name.startsWith('.') || name.endsWith('~');
-
-/** @type {{ tag: string|null }|null} */
-let buildCache = null;
-
-/** Every file under `abs` (or `abs` itself), as `[relative path, size, mtimeMs]`, sorted by path. Missing → []. */
-function buildEntries(abs, rel, out) {
-  let stat;
-  try { stat = fs.statSync(abs); } catch { return; }
-  if (stat.isFile()) { out.push([rel, stat.size, stat.mtimeMs]); return; }
-  if (!stat.isDirectory()) return;
-  let names;
-  try { names = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
-  for (const d of names.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
-    if (isIgnoredBuildName(d.name)) continue;
-    const child = path.join(abs, d.name);
-    const childRel = rel ? `${rel}/${d.name}` : d.name;
-    if (d.isDirectory()) buildEntries(child, childRel, out);
-    else if (d.isFile()) { try { const s = fs.statSync(child); out.push([childRel, s.size, s.mtimeMs]); } catch { /* ignore */ } }
-  }
-}
-
-/** Short hash of the served browser runtime; built HTML/chunks take precedence over the source shell. */
-export function computeBuildTag(root = ROOT, { clientBuild = true } = {}) {
-  const out = [];
-  const inputs = clientBuild && fs.existsSync(path.join(root, 'public/build/index.html'))
-    ? ['public/build', 'public/resource-sw.js', 'public/js/resources', 'shared/media.js'] : BUILD_INPUTS;
-  for (const rel of inputs) buildEntries(path.join(root, rel), rel, out);
-  if (!out.length) return null;
-  out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  const h = createHash('sha1');
-  for (const [rel, size, mtime] of out) h.update(`${rel}\0${size}\0${Math.floor(mtime)}\n`);
-  return h.digest('hex').slice(0, 12);
-}
-
-/**
- * The build tag of THIS process. Computed once (`startServer` warms it at startup): the tag describes the files the
- * process is actually serving, every update restarts the server (DEPLOY.md), and re-reading the tree on a timer would
- * let a half-finished deploy — or a file that changed while the process kept running — move the tag under a page.
- * @param {string} [root] used by the first call only (tests)
- */
-export function buildTag(root = ROOT, options = {}) {
-  if (buildCache === null) buildCache = { tag: computeBuildTag(root, options) };
-  return buildCache.tag;
-}
-
-/** Drop the cache: the next `buildTag()` re-reads the tree (tests, and `startServer`). */
-export function resetBuildTag() { buildCache = null; }
-
-const gzipAsync = promisify(zlib.gzip);
-const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
-
-// ---------------------------------------------------------------------------------------------------
-// gzip cache (LRU by bytes)
-// ---------------------------------------------------------------------------------------------------
-
-class GzipCache {
-  constructor(maxTotal = GZIP_CACHE_MAX_TOTAL) {
-    this.maxTotal = maxTotal;
-    this.total = 0;
-    /** @type {Map<string, Buffer>} */ this.map = new Map();
-    /** @type {Map<string, Promise<Buffer>>} */ this.inflight = new Map();
-  }
-
-  /** @returns {Promise<Buffer>} gzip of the file identified by (path, size, mtime) */
-  get(absPath, stat) {
-    const key = `${absPath}\0${stat.size}\0${stat.mtimeMs}`;
-    const hit = this.map.get(key);
-    if (hit) { this.map.delete(key); this.map.set(key, hit); return Promise.resolve(hit); }
-    const pending = this.inflight.get(key);
-    if (pending) return pending;
-    const p = (async () => {
-      const raw = await fsp.readFile(absPath);
-      const gz = await gzipAsync(raw, { level: 6 });
-      this.store(key, gz);
-      return gz;
-    })().finally(() => this.inflight.delete(key));
-    this.inflight.set(key, p);
-    return p;
-  }
-
-  store(key, buf) {
-    if (buf.length > this.maxTotal) return;
-    this.map.set(key, buf);
-    this.total += buf.length;
-    for (const [k, v] of this.map) {
-      if (this.total <= this.maxTotal) break;
-      this.map.delete(k);
-      this.total -= v.length;
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------------------------------
-// assets CDN
-// ---------------------------------------------------------------------------------------------------
-
-/**
- * Parse the assets CDN setting: SP_ASSETS_CDN (or ASSETS_CDN) — a directory that serves the same layout as
- * `public/assets/` (docs/ASSETS.md), either absolute (`https://cdn.example.com/stronghold`) or same-origin
- * (`/cdn`). Empty / unset disables it. Trailing slashes are dropped.
- * @param {string | undefined} v
- * @returns {string} '' when disabled
- */
-export function parseAssetCdn(v) {
-  const s = String(v ?? '').trim();
-  if (!s) return '';
-  if (!/^(https?:\/\/|\/)/i.test(s)) return '';
-  return s.replace(/\/+$/, '');
-}
-
-/** Asset manifests the CDN rewriting applies to (under the `data` mount). */
-const CDN_MANIFESTS = new Set(['assets.json', 'local-assets.json']);
-
-// ---------------------------------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------------------------------
-
-/** Does the Accept-Encoding header allow gzip (q > 0)? @param {string | undefined} header */
-export function acceptsGzip(header) {
-  if (!header || typeof header !== 'string') return false;
-  let gzipQ = null;
-  let starQ = null;
-  for (const part of header.split(',')) {
-    const [token, ...params] = part.trim().toLowerCase().split(';');
-    let q = 1;
-    for (const p of params) {
-      const m = /^\s*q=([0-9.]+)\s*$/.exec(p);
-      if (m) q = Number(m[1]);
-    }
-    if (!Number.isFinite(q)) q = 0;
-    if (token === 'gzip' || token === 'x-gzip') gzipQ = q;
-    else if (token === '*') starQ = q;
-  }
-  if (gzipQ != null) return gzipQ > 0;
-  return starQ != null && starQ > 0;
-}
-
-/**
- * Parse a single `bytes=` range against a file size.
- * @returns {{ start: number, end: number } | 'unsatisfiable' | null} null = ignore header (serve 200)
- */
-export function parseRange(header, size) {
-  if (typeof header !== 'string') return null;
-  const m = /^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$/i.exec(header);
-  if (!m) return null; // multi-range or malformed → ignore (RFC 9110 permits serving the full body)
-  const [, a, b] = m;
-  if (a === '' && b === '') return null;
-  if (a === '') {
-    const suffix = Number(b);
-    if (suffix === 0 || size === 0) return 'unsatisfiable';
-    return { start: Math.max(0, size - suffix), end: size - 1 };
-  }
-  const start = Number(a);
-  const end = b === '' ? size - 1 : Math.min(Number(b), size - 1);
-  if (b !== '' && Number(b) < start) return null;
-  if (start >= size) return 'unsatisfiable';
-  return { start, end };
-}
-
-const stripWeak = (tag) => tag.trim().replace(/^W\//, '');
-
-/** Conditional GET check (If-None-Match wins over If-Modified-Since). */
-function isNotModified(req, etag, mtime) {
-  const inm = req.headers['if-none-match'];
-  if (typeof inm === 'string') {
-    if (inm.trim() === '*') return true;
-    return inm.split(',').some((t) => stripWeak(t) === etag);
-  }
-  const ims = req.headers['if-modified-since'];
-  if (typeof ims === 'string') {
-    const t = Date.parse(ims);
-    if (Number.isFinite(t)) return Math.floor(mtime.getTime() / 1000) * 1000 <= t;
-  }
-  return false;
-}
-
-/** If-Range: serve the range only when the validator still matches. */
-function ifRangeMatches(req, etag, lastModified) {
-  const v = req.headers['if-range'];
-  if (typeof v !== 'string') return true;
-  const s = v.trim();
-  if (s.startsWith('"') || s.startsWith('W/')) return s === etag; // strong comparison
-  return s === lastModified;
-}
-
-function cacheControlFor(ext, mountName, segments, query) {
-  if (ext === '.html' || ext === '.htm') return 'no-cache';
-  if (mountName === 'public' && segments.length === 3 && segments[0] === 'build' && segments[1] === 'assets'
-    && /-[A-Za-z0-9_-]{8,}\.(js|css)$/.test(segments[2])) return IMMUTABLE_CACHE;
-  if (/(^|&)v=/.test(query)) return IMMUTABLE_CACHE;
-  if (mountName === 'public' && segments.length > 1 && LONG_CACHE_DIRS.includes(segments[0])) return LONG_CACHE;
-  return 'no-cache';
-}
-
-const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-
-function errorPage(status, title, detail = '') {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${status} · 卫戍协议：盟约</title><style>
-:root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111614;color:#d8e3de;font:16px/1.6 "Noto Sans SC",system-ui,sans-serif}
-main{border:1px solid #2c3a35;padding:32px 40px;max-width:520px;text-align:center}h1{margin:0;color:#4ed8af;font-size:56px;letter-spacing:4px}
-p{margin:8px 0}a{color:#4ed8af}</style></head><body><main><h1>${status}</h1><p>${escapeHtml(title)}</p>
-${detail ? `<p style="opacity:.6">${escapeHtml(detail)}</p>` : ''}<p><a href="/">返回首页 · Back to home</a></p></main></body></html>`;
-}
-
-function sendError(req, res, status, title, detail) {
-  if (res.headersSent) { res.destroy(); return; }
-  const body = Buffer.from(errorPage(status, title, detail));
-  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': body.length, 'Cache-Control': 'no-store' });
-  res.end(req.method === 'HEAD' ? undefined : body);
-}
-
-function sendJson(req, res, status, obj) {
-  const body = Buffer.from(JSON.stringify(obj));
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': body.length, 'Cache-Control': 'no-store' });
-  res.end(req.method === 'HEAD' ? undefined : body);
-}
-
-/** Split an absolute request URL into raw path + query (also accepts absolute-form URLs). */
-function splitUrl(url) {
-  let u = url || '/';
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) {
-    try { const parsed = new URL(u); u = parsed.pathname + parsed.search; } catch { return null; }
-  }
-  const q = u.indexOf('?');
-  const hashless = (s) => { const h = s.indexOf('#'); return h >= 0 ? s.slice(0, h) : s; };
-  return q >= 0 ? { rawPath: hashless(u.slice(0, q)), query: hashless(u.slice(q + 1)) } : { rawPath: hashless(u), query: '' };
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Static file handler
-// ---------------------------------------------------------------------------------------------------
-
-/**
- * Create the static request handler.
- * @param {{ publicDir: string, dataDir: string, sharedDir: string, simDir?: string, log?: object, cdnBase?: string, dataCdnBase?: string, clientBuild?: boolean }} dirs
- * @returns {(req: http.IncomingMessage, res: http.ServerResponse, rawPath: string, query: string) => Promise<void>}
- */
-/** Optional per-machine art manifest (tools/local-extract) and the empty stand-in served when it is absent. */
-const LOCAL_ART_MANIFEST = 'local-assets.json';
-const EMPTY_LOCAL_ART = Buffer.from(JSON.stringify({ version: 1, source: 'none', count: 0, groups: {} }));
-
-export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), log = noopLog, cdnBase = '', dataCdnBase = '', clientBuild = true }) {
-  const cdn = typeof cdnBase === 'string' ? cdnBase : '';
-  const builtIndex = path.join(publicDir, 'build', 'index.html');
-  const useBuiltClient = clientBuild && fs.existsSync(builtIndex);
-  // the preload manifest (docs/ASSETS.md「Preload」): built on first request, cached until the manifests change
-  const resources = createResourceIndex({ dataDir, publicDir, cdnBase: cdn, rewrite: (v) => (cdn ? rewriteAssetPaths(v, cdn) : v), log });
-  /** @type {Map<string, { mtimeMs: number, size: number, body: Buffer }>} rewritten manifests (per file path) */
-  const cdnCache = new Map();
-  const mounts = [
-    { prefix: '/data/', name: 'data', dir: path.resolve(dataDir) },
-    { prefix: '/shared/', name: 'shared', dir: path.resolve(sharedDir) },
-    // the simulation: ES modules only (no directory listings, no other file types, no Node-only loader)
-    { prefix: '/sim/', name: 'sim', dir: path.resolve(simDir), only: new Set(['.js']), deny: SIM_PRIVATE },
-    { prefix: '/', name: 'public', dir: path.resolve(publicDir) },
-  ];
-  const shimBody = Buffer.from(DATA_SHIM_JS);
-  const shimTag = `"shim-${shimBody.length.toString(16)}"`;
-  const gzipCache = new GzipCache();
-  // A small runtime module supplies the base before client data/asset loaders run; no separate config fetch needed.
-  const cdnConfigBody = Buffer.from(`export const ASSETS_CDN = ${JSON.stringify(cdn)};\nexport const DATA_CDN = ${JSON.stringify(dataCdnBase)};\n`);
-  const cdnConfigTag = `"asset-cdn-${createHash('sha256').update(cdnConfigBody).digest('hex')}"`;
-
-  const serveStatic = async function (req, res, rawPath, query) {
-    let decoded;
-    try { decoded = decodeURIComponent(rawPath); } catch { sendError(req, res, 400, '请求地址无效 · Bad request'); return; }
-    if (!decoded.startsWith('/') || decoded.includes('\0') || decoded.includes('\\')) {
-      sendError(req, res, 400, '请求地址无效 · Bad request');
-      return;
-    }
-    if (useBuiltClient && (decoded === '/' || decoded === '/index.html')) {
-      await serveFile(req, res, builtIndex, await fsp.stat(builtIndex), 'public', ['build', 'index.html'], query, gzipCache, log);
-      return;
-    }
-    // The runtime CDN setting is served by the game origin, independent of the data CDN.
-    if (decoded === '/js/asset-cdn.js') {
-      const headers = { 'Content-Type': MIME['.js'], 'Cache-Control': 'no-cache', ETag: cdnConfigTag };
-      if (isNotModified(req, cdnConfigTag, new Date(0))) { res.writeHead(304, headers); res.end(); return; }
-      headers['Content-Length'] = cdnConfigBody.length;
-      res.writeHead(200, headers);
-      res.end(req.method === 'HEAD' ? undefined : cdnConfigBody);
-      return;
-    }
-    // The offline-resource manifest is generated, never read from disk, before the mount handling below.
-    if (decoded.toLowerCase() === `/data/${RESOURCE_MANIFEST_FILE}`) {
-      let idx;
-      try {
-        idx = await resources.get();
-      } catch (e) {
-        log.error('[http] cannot build the resource manifest', e);
-        sendError(req, res, 500, '服务器内部错误 · Internal error');
-        return;
-      }
-      const gz = acceptsGzip(req.headers['accept-encoding']) ? idx.gzip : null;
-      const body = gz || idx.body;
-      const stat = { size: idx.body.length, mtimeMs: idx.mtimeMs, mtime: new Date(idx.mtimeMs) };
-      const etag = gz ? `${idx.etag.slice(0, -1)}-gz"` : idx.etag;
-      const headers = {
-        'Content-Type': MIME['.json'],
-        'Cache-Control': 'no-cache',
-        ETag: etag,
-        'Last-Modified': stat.mtime.toUTCString(),
-        Vary: 'Accept-Encoding',
-      };
-      if (gz) headers['Content-Encoding'] = 'gzip';
-      if (isNotModified(req, etag, stat.mtime)) { res.writeHead(304, headers); res.end(); return; }
-      headers['Content-Length'] = body.length;
-      res.writeHead(200, headers);
-      res.end(req.method === 'HEAD' ? undefined : body);
-      return;
-    }
-    if (decoded === '/data.js') {
-      const headers = { 'Content-Type': MIME['.js'], 'Cache-Control': 'no-cache', ETag: shimTag, 'Content-Length': shimBody.length };
-      if (isNotModified(req, shimTag, new Date(0))) { delete headers['Content-Length']; res.writeHead(304, headers); res.end(); return; }
-      res.writeHead(200, headers);
-      res.end(req.method === 'HEAD' ? undefined : shimBody);
-      return;
-    }
-    // Extension-less audio (download-manager avoidance): /media/bgm/act1 → /assets/audio/bgm/act1.mp3
-    if (decoded.startsWith(MEDIA_PREFIX)) {
-      await serveMedia(req, res, decoded.slice(MEDIA_PREFIX.length), query, publicDir, gzipCache, log);
-      return;
-    }
-    // Bare mount paths (e.g. "/data") → treat as the mount directory.
-    const mount = mounts.find((m) => decoded.startsWith(m.prefix) || decoded === m.prefix.slice(0, -1)) || mounts[mounts.length - 1];
-    const rest = decoded.length > mount.prefix.length ? decoded.slice(mount.prefix.length) : '';
-    const segments = rest.split('/').filter((s) => s.length > 0);
-    if (segments.some((s) => s === '..' || s === '.')) { sendError(req, res, 403, '禁止访问 · Forbidden'); return; }
-    if (segments.some((s) => s.startsWith('.'))) { sendError(req, res, 404, '页面不存在 · Not found'); return; }
-    if (mount.only && (!segments.length || !mount.only.has(path.extname(segments[segments.length - 1]).toLowerCase())
-      // (case-insensitive: the host may be Windows / macOS, where NODEDATA.JS opens nodeData.js)
-      || (mount.deny && mount.deny.has(segments[segments.length - 1].toLowerCase())))) {
-      sendError(req, res, 404, '页面不存在 · Not found');
-      return;
-    }
-    let absPath = path.join(mount.dir, ...segments);
-    if (absPath !== mount.dir && !absPath.startsWith(mount.dir + path.sep)) { sendError(req, res, 403, '禁止访问 · Forbidden'); return; }
-
-    let stat;
-    let viaDirectory = false;
-    try {
-      stat = await fsp.stat(absPath);
-      if (stat.isDirectory()) {
-        if (!decoded.endsWith('/')) {
-          // Built from normalized segments (never from the raw path) so "//host" can't become an open redirect.
-          const loc = (mount.prefix + segments.map(encodeURIComponent).join('/') + '/').replace(/\/{2,}/g, '/');
-          res.writeHead(301, { Location: loc + (query ? `?${query}` : ''), 'Cache-Control': 'no-cache', 'Content-Length': 0 });
-          res.end();
-          return;
-        }
-        absPath = path.join(absPath, 'index.html');
-        segments.push('index.html');
-        viaDirectory = true;
-        stat = await fsp.stat(absPath);
-      }
-      // Not a regular file, or a file addressed like a directory ("/app.js/") → 404.
-      if (!stat.isFile() || (decoded.endsWith('/') && !viaDirectory)) {
-        throw Object.assign(new Error('not a file'), { code: 'ENOENT' });
-      }
-      if (mount.deny) {
-        // the on-disk name decides (case-insensitive file systems, Windows 8.3 short names like NODEDA~1.JS)
-        const real = await fsp.realpath(absPath);
-        if (mount.deny.has(path.basename(real).toLowerCase())) throw Object.assign(new Error('private'), { code: 'ENOENT' });
-      }
-    } catch (e) {
-      if (e && e.code === 'ENOENT' && mount.name === 'data' && segments.length === 1 && segments[0] === LOCAL_ART_MANIFEST) {
-        // Optional local-client art (DESIGN §13): an install without it gets an empty manifest instead of a 404,
-        // so browsers don't log an error on every page load. Clients treat empty groups as "no local art".
-        res.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-cache', 'Content-Length': EMPTY_LOCAL_ART.length });
-        res.end(req.method === 'HEAD' ? undefined : EMPTY_LOCAL_ART);
-      } else if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR' || e.code === 'EISDIR' || e.code === 'ENAMETOOLONG')) {
-        sendError(req, res, 404, '页面不存在 · Not found', decoded.length <= 200 ? decoded : '');
-      } else if (e && (e.code === 'EACCES' || e.code === 'EPERM')) {
-        sendError(req, res, 403, '禁止访问 · Forbidden');
-      } else {
-        log.error('[http] stat failed', e);
-        sendError(req, res, 500, '服务器内部错误 · Internal error');
-      }
-      return;
-    }
-    // assets CDN: the manifests are rewritten on the way out, so every client keeps requesting /data/assets.json
-    if (cdn && mount.name === 'data' && segments.length === 1 && CDN_MANIFESTS.has(segments[0].toLowerCase())) {
-      const cached = cdnCache.get(absPath);
-      let body = cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size ? cached.body : null;
-      if (!body) {
-        try {
-          body = Buffer.from(JSON.stringify(rewriteAssetPaths(JSON.parse(fs.readFileSync(absPath, 'utf8')), cdn)));
-          cdnCache.set(absPath, { mtimeMs: stat.mtimeMs, size: stat.size, body });
-        } catch (e) {
-          log.error(`[http] cannot rewrite ${segments[0]} for the CDN`, e);
-          sendError(req, res, 500, '服务器内部错误 · Internal error');
-          return;
-        }
-      }
-      serveBuffer(req, res, body, stat, MIME['.json'], 'no-cache', cdn);
-      return;
-    }
-    await serveFile(req, res, absPath, stat, mount.name, segments, query, gzipCache, log);
-  };
-  serveStatic.cacheStats = () => ({ gzipBytes: gzipCache.total, gzipEntries: gzipCache.map.size,
-    gzipLimitBytes: gzipCache.maxTotal, gzipInflight: gzipCache.inflight.size });
-  return serveStatic;
-}
-
-/** `0` (or a missing value) means "no per-network cap": say so instead of printing a pointless 0. */
-const perNetwork = (n) => (Number.isFinite(n) && n > 0 ? String(n) : 'unlimited');
-
-/**
- * Read a numeric limit from the environment (docs/DEPLOY.md §3.4). An empty or absent value keeps the default, and an
- * unparsable one warns and keeps it too — a typo must not silently drop a protection.
- * @param {string|undefined} raw @param {number} fallback @param {string} name @param {any} [log]
- */
-export function parseEnvLimit(raw, fallback, name, log = null) {
-  const s = String(raw ?? '').trim();
-  if (s === '') return fallback;
-  const n = Number(s);
-  if (!Number.isSafeInteger(n) || n < 0 || n > 1_000_000) {
-    log?.warn?.(`[http] ${name}=${s} ignored: a non-negative integer is required (docs/DEPLOY.md §3.4)`);
-    return fallback;
-  }
-  return n;
-}
-
-/**
- * Serve an in-memory body with the same validator/HEAD/range-free semantics as serveFile.
- * @param {Buffer} body @param {string} tag salt (the CDN base: the same file yields different bodies)
- */
-function serveBuffer(req, res, body, stat, type, cacheControl, tag = '') {
-  const isHead = req.method === 'HEAD';
-  const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}${tag ? '-' + Buffer.from(tag).toString('hex').slice(0, 12) : ''}"`;
-  const headers = {
-    'Content-Type': type,
-    'Cache-Control': cacheControl,
-    ETag: etag,
-    'Last-Modified': stat.mtime.toUTCString(),
-  };
-  if (isNotModified(req, etag, stat.mtime)) { res.writeHead(304, headers); res.end(); return; }
-  headers['Content-Length'] = body.length;
-  res.writeHead(200, headers);
-  res.end(isHead ? undefined : body);
-}
-
-/**
- * Extension-less audio route: `/media/bgm/act1` → `public/assets/audio/bgm/act1.mp3`.
- *
- * Clients ask for audio through this path because download managers (IDM, 迅雷, FDM …) hijack XHR/fetch whose
- * URL ends in a media extension and pop a "下载文件信息" dialog for every BGM track — see `public/js/media.js`.
- * Requests for the direct `/assets/audio/…` URLs keep working (they are the fallback for plain static hosts).
- * `MEDIA_PREFIX` / `AUDIO_EXTS` live in `shared/media.js`: the browser decides which URLs to rewrite with the
- * same two values, and they must not drift apart.
- */
-async function serveMedia(req, res, rest, query, publicDir, gzipCache, log) {
-  const root = path.join(path.resolve(publicDir), 'assets', 'audio');
-  const segments = String(rest || '').split('/').filter((s) => s.length > 0);
-  if (!segments.length || rest.endsWith('/')) { sendError(req, res, 404, '页面不存在 · Not found'); return; }
-  if (segments.some((s) => s === '..' || s === '.')) { sendError(req, res, 403, '禁止访问 · Forbidden'); return; }
-  // A leading or trailing dot would address something else (dotfiles, "x..mp3") — and the client never asks for it.
-  if (segments.some((s) => s.startsWith('.') || s.endsWith('.'))) { sendError(req, res, 404, '页面不存在 · Not found'); return; }
-
-  const last = segments[segments.length - 1];
-  const given = path.extname(last).toLowerCase();
-  const wanted = AUDIO_EXTS.includes(given) ? given : '';
-  const stem = wanted ? last.slice(0, -wanted.length) : last;
-  if (!stem || stem.startsWith('.')) { sendError(req, res, 404, '页面不存在 · Not found'); return; }
-  const dir = path.join(root, ...segments.slice(0, -1));
-  if (dir !== root && !dir.startsWith(root + path.sep)) { sendError(req, res, 403, '禁止访问 · Forbidden'); return; }
-
-  // An explicit extension wins (`/media/bgm.ogg` → bgm.ogg), otherwise the usual order decides.
-  const order = wanted ? [wanted, ...AUDIO_EXTS.filter((e) => e !== wanted)] : AUDIO_EXTS;
-  for (const ext of order) {
-    const absPath = path.join(dir, stem + ext);
-    if (!absPath.startsWith(root + path.sep)) continue;
-    let stat;
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      stat = await fsp.stat(absPath);
-    } catch { continue; }
-    if (!stat.isFile()) continue;
-    // serveFile decides Content-Type from the resolved name (`.mp3` → audio/mpeg) — Range/ETag handling is shared.
-    // Cache policy is that of the public path the client would otherwise have asked for (`/assets/audio/…`, 1 day).
-    // eslint-disable-next-line no-await-in-loop
-    await serveFile(req, res, absPath, stat, 'public', ['assets', 'audio', ...segments], query, gzipCache, log);
-    return;
-  }
-  sendError(req, res, 404, '页面不存在 · Not found');
-}
-
-async function serveFile(req, res, absPath, stat, mountName, segments, query, gzipCache, log) {
-  const ext = path.extname(absPath).toLowerCase();
-  const type = MIME[ext] || 'application/octet-stream';
-  const compressible = COMPRESSIBLE.has(ext);
-  const rangeHeader = req.headers.range;
-  const useGzip = compressible && stat.size >= GZIP_MIN_BYTES && !rangeHeader && acceptsGzip(req.headers['accept-encoding']);
-  const baseTag = `${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}`;
-  const etag = `"${baseTag}${useGzip ? '-gz' : ''}"`;
-  const lastModified = stat.mtime.toUTCString();
-  const isHead = req.method === 'HEAD';
-
-  const headers = {
-    'Content-Type': type,
-    'Cache-Control': cacheControlFor(ext, mountName, segments, query),
-    ETag: etag,
-    'Last-Modified': lastModified,
-  };
-  if (compressible) headers.Vary = 'Accept-Encoding';
-
-  if (isNotModified(req, etag, stat.mtime)) {
-    res.writeHead(304, headers);
-    res.end();
-    return;
-  }
-
-  if (useGzip) {
-    headers['Content-Encoding'] = 'gzip';
-    if (stat.size <= GZIP_CACHE_MAX_FILE) {
-      const gz = await gzipCache.get(absPath, stat);
-      headers['Content-Length'] = gz.length;
-      res.writeHead(200, headers);
-      res.end(isHead ? undefined : gz);
-      return;
-    }
-    res.writeHead(200, headers);
-    if (isHead) { res.end(); return; }
-    await streamTo(fs.createReadStream(absPath), res, log, zlib.createGzip());
-    return;
-  }
-
-  headers['Accept-Ranges'] = 'bytes';
-  let start = 0;
-  let end = stat.size - 1;
-  let status = 200;
-  if (rangeHeader && ifRangeMatches(req, etag, lastModified)) {
-    const r = parseRange(rangeHeader, stat.size);
-    if (r === 'unsatisfiable') {
-      res.writeHead(416, { 'Content-Range': `bytes */${stat.size}`, 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': 0 });
-      res.end();
-      return;
-    }
-    if (r) {
-      ({ start, end } = r);
-      status = 206;
-      headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
-    }
-  }
-  headers['Content-Length'] = stat.size === 0 ? 0 : end - start + 1;
-  res.writeHead(status, headers);
-  if (isHead || stat.size === 0) { res.end(); return; }
-  await streamTo(fs.createReadStream(absPath, { start, end }), res, log);
-}
-
-async function streamTo(src, res, log, transform) {
-  try {
-    if (transform) await pipeline(src, transform, res);
-    else await pipeline(src, res);
-  } catch (e) {
-    if (e && e.code !== 'ERR_STREAM_PREMATURE_CLOSE') log.debug?.('[http] stream aborted', e.code || e.message);
-    res.destroy();
-  }
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Server assembly
-// ---------------------------------------------------------------------------------------------------
-
-/** Non-internal IPv4 addresses as http URLs. @param {number} port */
-export function lanUrls(port) {
-  const out = [];
-  for (const addrs of Object.values(os.networkInterfaces())) {
-    for (const a of addrs || []) {
-      if ((a.family === 'IPv4' || a.family === 4) && !a.internal) out.push(`http://${a.address}:${port}`);
-    }
-  }
-  return out;
-}
-
-/** TRUST_PROXY env → net.js trustProxy ('auto' unless explicitly on/off). @param {string | undefined} v */
-export function parseTrustProxy(v) {
-  const s = String(v ?? '').trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on', 'always'].includes(s)) return true;
-  if (['0', 'false', 'no', 'off', 'never'].includes(s)) return false;
-  return 'auto';
-}
-
-/** SP_WS_COMPRESSION: enabled by default; explicit off/0/false disables permessage-deflate. */
-export function parseWsCompression(v) {
-  const s = String(v ?? '').trim().toLowerCase();
-  return !['0', 'false', 'no', 'off', 'never'].includes(s);
-}
-
-function makeLogger(quiet) {
-  if (quiet) return noopLog;
-  return {
-    info: (...a) => console.log(...a),
-    warn: (...a) => console.warn(...a),
-    error: (...a) => console.error(...a),
-    debug: process.env.DEBUG ? (...a) => console.debug(...a) : () => {},
-  };
-}
+// The public API of this module (tests and tools import it from here); the code lives in ./http/.
+export {
+  ROOT, WS_MAX_PAYLOAD, DATA_SHIM_JS, MIME, COMPRESSIBLE, BUILD_INPUTS, computeBuildTag, buildTag, resetBuildTag,
+  acceptsGzip, parseRange, createStaticHandler, lanUrls, parseTrustProxy,
+};
 
 /**
  * Build and start the HTTP + WebSocket server.
  * @param {{
  *   port?: number, host?: string, quiet?: boolean, log?: object,
- *   publicDir?: string, dataDir?: string, sharedDir?: string,
+ *   publicDir?: string, dataDir?: string, sharedDir?: string, packsDir?: string,
  *   MatchClass?: Function, seedFn?: () => number,
  *   lobbyGraceMs?: number, matchmakingWaitMs?: number, matchmakingTickMs?: number, reconnectWindowMs?: number, heartbeatMs?: number, helloTimeoutMs?: number,
  *   ratePerSec?: number, rateBurst?: number, maxConnections?: number, maxRooms?: number,
@@ -780,19 +64,16 @@ function makeLogger(quiet) {
  *   workers?: number, workerQueue?: number, workerTimeoutMs?: number, workerPool?: SimulationPool | null,
  *   announcementsFile?: string | null, announcementPollMs?: number, wsCompression?: boolean, clientBuild?: boolean,
  * }} [opts]
- * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: WebSocketServer,
- *                     lobby: Lobby, network: Network, registry: SessionRegistry, store: object | null,
- *                     persister: Persister | null, workerPool: SimulationPool | null,
- *                     announcements: Announcements, close: () => Promise<void> }>}
+ * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: import('ws').WebSocketServer,
+ *                     lobby: import('./lobby.js').Lobby, network: import('./net.js').Network,
+ *                     registry: import('./net.js').SessionRegistry, packs: ReturnType<typeof createPackRegistry>,
+ *                     close: () => Promise<void> }>}
  */
 export async function startServer(opts = {}) {
-  const port = opts.port ?? (process.env.PORT != null && process.env.PORT !== '' ? Number(process.env.PORT) : 3000);
-  const host = opts.host ?? process.env.HOST ?? '0.0.0.0';
-  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new RangeError(`invalid PORT ${port}`);
+  const { port, host } = listenAddress(opts);
   const log = opts.log || makeLogger(!!opts.quiet);
-  const publicDir = opts.publicDir || path.join(ROOT, 'public');
-  const dataDir = opts.dataDir || path.join(ROOT, 'data');
-  const sharedDir = opts.sharedDir || path.join(ROOT, 'shared');
+  const { publicDir, dataDir, sharedDir, packsDir } = serveDirs(opts);
+
   const clientBuild = opts.clientBuild ?? !process.argv.includes('--source-client');
   // assets CDN: a serving-time rewrite of the two manifests (docs/DEPLOY.md §3.2)
   const rawCdn = opts.assetsCdn != null ? opts.assetsCdn : (process.env.SP_ASSETS_CDN ?? process.env.ASSETS_CDN);
@@ -820,34 +101,7 @@ export async function startServer(opts = {}) {
     throw new RangeError('workers must be 0..32');
   }
   const workerPool = ownsWorkerPool ? (workerConfig.size > 0 ? new SimulationPool({ data, ...workerConfig }) : null) : opts.workerPool;
-  const netOptions = {};
-  for (const k of ['reconnectWindowMs', 'heartbeatMs', 'helloTimeoutMs', 'ratePerSec', 'rateBurst', 'maxConnections', 'abuseDropsPerSec',
-    'maxConnectionsPerAddr', 'heavyPerSec', 'heavyBurst', 'trustProxy']) {
-    if (opts[k] != null) netOptions[k] = opts[k];
-  }
-  if (netOptions.trustProxy == null) netOptions.trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
-  const lobbyOptions = {};
-  for (const k of ['lobbyGraceMs', 'matchmakingWaitMs', 'matchmakingTickMs', 'maxRooms', 'maxRoomsPerAddr', 'maxMatchesPerAddr', 'resyncMinGapMs', 'soloReconnectWindowMs']) {
-    if (opts[k] != null) lobbyOptions[k] = opts[k];
-  }
-  // Limit overrides (docs/DEPLOY.md §3.4): an explicit startServer option wins, then the environment, then the code
-  // default. `0` means unlimited for the per-network caps; an unparsable value warns and keeps the default (a typo
-  // must not silently remove a protection).
-  const envLimits = [
-    [lobbyOptions, 'maxRooms', 'SP_MAX_ROOMS', LOBBY_DEFAULTS.maxRooms],
-    [lobbyOptions, 'maxRoomsPerAddr', 'SP_MAX_ROOMS_PER_ADDR', LOBBY_DEFAULTS.maxRoomsPerAddr],
-    [lobbyOptions, 'maxMatchesPerAddr', 'SP_MAX_MATCHES_PER_ADDR', LOBBY_DEFAULTS.maxMatchesPerAddr],
-    [netOptions, 'maxConnections', 'SP_MAX_CONNECTIONS', NET_DEFAULTS.maxConnections],
-    [netOptions, 'maxConnectionsPerAddr', 'SP_MAX_CONNECTIONS_PER_ADDR', NET_DEFAULTS.maxConnectionsPerAddr],
-  ];
-  for (const [target, key, env, fallback] of envLimits) {
-    if (target[key] == null) target[key] = parseEnvLimit(process.env[env], fallback, env, log);
-  }
-  log.info(`[http] limits: rooms ${lobbyOptions.maxRooms} (${perNetwork(lobbyOptions.maxRoomsPerAddr)}/network), matches ${perNetwork(lobbyOptions.maxMatchesPerAddr)}/network, sockets ${netOptions.maxConnections} (${perNetwork(netOptions.maxConnectionsPerAddr)}/network)`);
-  log.info(`[match] tuning: combat ${parseCombat(process.env.SP_COMBAT)}, verify ${parseVerify(process.env.SP_VERIFY)}, bot rehearsal ${parseBotRehearsal(process.env.SP_BOT_REHEARSAL)} (docs/DEPLOY.md §3.4)`);
-  const registry = new SessionRegistry({ reconnectWindowMs: netOptions.reconnectWindowMs ?? NET_DEFAULTS.reconnectWindowMs });
-  log.info(`[workers] ${workerPool ? `${workerPool.size} threads, queue ${workerPool.maxQueue}, timeout ${workerPool.timeoutMs} ms (lazy start)` : 'disabled'}`);
-  const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions, workerPool });
+  const { registry, lobby, network } = createSessionStack(opts, { data, log, workerPool });
   // Resume the last state before listening: every reconnecting client is recognized by its token right away.
   const persister = store ? new Persister({ store, registry, lobby, log, now: opts.now, saveMs }) : null;
   if (store && opts.resume !== false) {
@@ -864,134 +118,26 @@ export async function startServer(opts = {}) {
       log.warn('[persist] could not load the saved state — starting fresh', e);
     }
   }
-  const network = new Network({ registry, handler: lobby, log, options: netOptions });
   const wsCompression = opts.wsCompression != null ? !!opts.wsCompression : parseWsCompression(process.env.SP_WS_COMPRESSION);
   const announcementFile = opts.announcementsFile !== undefined ? opts.announcementsFile
     : (process.env.SP_ANNOUNCEMENTS_FILE || path.join(ROOT, 'config', 'announcements.json'));
   const announcements = new Announcements({ file: announcementFile ? path.resolve(announcementFile) : null,
     broadcast: (msg) => network.broadcast(msg), log, pollMs: opts.announcementPollMs });
   await announcements.start();
-  const serveApi = createPublicApi({ lobby, announcements, trustProxy: netOptions.trustProxy, sendJson, sendError });
-  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, log, cdnBase: assetsCdn, dataCdnBase: dataCdn, clientBuild });
+  const serveApi = createPublicApi({ lobby, announcements, trustProxy: network.opts.trustProxy, sendJson, sendError });
+
+  // content packs (docs/PACKS.md): scanned now — the start log names them — and again whenever their folders change
+  const packs = createPackRegistry({ publicDir, dataDir, packsDir }, { log });
+  packs.refresh(true);
+  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, packsDir, packs, log, cdnBase: assetsCdn, dataCdnBase: dataCdn, clientBuild });
   const startedAt = Date.now();
   // The tag is per process (see buildTag): read the browser runtime once, here, not on every /healthz.
   resetBuildTag();
   buildTag(ROOT, { clientBuild });
 
-  const server = http.createServer((req, res) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'same-origin');
-    handleRequest(req, res).catch((e) => {
-      log.error('[http] request failed', e);
-      sendError(req, res, 500, '服务器内部错误 · Internal error');
-    });
-  });
-
-  async function handleRequest(req, res) {
-    const url = req.url || '/';
-    if (url.length > MAX_URL_LENGTH) { sendError(req, res, 414, '请求地址过长 · URI too long'); return; }
-    const parts = splitUrl(url);
-    if (!parts) { sendError(req, res, 400, '请求地址无效 · Bad request'); return; }
-    if (await serveApi(req, res, parts.rawPath)) return;
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.setHeader('Allow', 'GET, HEAD');
-      sendError(req, res, 405, '不支持的请求方法 · Method not allowed');
-      return;
-    }
-    if (parts.rawPath === '/healthz' || parts.rawPath === '/metrics') {
-      const health = {
-        ok: true, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
-        // the runtime the server is serving right now (public/js/ui/buildGuard.js): a page whose own build is
-        // older than this reloads itself, so a deploy reaches clients that never reload
-        build: buildTag(),
-        sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
-      };
-      // Page version polling and health probes need only metadata and headline counts. Collect diagnostics on demand.
-      if (parts.rawPath === '/healthz') { sendJson(req, res, 200, health); return; }
-      const socketUsage = network.usage();
-      sendJson(req, res, 200, {
-        ...health,
-        persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.checkpointKeys.size,
-          snapshotBytes: persister.encoder.seed?.bytes.byteLength || 0, workerMemory: persister.encoder.memory } : null,
-        workers: workerPool?.stats() || null,
-        announcements: announcements.stats(),
-        // rss is process-wide (all Workers); other counters describe this main thread, in bytes.
-        memory: process.memoryUsage(),
-        staticCache: serveStatic.cacheStats(),
-        socketBuffers: network.bufferedBytes(),
-        websocket: { compression: wsCompression, threshold: WS_DEFLATE_THRESHOLD },
-        assetsCdn: assetsCdn || null,
-        dataCdn: dataCdn || null,
-        limits: {
-          maxRooms: lobby.opts.maxRooms,
-          maxRoomsPerAddr: lobby.opts.maxRoomsPerAddr,
-          maxMatchesPerAddr: lobby.opts.maxMatchesPerAddr,
-          maxConnections: network.opts.maxConnections,
-          maxConnectionsPerAddr: network.opts.maxConnectionsPerAddr,
-        },
-        // The engine-side knobs that decide how much CPU a match costs (docs/DEPLOY.md §3.4): env-level truth, i.e.
-        // what a match adopts when startServer/the lobby do not pass an explicit option.
-        tuning: {
-          combat: parseCombat(process.env.SP_COMBAT),
-          verify: parseVerify(process.env.SP_VERIFY),
-          botRehearsal: parseBotRehearsal(process.env.SP_BOT_REHEARSAL),
-        },
-        // How close the busiest client network is to a cap (docs/DEPLOY.md §3.4). No addresses: /metrics is public and
-        // the refusal logs (`room limit (16) reached for <ip>`) already name the network when it matters.
-        usage: {
-          ...lobby.usage(),
-          socketNetworks: socketUsage.networks,
-          worstSockets: socketUsage.worstSockets,
-          overSockets: socketUsage.overSockets,
-        },
-      });
-      return;
-    }
-    await serveStatic(req, res, parts.rawPath, parts.query);
-  }
-
-  server.on('clientError', (err, socket) => {
-    if (err && err.code === 'ECONNRESET') { socket.destroy(); return; }
-    try {
-      if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
-      else socket.destroy();
-    } catch { /* ignore */ }
-  });
-
-  const wss = new WebSocketServer({
-    noServer: true,
-    maxPayload: WS_MAX_PAYLOAD,
-    perMessageDeflate: wsCompression ? {
-      threshold: WS_DEFLATE_THRESHOLD,
-      serverNoContextTakeover: true,
-      clientNoContextTakeover: true,
-    } : false,
-    clientTracking: false,
-  });
-  wss.on('connection', (ws, req) => {
-    network.handleConnection(ws, req);
-    announcements.refresh();
-    send(ws, announcements.message());
-  });
-  wss.on('error', (e) => log.error('[ws] server error', e));
-
-  server.on('upgrade', (req, socket, head) => {
-    socket.on('error', () => {});
-    const parts = splitUrl(req.url || '/');
-    const reject = (status, text) => {
-      try { socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`); } catch { socket.destroy(); }
-    };
-    if (!parts || parts.rawPath !== '/ws') { reject(404, 'Not Found'); return; }
-    const refused = network.admission(req);
-    if (refused === 'per-address') { reject(429, 'Too Many Requests'); return; }
-    if (refused) { reject(503, 'Service Unavailable'); return; }
-    try {
-      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-    } catch (e) {
-      log.error('[ws] upgrade failed', e);
-      socket.destroy();
-    }
-  });
+  const server = http.createServer(createRequestHandler({ serveStatic, health: { startedAt, network, registry, lobby }, serveApi, diagnostics: { persister, workerPool, announcements, wsCompression, assetsCdn, dataCdn, serveStatic }, log }));
+  server.on('clientError', answerClientError);
+  const wss = attachWebSocket(server, { network, log, wsCompression, announcements });
 
   try {
     await new Promise((resolve, reject) => {
@@ -1042,51 +188,8 @@ export async function startServer(opts = {}) {
     return closing;
   }
 
-  return { port: actualPort, host, url, server, wss, lobby, network, registry, store: store || null, persister, workerPool, announcements, close };
+  return { port: actualPort, host, url, server, wss, lobby, network, registry, packs, store: store || null, persister, workerPool, announcements, close };
 }
 
-// ---------------------------------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------------------------------
-
-function isMain() {
-  if (!process.argv[1]) return false;
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-async function main() {
-  process.on('unhandledRejection', (e) => console.error('[process] unhandled rejection', e));
-  process.on('uncaughtException', (e) => console.error('[process] uncaught exception', e));
-  let srv;
-  try {
-    srv = await startServer();
-  } catch (e) {
-    if (e && e.code === 'EADDRINUSE') console.error(`端口已被占用 / port in use: ${e.port ?? process.env.PORT ?? 3000}. Try PORT=3001 npm start`);
-    else console.error('[boot] failed to start', e);
-    process.exit(1);
-  }
-  console.log(`\n  卫戍协议：盟约 · Stronghold Protocol: Alliance v${APP_VERSION}`);
-  console.log(`  Local:   ${srv.url}`);
-  if (srv.host === '0.0.0.0' || srv.host === '::') {
-    for (const u of lanUrls(srv.port)) console.log(`  LAN:     ${u}`);
-  }
-  console.log(`  State:   ${srv.persister ? `Redis (${srv.store.label}, every ${Math.round(srv.persister.saveMs / 1000)} s)` : 'memory only (set SP_REDIS_URL to keep sessions and matches across restarts)'}`);
-  console.log('  Internet: cloudflared tunnel --url ' + `http://localhost:${srv.port}` + '\n');
-
-  let stopping = false;
-  const stop = (signal) => {
-    if (stopping) { console.log('forced exit'); process.exit(1); }
-    stopping = true;
-    console.log(`\n[${signal}] shutting down…`);
-    setTimeout(() => process.exit(0), 5000).unref();
-    srv.close().then(() => process.exit(0), () => process.exit(1));
-  };
-  process.on('SIGINT', () => stop('SIGINT'));
-  process.on('SIGTERM', () => stop('SIGTERM'));
-}
-
-if (isMain()) main();
+// `node server/index.js` / npm start: listen, print the banner, stop on SIGINT / SIGTERM (http/boot.js).
+if (isProcessEntry(import.meta.url)) runMain(startServer);

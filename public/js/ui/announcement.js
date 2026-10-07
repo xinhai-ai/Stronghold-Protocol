@@ -4,6 +4,7 @@ import { createStore, store, useStore, loadPref, savePref } from '../store.js';
 import { net } from '../net.js';
 import { announcementLive } from '../../../shared/announcements.js';
 import { PHASE } from '../../../shared/constants.js';
+import { t } from '../../../shared/i18n.js';
 
 /** Constant pixel speed for long and short notices; the animation travels across the measured viewport. */
 export function announcementScroll(viewport, textWidth) {
@@ -61,15 +62,15 @@ export function syncAnnouncementPopup(notice, now, inMatch = popupBlocked(store.
 
 export function AnnouncementButton({ class: cls, variant = 'secondary', size = 'sm', onClick } = {}) {
   return html`<${Button} variant=${variant} size=${size} icon="info" class=${cls}
-    aria-haspopup="dialog" title="公告" onClick=${() => { onClick?.(); openAnnouncement(); }}>公告<//>`;
+    aria-haspopup="dialog" title=${t('公告')} onClick=${() => { onClick?.(); openAnnouncement(); }}>${t('公告')}<//>`;
 }
 
 export function AnnouncementContent({ notice }) {
-  if (!notice) return html`<p class="modal__text">暂无公告</p>`;
+  if (!notice) return html`<p class="modal__text">${t('暂无公告')}</p>`;
   return html`<div class="announcement-content">
     <p class="modal__text">${notice.text}</p>
     ${notice.url ? html`<a class="announcement-content__link" href=${notice.url} target="_blank" rel="noopener noreferrer">
-      <${Icon} name="link" />查看详情<span class="announcement-content__url">${notice.url}</span>
+      <${Icon} name="link" />${t('查看详情')}<span class="announcement-content__url">${notice.url}</span>
     </a>` : null}
   </div>`;
 }
@@ -84,9 +85,9 @@ export function AnnouncementHost() {
   const live = announcementLive(notice, now);
   const key = announcementDismissKey(notice);
   useEffect(() => { syncAnnouncementPopup(notice, net.serverNow(), inMatch); }, [key, live, inMatch]);
-  return html`<${Modal} open=${open && (!automatic || !inMatch)} title=${live ? notice.title || '公告' : '公告'} micro="ANNOUNCEMENT"
+  return html`<${Modal} open=${open && (!automatic || !inMatch)} title=${live ? notice.title || t('公告') : t('公告')} micro="ANNOUNCEMENT"
     class="announcement-modal" width="min(7.4rem, 94vw)" onClose=${closeAnnouncement}
-    actions=${html`<${Button} variant="primary" icon="close" data-autofocus onClick=${closeAnnouncement}>关闭<//>`}>
+    actions=${html`<${Button} variant="primary" icon="close" data-autofocus onClick=${closeAnnouncement}>${t('关闭')}<//>`}>
     <${AnnouncementContent} notice=${live ? notice : null} />
   <//>`;
 }
@@ -118,7 +119,7 @@ export function AnnouncementBanner() {
     return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
   }, [live, notice]);
   if (!live) return null;
-  const label = notice.level === 'urgent' ? '紧急通知' : notice.level === 'warning' ? '提醒' : '通知';
+  const label = notice.level === 'urgent' ? t('紧急通知') : notice.level === 'warning' ? t('提醒') : t('通知');
   const dismiss = () => { savePref('announcementDismissed', key); setDismissed(key); };
   return html`<aside class=${`site-notice site-notice--${notice.level}`} role="status" aria-live="polite" aria-atomic="true">
     <span class="site-notice__label">${label}</span>
@@ -127,6 +128,6 @@ export function AnnouncementBanner() {
       <span ref=${line} key=${`${notice.id}:${notice.text}`} class="site-notice__text"
         style=${{ '--notice-from': `${scroll.from}px`, '--notice-to': `${scroll.to}px`, '--notice-duration': `${scroll.duration}s` }}>${notice.text}</span>
     </div>
-    <button type="button" class="site-notice__close" aria-label="关闭通知" title="关闭通知" onClick=${dismiss}><${Icon} name="close" /><//>
+    <button type="button" class="site-notice__close" aria-label=${t('关闭通知')} title=${t('关闭通知')} onClick=${dismiss}><${Icon} name="close" /><//>
   </aside>`;
 }

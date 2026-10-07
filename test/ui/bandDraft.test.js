@@ -1,8 +1,8 @@
 // Strategy draft 队友已选 (research 09 §5 / §7, DESIGN §14 corrections): a strategy a teammate already picked cannot be
-// chosen again — the server refuses it (server/match/Match.js pickBand → BAD_TARGET '队友已选'), bots re-draw, and the
+// chosen again — the server refuses it (server/match/match/phases.js pickBand → BAD_TARGET '队友已选'), bots re-draw, and the
 // UI marks it (screens/bandDraft.js teammateBands). Automatic assignments (a turn that runs out, a departing seat) give
-// the official default 「华法琳」 only while no teammate holds it, else the first free strategy (Match.js defaultBand; the
-// UI names it: bandDraft.js timeoutBand) — a timed-out turn takes the highlighted band first (g.bandFocus, Match.js
+// the official default 「华法琳」 only while no teammate holds it, else the first free strategy (match/phases.js defaultBand; the
+// UI names it: bandDraft.js timeoutBand) — a timed-out turn takes the highlighted band first (g.bandFocus, match/phases.js
 // timeoutBand; user playtest #4 item 4: one countdown, BAND_TURN_SECONDS per turn, no separate step cap).
 
 import { test, describe } from 'node:test';

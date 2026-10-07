@@ -1,4 +1,4 @@
-// Tier 5 alternate skills & modules (DESIGN §16 operator loadouts; server/sim/content/kits/tier5.js `skills` maps).
+// Tier 5 alternate skills & modules (DESIGN §16 operator loadouts; the `skills` maps of the tier-5 kits, server/sim/content/kits/ops/).
 // Every selectable non-default skill of every visible tier-5 chess runs a real battle — normal (Lv4) and elite (Lv7) —
 // through the harness with its loadout (`skillIndex` / `moduleId` on the board entry, as a BattleSpec carries them),
 // and its signature effect is asserted with numbers from that skill's own blackboard (data/chess.json skills[]).

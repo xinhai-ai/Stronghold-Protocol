@@ -10,10 +10,39 @@ import { createRngFromState } from '../../server/sim/rng.js';
 import {
   canSnapshot, snapshotMatch, restoreMatch, matchState, SNAPSHOT_VERSION, encodeState, decodeState,
 } from '../../server/match/snapshot.js';
-import { makeMatch, checkInvariants, legalTileFor } from './harness.js';
+import { DATA, makeMatch, checkInvariants, legalTileFor } from './harness.js';
 
 const DEPS = { createRngFromState, log: { warn() {}, info() {}, error() {}, debug() {} } };
 const OPTIONS = { mode: 'coop', difficulty: 'NORMAL', humans: 2, bots: 1, seed: 42, fake: true, botSliceMs: 4 };
+
+test('checkpoint restores stand-ins, self-selected records and their remaining private stock', () => {
+  const slot = 'chess_char_5_diy1_a';
+  const picks = { [slot]: { charId: 'char_112_siege', skillIndex: 2, uniEquipId: 'uniequip_002_siege' } };
+  const seats = [{ seat: 0, playerId: 'p_0', name: 'Doctor', isBot: false,
+    connected: true, notOwned: ['chess_char_4_22_a'], diy: picks }];
+  const data = structuredClone(DATA);
+  data.config.bans.NORMAL = { core: 0, addon: 0 };
+  data.config.modes.mode_single_normal.inactiveBondIds = [];
+  const a = makeMatch({ mode: 'solo', seats, data, seed: 42, fake: true }).start();
+  a.toPrep(1);
+  const ps = a.ps('p_0');
+  assert.ok(ps.diyStock.has(slot), 'chosen operator is available for this seed');
+  ps.diyStock.take(slot, 2);
+  const remaining = ps.diyStock.left(slot);
+  const doc = snapshotMatch(a.m);
+  assert.ok(doc);
+  const b = makeMatch({ mode: 'solo', seats: [{ ...seats[0], notOwned: [], diy: {} }], data, seed: 42, fake: true });
+  assert.equal(restoreMatch(b.m, doc, DEPS), true);
+  const restored = b.ps('p_0');
+  assert.deepEqual(restored.standIns, ps.standIns);
+  assert.deepEqual(restored.diy, ps.diy);
+  assert.equal(restored.gd.chess(slot).charId, 'char_112_siege');
+  assert.equal(restored.diyStock.left(slot), remaining);
+  assert.equal(restored.diyStock.take(slot), 1, 'stock methods are rebuilt');
+  assert.equal(restored.diyStock.left(slot), remaining - 1);
+  a.m.dispose();
+  b.m.dispose();
+});
 
 /** A driven match and a fresh instance to restore a checkpoint into. */
 function pair(seed = OPTIONS.seed) {

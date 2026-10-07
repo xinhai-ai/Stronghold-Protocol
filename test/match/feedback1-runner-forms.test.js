@@ -234,7 +234,8 @@ test('a hidden-tab backlog still beyond HELD_MAX after compaction: the first fra
 
 test('screens/game.js buffers the form fx with the state-bearing events it replays when a field is entered late', () => {
   const src = readFileSync(path.join(ROOT, 'public/js/screens/game.js'), 'utf8');
-  assert.match(src, /const keepEarly = \(e\) => Array\.isArray\(e\) && \(STATE_EV\.has\(e\[0\]\) \|\| fxForm\(e\) !== undefined\);/);
+  const early = readFileSync(path.join(ROOT, 'public/js/screens/game/early.js'), 'utf8');
+  assert.match(early, /const keepEarly = \(e\) => Array\.isArray\(e\) && \(STATE_EV\.has\(e\[0\]\) \|\| fxForm\(e\) !== undefined\);/);
   assert.match(src, /for \(const e of msg\.ev\) if \(keepEarly\(e\)\) buf\.push\(e\);/);
   // a new m.field for the field on screen buffers its frames until the enter effect re-enters it (enterBattle resets)
   assert.match(src, /if \(msg\.fieldId === lastFieldRef\.current\) reentryRef\.current = msg\.fieldId;/);

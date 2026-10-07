@@ -88,6 +88,18 @@ export function enemyModelScale(rec) {
   return Number.isFinite(k) && k > 0.05 && k < 20 ? k : 1;
 }
 /**
+ * Vertical stretch of an enemy's model on top of `enemyModelScale` (enemies.json `modelScaleY`, the official battle
+ * prefab's `Graphic` scale sy ÷ sx; 1 when absent or unusable). `modelScale` only carries the horizontal product of
+ * Graphic / FaceSwitcher / Spine, so a model whose prefab has a non-uniform scale is drawn too short without this.
+ * Two enemies have one — 帝国炮火先兆者 and 帝国炮火中枢先兆者 at 1.263 (Graphic (0.19, 0.24, 0.24): the official draws
+ * them 26 % taller than their width implies); a sweep of all 242 readable enemy prefabs found no other
+ * (tools/local-extract/enemy_model_offsets.py, docs/research/12 §3.1; PR #211 by @xcdoge).
+ */
+export function enemyModelScaleY(rec) {
+  const k = Number(rec && rec.modelScaleY);
+  return Number.isFinite(k) && k > 0.2 && k < 5 ? k : 1;
+}
+/**
  * Seconds of the death clip of a manifest Spine entry (`anims.die`, else a 'Die' clip, as SpineActor.dieClip; its
  * `animations` duration), 0 when it has none — 131 of the 135 operator Back models (GitHub issue #25).
  */
@@ -124,8 +136,30 @@ export const SPINE_STUCK_MS = 5000;
 
 /** Heights above this count as standing on a raised top (bench pads are the lowest raised tiles, 0.16). */
 const RAISED_Z = 0.12;
-/** Flying units hover this many tiles above the ground they cross. */
-export const FLY_HOVER = 0.32;
+/**
+ * Flying units hover this many tiles above the ground they cross (PR #211 by @xcdoge; the owner's decision of
+ * 2026-10-06; docs/research/12-flying-visuals-official.md).
+ *
+ * The official client's fly offset is a **single constant, `Vector3(0, 0.35f, 0)`**: `Torappu.Battle.CharacterAnimator`'s
+ * constructor stores it in the instance field at +0x114 (`GameAssembly.dll` 0x180600555 reads the constant at 0x186a78a50 =
+ * 0x3EB33333; x and z are 0), and `_SetFlyMountPointOffset` / `_SetFlyHitOffset` add it to the mount / hit transforms
+ * while the unit flies and add its negation when it lands (the sign flips through the −0.0 mask at 0x186a77e00). It is
+ * model-independent: no store to that field exists anywhere in the binary except the constructor.
+ *
+ * `0.35` is that constant in the client's own (character) space, whose unit is the standard battle-prefab scale **0.27**
+ * (our `enemies.json modelScale` is a multiple of it — units.js `enemyModelScale`), so the lift is **0.35 / 0.27 ≈ 1.3
+ * tiles** [ASSUMED: the hierarchy that yields the 1 / 0.27 factor]. An official screenshot (帝国炮火先兆者 over a tile)
+ * measures the same: the drone's art bottom sits 1.2–1.4 tiles above the ground it crosses.
+ *
+ * **No per-model term** — (a) the binary never rewrites the offset; (b) the battle prefabs carry no per-model vertical
+ * correction for flyers (their `Graphic` node sits at local (0,0,0), or at the (0,−0.2,−0.06) their ground-unit prefab
+ * family shares — unrelated to how far each model's art hangs below its pivot). So a model whose art hangs below its
+ * origin keeps that hang in the official too: 妖怪 flies with its rotors ≈ 0.9 tiles up, 帝国炮火先兆者 with its art
+ * bottom ≈ 1.3. It replaced a flat 0.32 (player report 2026-10-05: 无人机等飞行单位位置明显偏低 — every flyer was ~1 tile
+ * too low). The shadow stays on the ground under the unit; the HP bar, damage numbers, projectile hits and skill rings
+ * ride the body (`hover`); range highlights are tiles.
+ */
+export const FLY_HOVER = 1.3;
 
 /** b.snap `down` entry states (server/sim/constants.js DOWN_STATE). */
 export const DOWN_STATE = Object.freeze({ COUNTING: 0, WAIT_DP: 1, WAIT_TILE: 2 });
@@ -172,6 +206,11 @@ export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, g
  *   clip (`end`) is timed from the 重生's `dur` (the 'telegraph' fx) to end with it, so the second form walks and
  *   attacks on its own clips at once (a view that missed the timing — built mid-重生 — skips the closing clip);
  * - 守墓石像 (forms 'stone' → 'fly'): the statue on Sleep [ASSUMED by name], then the flyer's *_2 clips.
+ * - the 孤岛风云 prisoners (sim content/enemies/archetypes.js prisoner: forms 'warning' → 'liberty'), as their official
+ *   battle prefabs' modes: confined on the manifest's clips (the grey collar light: 普通囚犯 / 老练囚犯 Idle3 … through
+ *   tools/assets/spine.mjs PREFAB_SPINE_ROLES, 强壮囚犯 Idle …, 拳师囚犯 / 重犯 / 传奇重犯 *_grey), mode R — the warning
+ *   before the last confined attack — on the blinking orange set (*2, *_orange), mode L — 【解放】 — on the red set
+ *   (普通囚犯 / 老练囚犯 Idle …, 强壮囚犯 *3, the others *_red); no change clip (the prefab switches the set at once).
  * - the 傀儡师 operators' <替身> (sim professions.js installDollkeeper: form 'doll' from the start of the switch to it
  *   until the switch back starts, GitHub issue #44): the skeletons draw it on their *_B clips (their own slots — the
  *   本体's are hidden). 归溟幽灵鲨: Start_B fades it in (the 1 s switch), Idle_B (it never attacks), Die_B breaks it
@@ -205,6 +244,13 @@ const STATUE = Object.freeze({
   fly: Object.freeze({ change: null, roles: clipSet('Idle_2', 'Move_2', 'Die_2', 'Attack_2') }),
 });
 const JAKILL2 = clipSet('C2_Idle', 'C2_Move', 'C2_Die', 'C2_Attack');
+/** A prisoner's 'warning' (mode R) and 'liberty' (mode L) clip sets: the clip-name suffix of each (see the list above). */
+const prisoner = (warn, free) => Object.freeze({
+  warning: Object.freeze({ change: null, roles: clipSet(`Idle${warn}`, `Move${warn}`, `Die${warn}`, `Attack${warn}`) }),
+  liberty: Object.freeze({ change: null, roles: clipSet(`Idle${free}`, `Move${free}`, `Die${free}`, `Attack${free}`) }),
+});
+const PRISONER = prisoner('2', '');
+const PRISONER_COLOURED = prisoner('_orange', '_red');
 /** A 傀儡师's 替身 roles: idle `idle`, death `die`, attack `attack` (null: none), no skill clip of its own. */
 const dollRoles = (idle, die, attack = null) => Object.freeze({
   idle, deploy: idle, die, attack: attack ? Object.freeze({ begin: null, loop: attack, end: null }) : null, attackDown: null, skill: null,
@@ -248,6 +294,12 @@ export const FORMS = Object.freeze({
   }),
   enemy_1172_dugago: STATUE,
   enemy_1172_dugago_2: STATUE,
+  enemy_1116_liprr: PRISONER,
+  enemy_1116_liprr_2: PRISONER,
+  enemy_1119_vofsd: prisoner('2', '3'),
+  enemy_1118_lidbox_2: PRISONER_COLOURED,
+  enemy_1121_lifbos: PRISONER_COLOURED,
+  enemy_1121_lifbos_2: PRISONER_COLOURED,
 });
 
 /**
@@ -310,7 +362,13 @@ export class UnitView {
     this.isEnemy = info.side === 'enemy';
     this.isBoss = !!info.boss;
     // enemies: the official prefab's size factor (1 for operators, summons and enemies at the standard size)
-    this.modelK = this.isEnemy ? enemyModelScale(ctx.lookupDef ? ctx.lookupDef(info) : null) : 1;
+    const def = this.isEnemy && ctx.lookupDef ? ctx.lookupDef(info) : null;
+    this.modelK = this.isEnemy ? enemyModelScale(def) : 1;
+    // the official's own model quirks (enemies.json, read from its battle prefabs — tools/local-extract/enemy_model_offsets.py,
+    // PR #211): a vertical stretch (its Graphic scale's sy / sx, the two 帝国炮火先兆者 at 1.263) and a mirrored X scale
+    // (the Graphic's sx is negative, so the official draws the authored model flipped: 木制瑞印)
+    this.modelKY = this.isEnemy ? enemyModelScaleY(def) : 1;
+    this.mirrorX = this.isEnemy && !!(def && def.mirrorX);
     this.isToken = info.kind === 'token';
     this.golden = !!info.golden;
     this.tier = clamp(Number(info.tier) || 1, 1, 6);
@@ -917,7 +975,7 @@ export class UnitView {
     this.root.zIndex = unitDepthKey(cam, this.x, this.y, this.lift);
     // off-screen: nothing to animate or draw (bounds / hit-testing still follow `screen`)
     if (this._cull(bx, by, s, dt)) return;
-    const flip = this.isEnemy ? (ENEMY_MODEL_FACES_LEFT ? -this.visFacing : this.visFacing) : this.visFacing;
+    const flip = (this.isEnemy ? (ENEMY_MODEL_FACES_LEFT ? -this.visFacing : this.visFacing) : this.visFacing) * (this.mirrorX ? -1 : 1);
 
     // shadow (on a raised top it is drawn with that block row, else in the shadow layer under everything)
     placeOnGround(this.ctx, this.shadow, this.ctx.layers.shadow, this.y, this.z);
@@ -959,7 +1017,7 @@ export class UnitView {
       } else {
         if (this.imp) this._leaveImpostor();
         this.actor.spine.alpha = this.swapT;
-        this.actor.spine.scale.set(sc * flip, sc);
+        this.actor.spine.scale.set(sc * flip, sc * this.modelKY);
         this.actor.update(animDt);
         if (this._tint !== tint) { this._tint = tint; this.actor.spine.tint = tint; }
       }
@@ -1013,9 +1071,9 @@ export class UnitView {
     // head height: operators/tokens are uniform chibis; enemies vary (setup-pose bounds, when known; else the chibi
     // headroom × their official model factor)
     let headTiles = UNIT.headroom;
-    if (this.isEnemy && spineShown && this.actor.entry.bounds) headTiles = clamp(this.actor.height * UNIT.modelScale * this.modelK * 0.92, 0.55, this.isBoss ? 3.2 : 2.2);
+    if (this.isEnemy && spineShown && this.actor.entry.bounds) headTiles = clamp(this.actor.height * UNIT.modelScale * this.modelK * this.modelKY * 0.92, 0.55, this.isBoss ? 3.2 : 2.2);
     else if (this.isEnemy && this.isBoss) headTiles = 2.2;
-    else if (this.isEnemy && spineShown) headTiles = clamp(UNIT.headroom * this.modelK, 0.55, 2.2);
+    else if (this.isEnemy && spineShown) headTiles = clamp(UNIT.headroom * this.modelK * this.modelKY, 0.55, 2.2);
     this._headTiles = headTiles;
     this.screen.top = by - headTiles * s;
     this._updateHud(dt, s, bx, by - headTiles * s, alpha, t);
@@ -1285,12 +1343,13 @@ export class UnitView {
 
   _renderImpostor(sc, atlas) {
     const P = this.P, R = this.ctx.renderer, imp = this.imp;
+    const yK = this.modelKY; // the vertical stretch is baked into the impostor (the flip is the sprite's)
     const box = this._impBox();
-    const w = Math.max(8, Math.ceil(box.w * sc)), h = Math.max(8, Math.ceil(box.h * sc));
+    const w = Math.max(8, Math.ceil(box.w * sc)), h = Math.max(8, Math.ceil(box.h * sc * yK));
     const sp = this.actor.spine;
     sp.alpha = 1;
     if (this._tint !== 0xffffff) { this._tint = 0xffffff; sp.tint = 0xffffff; }
-    const ox = -box.x0 * sc, oy = -box.y0 * sc;
+    const ox = -box.x0 * sc, oy = -box.y0 * sc * yK;
     if (atlas) {
       let slot = imp.slot;
       const clip = !!(this.actor.clipped && this.actor.clipOn);
@@ -1300,7 +1359,7 @@ export class UnitView {
         if (slot && imp.rt) { imp.rt.destroy(true); imp.rt = null; }
       }
       if (slot) {
-        atlas.draw(slot, sp, { a: sc, d: sc, tx: ox, ty: oy });
+        atlas.draw(slot, sp, { a: sc, d: sc * yK, tx: ox, ty: oy });
         if (imp.sprite.texture !== slot.tex) imp.sprite.texture = slot.tex;
         imp.sprite.anchor.set(ox / slot.w, oy / slot.h);
         imp.sc = sc;
@@ -1319,7 +1378,7 @@ export class UnitView {
     sp.scale.set(1, 1);
     sp.visible = true;
     const m = this._m || (this._m = new P.Matrix());
-    m.set(sc, 0, 0, sc, ox, oy);
+    m.set(sc, 0, 0, sc * yK, ox, oy);
     try { R.render(sp, { renderTexture: rt, clear: true, transform: m }); } catch { /* lost context etc. */ }
     if (parent === atlas?.parked) sp.visible = false;
     imp.sprite.anchor.set(ox / rt.width, oy / rt.height);

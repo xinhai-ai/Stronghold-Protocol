@@ -944,6 +944,49 @@ test('拟态物质: owning 2 copies gives the 3rd (→ elite); otherwise a rando
   cover(A('5_05'), B('5_05'));
 });
 
+test('拟态物质 with 2 copies owned and none left in the pool gives nothing — never a same-bond operator; with copies left the 3rd still merges (GitHub #207)', () => {
+  // the report: an elite 溯光星源 (3 of the Ⅵ阶's 5 copies) and 2 normal ones — the pool is empty, the item text's 否则
+  // (a random same-bond operator) is only for fewer than 2 owned
+  const cid = 'chess_char_6_16_a';
+  const elite = DATA.chess[cid].goldenId;
+  const chessIn = (ps) => [...ps.board.values(), ...ps.hand, ...ps.temp].filter((p) => p && p.kind === 'chess').map((p) => p.id).sort();
+  for (const item of [A('5_05'), B('5_05')]) {
+    const { m, ps, equip } = setup({ seed: 9 });
+    give(m, ps, elite, 'hand');
+    const t = give(m, ps, cid, 'hand');
+    give(m, ps, cid, 'hand');
+    assert.equal(m.pool.left(cid), 0, 'elite 3 + 2 normal = the pool cap 5');
+    const before = chessIn(ps);
+    const got = spyGrants(ps);
+    const it = giveItem(m, ps, item);
+    assert.deepEqual(equip(it, t), OK, item);
+    assert.deepEqual(got, [], `${item}: nothing granted`);
+    assert.deepEqual(chessIn(ps), before, `${item}: no other operator, no second elite`);
+    assert.ok(!ps.find(it.uid), `${item}: consumed`);
+  }
+  // 2 normal copies, no elite, the pool drained by other players: nothing either
+  {
+    const { m, ps, equip } = setup({ seed: 9 });
+    const t = give(m, ps, cid, 'hand');
+    give(m, ps, cid, 'hand');
+    m.pool.take(cid, m.pool.left(cid));
+    const got = spyGrants(ps);
+    assert.deepEqual(equip(giveItem(m, ps, A('5_05')), t), OK);
+    assert.deepEqual(got, []);
+    assert.deepEqual(chessIn(ps), [cid, cid]);
+  }
+  // 2 normal copies with copies left: the 3rd merges into the elite
+  {
+    const { m, ps, equip } = setup({ seed: 9 });
+    const t = give(m, ps, cid, 'hand');
+    give(m, ps, cid, 'hand');
+    assert.equal(m.pool.left(cid), 3);
+    assert.deepEqual(equip(giveItem(m, ps, A('5_05')), t), OK);
+    assert.deepEqual(chessIn(ps), [elite]);
+    assert.equal(m.pool.left(cid), 2, 'the elite holds 3 copies');
+  }
+});
+
 test('博士投影: golden promotes at once; normal stays equipped and promotes at the next round start', () => {
   const { h, m, ps, equip } = setup();
   const cid = plain((c) => c.tier === 2)[0];

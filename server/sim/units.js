@@ -81,11 +81,18 @@ export class Unit {
     this.burstPending = null;   // { [element]: true } while that element's burst resolves (damage.js burstLocked)
     this.tags = new Set(init.tags || []);
     this.mem = {};              // free scratch space for content (per unit)
+    // a countdown summon's life on the field ({ from, until } battle times; content/tokens.js startCountdown, cleared by
+    // every deployment): its bar shows the time left (snapshot.js unitTuple), its HP never moves (无敌 + 禁疗)
+    this.countdown = null;
+    // knocked out, the unit lies — and redeploys — on its home tile instead of where it fell (Battle._layBody) while content
+    // holds this: 乌尔比安 moved by his S3 (the owner's decision of 2026-10-07, a deviation from PRTS's "where it fell");
+    // every deployment clears it (battle/deploy.js _deploy)
+    this.downAtHome = false;
     this.trait = {};            // profession runtime state
     this.stats = { dmg: 0, kills: 0, heal: 0, taken: 0, attacks: 0 };
     this.hidden = false;        // enemies inside a DISAPPEAR segment
     this.moving = false;        // enemies: walked this tick (drawn on the move clip; ai.js updateEnemy)
-    this.form = null;           // the model's current form (content/enemies.js setForm, a 傀儡师's 替身 'doll' → snapshot.js unitInfo)
+    this.form = null;           // the model's current form (content/enemies/helpers.js setForm, a 傀儡师's 替身 'doll' → snapshot.js unitInfo)
     this.anim = 0;
     this.persist = { redeployMul: 1, freeRedeploys: 0 };
     this.isBoss = false;
@@ -132,6 +139,8 @@ export class Unit {
       blockCnt: Math.max(0, fin(Math.round(b.blockCnt + a('blockCnt')), 0)),
       moveSpeed: Math.max(0, fin((b.moveSpeed + a('moveFlat')) * m('moveMul'), fin(b.moveSpeed, 0))),
       rangeExtend: Math.max(0, Math.round(a('rangeExtend'))),
+      // 阻挡半径倍率 − 1 (PRTS 数值范围 BLOCK_RADIUS_SCALE "影响阻挡模式为飞行阻挡的单位的阻挡半径"): Battle._checkBlock
+      blockRadiusScale: Math.max(0, fin(a('blockRadiusScale'), 0)),
       baseRangeExtend: Math.max(0, fin(Math.round(permRangeExtend), 0)),   // permanent part (initial range)
       massLevel: Math.max(0, fin(fin(b.massLevel, 0) + a('massFlat'), 0)),
       maxTargets: a('maxTargets'),
@@ -181,13 +190,18 @@ export class Unit {
   /**
    * Air unit (空中单位) for every targeting / ground-only rule: FLY movers, and enemies that hover (近地悬浮, buff flag
    * `float` — PRTS 术语释义 ba.float "算作空中单位"; they keep walking the ground path) or are levitated (浮空, gamedata_const
-   * ba.levitate "变为空中单位"). Movement and pathing read `motion`, never this.
+   * ba.levitate "变为空中单位"). A 缚地 enemy (status `groundbind`, ba.groundbind "目标变为地面单位") is a ground unit
+   * meanwhile — unless a 浮空 lifts it again (浮空 lands on a 缚地 flyer: Battle.applyStatus). Movement and pathing read
+   * `motion`, never this.
    */
   get isFlying() {
-    if (this.motion === 'FLY') return true;
-    if (this.side !== 'enemy') return false;
-    const f = this.s.flags;
-    return !!(f.float || f.levitate);
+    if (this.side === 'enemy') {
+      const f = this.s.flags;
+      if (f.levitate) return true;
+      if (f.groundbind) return false;
+      return this.motion === 'FLY' || !!f.float;
+    }
+    return this.motion === 'FLY';
   }
 
   get hpRatio() { const mh = this.s.maxHp; return mh > 0 ? this.hp / mh : 0; }

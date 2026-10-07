@@ -1,4 +1,4 @@
-// Operator loadouts (DESIGN §16) for the tier-6 kits (server/sim/content/kits/tier6.js): every selectable NON-default
+// Operator loadouts (DESIGN §16) for the tier-6 kits (server/sim/content/kits/ops/): every selectable NON-default
 // skill of every visible tier-6 chess is hand-authored (tools/kit-coverage.mjs) and shows its signature effect for the
 // normal (Lv4) and the elite (Lv7) chess — numbers from the selected skill's blackboard (data/chess.json skills[]) —
 // and the elite's non-default module choices (Y / RA modules, or 'none') change what the kit does.
@@ -313,7 +313,7 @@ test('6_03 余 S2 厚礼上宾: cast with an enemy on its x-1 (SKILL_RANGE — a
 // =================================================================================================================
 // 6_04 浊心斯卡蒂
 
-test('6_04 浊心斯卡蒂 S1 同归殊途之吟: SP_FULL, full HP + max HP +; trait heal raised; 50 % of the damage of allies in range goes to her', () => {
+test('6_04 浊心斯卡蒂 S1 同归殊途之吟: SP_FULL, full HP + max HP +; trait (生命回复速度) raised; 50 % of the damage of allies in range goes to her', () => {
   for (const id of both('chess_char_6_04')) {
     const sid = 'skchr_skadi2_1', bb = bbOf(id, sid);
     const h = run({
@@ -333,14 +333,14 @@ test('6_04 浊心斯卡蒂 S1 同归殊途之吟: SP_FULL, full HP + max HP +; t
     approx(onAlly[0].amount, 1000 * (1 - bb.damage_resistance), 'the ally takes the rest');
     approx(onHer[0].amount, 1000 * bb.damage_resistance, 'she takes the transferred part');
     assert.equal(onHer[0].type, 'true');
-    const hh = heals(h, u, (c) => c.target === a && c.opts?.aura);
-    assert.ok(hh.length > 0);
-    approx(hh[hh.length - 1].amount, u.s.atk * bb['attack@atk_to_hp_recovery_ratio'], 'trait heal raised');
+    // the trait is an hpRegen buff on the ally (PRTS 分支特性信息 吟游者; professions.js bardRegen), no heal of hers
+    approx(a.findBuff(`trait:bard:${u.id}`)?.mods.hpRegen ?? 0, u.s.atk * bb['attack@atk_to_hp_recovery_ratio'], 'trait raised');
+    assert.equal(heals(h, u, (c) => c.target === a).length, 0, 'no heal of hers');
     done(h);
   }
 });
 
-test('6_04 浊心斯卡蒂 S2 同葬无光之愿: toggle; 鼓舞 ATK and DEF (atk / def × hers) on the other allies of her range, trait heal 16/17 %', () => {
+test('6_04 浊心斯卡蒂 S2 同葬无光之愿: toggle; 鼓舞 ATK and DEF (atk / def × hers) on the other allies of her range, trait 16/17 % (生命回复速度)', () => {
   for (const id of both('chess_char_6_04')) {
     const sid = 'skchr_skadi2_2', bb = bbOf(id, sid);
     const h = run({
@@ -359,9 +359,28 @@ test('6_04 浊心斯卡蒂 S2 同葬无光之愿: toggle; 鼓舞 ATK and DEF (at
     approx(a.s.def, a.base.def + u.s.def * bb.def, 'DEF raised by the flat value', 1e-3);
     assert.ok(!u.findBuff('inspire') && !u.findBuff('inspire:def'), 'never on herself');
     a.hp = a.s.maxHp * 0.5;
+    const hp0 = a.hp, t1 = h.b.time;
     h.run(1.1);
-    const hh = heals(h, u, (c) => c.target === a && c.opts?.aura);
-    approx(hh[hh.length - 1].amount, u.s.atk * bb['attack@atk_to_hp_recovery_ratio'], 'trait heal ratio');
+    const v = u.s.atk * bb['attack@atk_to_hp_recovery_ratio'];
+    approx(a.findBuff(`trait:bard:${u.id}`)?.mods.hpRegen ?? 0, v, 'trait ratio');
+    assert.ok(Math.abs(a.hp - hp0 - (a.s.hpRegen) * (h.b.time - t1)) <= 1.5, `regenerated ${a.hp - hp0}`);
+    done(h);
+  }
+});
+
+test('6_04 浊心斯卡蒂 S2 同葬无光之愿 (自动触发, effects on her allies only): on as soon as its SP is full — no enemy needed', () => {
+  for (const id of both('chess_char_6_04')) {
+    const sid = 'skchr_skadi2_2';
+    const h = run({
+      defs: { chess: { ally_a: plain('ally_a', { stats: { maxHp: 1e5, atk: 400, def: 100 } }) } },
+      units: [U(id, sid, 10, 4, { carryState: READY }), { chessId: 'ally_a', row: 10, col: 5 }],
+    });
+    const u = h.unit(id), a = h.unit('ally_a');
+    usesSkill(u, sid);
+    assert.equal(u.skill.rule, 'SP_FULL');
+    assert.ok(h.runUntil(() => u.skill.active, 2), 'on with nobody on the field (the data DEFAULT waited for an enemy in her range)');
+    h.run(1.1);
+    assert.ok(a.findBuff('inspire') && a.findBuff('inspire:def'), '鼓舞 on the ally beside her');
     done(h);
   }
 });
@@ -689,7 +708,11 @@ test('6_11 缪尔赛思 S2 生态耦合: +cost DP; melee copies regenerate and t
     const eco = tok().findBuff('mlyss:eco');
     assert.ok(eco, 'melee copy buffed');
     approx(eco.mods.hpRegenRatio, bb.hp_recovery_per_sec_by_max_hp_ratio);
-    approx(eco.mods.physTakenMul, 1 - bb.damage_resistance);
+    // 庇护: the shared effect of every source (同名效果取最高 — kits/shared/tier1.js holdProtect)
+    const protect = tok().findBuff('protect');
+    assert.ok(protect && protect.source === u, 'the 庇护 she grants');
+    approx(protect.mods.physTakenMul, 1 - bb.damage_resistance);
+    approx(protect.mods.artsTakenMul, 1 - bb.damage_resistance);
     done(h);
 
     // ranged copy: a sniper to copy
@@ -1163,6 +1186,26 @@ test('6_20 纯烬艾雅法拉 S1 无声润物: toggle heal; ATK +, 2 heal target
     a3.elem.burn = 800;
     h.run(1.05);
     approx(800 - a3.elem.burn, u.s.atk * bb['agoat2_s_1[aura].ep_heal_ratio'], 'per second', 1e-3);
+    done(h);
+  }
+});
+
+test('6_20 纯烬艾雅法拉 S1 无声润物 (自动触发, effects on her allies only): on as soon as its SP is full — nobody injured, no enemy (the owner\'s decision of 2026-10-05)', () => {
+  for (const id of both('chess_char_6_20')) {
+    const sid = 'skchr_agoat2_1', bb = bbOf(id, sid);
+    const h = run({
+      defs: { chess: { a1: plain('a1', { stats: { maxHp: 1e5 } }) } },
+      units: [U(id, sid, 10, 3, { carryState: READY }), { chessId: 'a1', row: 10, col: 5 }],
+    });
+    const u = h.unit(id), a1 = h.unit('a1');
+    usesSkill(u, sid);
+    assert.equal(u.skill.rule, 'SP_FULL');
+    assert.ok(h.runUntil(() => u.skill.active, 2), 'on with every ally at full HP and no enemy (the data DEFAULT heal rule waited for an injured ally)');
+    assert.equal(a1.hp, a1.s.maxHp);
+    h.b.addBuff(u, { key: 'test:disarm', flags: { disarm: true } }); // (no heals: only the skill's 元素损伤 recovery)
+    a1.elem.burn = 800;
+    h.run(1.05);
+    approx(800 - a1.elem.burn, u.s.atk * bb['agoat2_s_1[aura].ep_heal_ratio'], 'its 元素损伤 recovery runs at full HP', 1e-3);
     done(h);
   }
 });

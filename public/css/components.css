@@ -773,6 +773,117 @@
 @keyframes pb-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 @keyframes pb-sweep { 0% { left: -30%; opacity: 1; } 100% { left: 120%; opacity: 0; } }
 
+/* ---- result box (ResultDialog: the round's 作战结束 dialog; GitHub #235, PR #112) ---------------------------------- */
+/* A centred framed plate in the tone's colour — four corner ticks, chevrons either side of the title, one light sweep.
+   Under the phase banner (z-index) so a phase change and a result never fight over the same pixels; pointer-events:
+   none — the settlement stays clickable. */
+.rdialog {
+  --rd: var(--mint-500);
+  --rd-glow: rgba(23, 249, 183, .35);
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: calc(var(--z-banner) - 1);
+  pointer-events: none;
+}
+.rdialog--orange { --rd: var(--orange-hi); --rd-glow: rgba(255, 122, 51, .38); }
+.rdialog--red { --rd: var(--red-premium); --rd-glow: rgba(255, 84, 84, .38); }
+.rdialog__box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .1rem;
+  min-width: 5.6rem;
+  max-width: 88vw;
+  padding: .34rem .5rem .3rem;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .022) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, rgba(9, 13, 12, .96), rgba(6, 9, 8, .97));
+  border: 1px solid var(--rd);
+  box-shadow: 0 0 .5rem var(--rd-glow), inset 0 0 .7rem rgba(0, 0, 0, .8), 0 .1rem .5rem rgba(0, 0, 0, .6);
+  overflow: hidden;
+  animation: rd-open 320ms var(--ease-out) backwards;
+}
+.rdialog__box::before, .rdialog__box::after {
+  /* hairlines inside the frame, so the plate reads as a plate and not a card */
+  content: '';
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--rd) 20%, var(--rd) 80%, transparent);
+  opacity: .8;
+}
+.rdialog__box::before { top: 4px; }
+.rdialog__box::after { bottom: 4px; }
+.rdialog__tick { position: absolute; width: .16rem; height: .16rem; border: 2px solid var(--rd); opacity: .9; }
+.rdialog__tick--tl { top: 8px; left: 8px; border-right: 0; border-bottom: 0; }
+.rdialog__tick--tr { top: 8px; right: 8px; border-left: 0; border-bottom: 0; }
+.rdialog__tick--bl { bottom: 8px; left: 8px; border-right: 0; border-top: 0; }
+.rdialog__tick--br { bottom: 8px; right: 8px; border-left: 0; border-top: 0; }
+.rdialog__micro {
+  font-family: var(--font-display);
+  font-size: .13rem;
+  letter-spacing: .48em;
+  padding-left: .48em;
+  color: var(--rd);
+  animation: rd-wipe 300ms 60ms var(--ease-out) backwards;
+}
+.rdialog__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .22rem;
+  animation: rd-wipe 340ms 110ms var(--ease-out) backwards;
+}
+.rdialog__row::after {
+  /* one-shot light sweep across the title */
+  content: '';
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  left: -25%;
+  width: 18%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .26), transparent);
+  transform: skewX(-20deg);
+  opacity: 0;
+  animation: rd-sweep 780ms 300ms var(--ease-out) forwards;
+}
+.rdialog__title {
+  font-size: .62rem;
+  font-weight: 900;
+  letter-spacing: .14em;
+  padding-left: .14em;
+  line-height: 1.05;
+  color: #fff;
+  text-shadow: 0 0 .26rem var(--rd-glow), 0 2px 0 rgba(0, 0, 0, .55);
+}
+.rdialog__chev { --ch-h: .46rem; height: .46rem; flex: none; }
+.rdialog__sub {
+  font-size: .18rem;
+  letter-spacing: .1em;
+  color: var(--text-lo);
+  text-align: center;
+  animation: rd-wipe 340ms 180ms var(--ease-out) backwards;
+}
+.rdialog.is-leaving .rdialog__box { animation: rd-close 260ms var(--ease-in-out) forwards; }
+@keyframes rd-open { from { transform: scale(.9, .78); opacity: 0; } }
+@keyframes rd-close { to { transform: scale(.96, .86); opacity: 0; } }
+@keyframes rd-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes rd-sweep { 0% { left: -25%; opacity: 1; } 100% { left: 115%; opacity: 0; } }
+@media (max-width: 720px) {
+  .rdialog__box { min-width: 0; width: 92vw; padding: .26rem .3rem .22rem; }
+  .rdialog__title { font-size: .42rem; }
+  .rdialog__chev { --ch-h: .34rem; height: .34rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rdialog__box, .rdialog__row, .rdialog__row::after, .rdialog__micro, .rdialog__sub { animation: none; }
+}
+
 /* ---- ping pill ------------------------------------------------------------------------------------- */
 .ping {
   --pc: var(--mint-400);

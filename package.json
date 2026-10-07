@@ -1,6 +1,6 @@
 {
   "name": "stronghold-protocol-alliance",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "private": true,
   "description": "明日方舟「卫戍协议：盟约」非官方同人联机网页复刻（1–4 人合作，Node.js 服务器 + 浏览器客户端）",
   "license": "GPL-3.0-or-later",
@@ -35,7 +35,12 @@
     "postinstall": "node tools/vendor.mjs",
     "setup": "node tools/setup.mjs",
     "doctor": "node tools/doctor.mjs",
-    "launch": "node scripts/launch.mjs"
+    "launch": "node scripts/launch.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit --checkJs -p jsconfig.json",
+    "check:imports": "node tools/check-imports.mjs",
+    "package": "node tools/package.mjs",
+    "package:lite": "node tools/package.mjs --lite"
   },
   "engines": {
     "node": ">=22"
@@ -52,6 +57,10 @@
   },
   "devDependencies": {
     "puppeteer-core": "^25.12.0",
-    "vite": "^6.4.3"
+    "vite": "^6.4.3",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "typescript": "^5.9.2"
   }
 }

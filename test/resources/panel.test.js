@@ -71,7 +71,7 @@ describe('where the preload is reachable', () => {
     assert.equal((panel.match(/onClick=\$\{openResources\}/g) || []).length, 2);
     const main = read('public/js/main.js');
     assert.match(main, /<\$\{ResourceManagerHost\} \/>/);
-    assert.match(panel, /title="预载资源管理"/);
+    assert.match(panel, /title=\$\{t\('预载资源管理'\)\}/);
     assert.match(panel, /tier=\$\{1\}/);
     assert.match(panel, /tier=\$\{2\}/);
     assert.match(panel, /导入 ZIP/);

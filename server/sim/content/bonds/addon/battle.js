@@ -31,11 +31,16 @@
 //                      无来源 damage uses the chance and hits nobody, a 流失 never does — PRTS 备注 / 作战机制)
 //                      + 脆弱 ×damage_scale for weak[limit] s
 //   助力 deputShip     all operators DEF +(base + per·L), redeploy time ×(1 + respawn_time)
-//   突袭 raidShip      member idle ≥ no_attack_duration s (or skill ready) with no enemy in range → "保留技力立即再部署"
-//                      next to the most advanced ground enemy it can reach: on a free tile its position may be deployed
+//   突袭 raidShip      member idle ≥ no_attack_duration s (or skill ready — a passive skill that is on counts, GitHub
+//                      #49, and so does a deploy-timed skill while it runs, #109) with no enemy in range → "保留技力立即再部署"
+//                      next to the most advanced ground enemy it can reach: on a free tile of its own board (Battle.onOwnBoard:
+//                      never a boss field's hand / 临时整备区 rows, never the other half of a 联防 or boss field — community
+//                      reports of 2026-10-06, items 40 and 16.3) its position may be deployed
 //                      on from which its range covers that enemy (GitHub issue #51 [ASSUMED]: the first of the 8 most
 //                      advanced that has such a tile; none → it stays and the next poll looks again, never a jump that
-//                      hits nothing); grid.canStand: never the 深水区 (player report #3 after 0.1.0, members dropped
+//                      hits nothing) — for a melee member that blocks, a tile where its block applies first (ground
+//                      units pass it, an enemy path runs through it: not a 围墙 — the owner's decision of 2026-10-06,
+//                      GitHub #148); grid.canStand: never the 深水区 (player report #3 after 0.1.0, members dropped
 //                      into 战场#08's pool after an enemy wading in it); Battle.isReservedTile: never a tile a knocked-out
 //                      operator lies on (player report F5, members landed on a fallen teammate). A real redeployment
 //                      (retreat + free redeploy on the landing tile, full HP, `deploy` fires — 部署时 traits such as
@@ -266,26 +271,40 @@ function raidReach(u) {
 /**
  * Landing tile [row, col] of a jump to enemy `e`, or null: a tile from which the member's range (`reach`, raidReach)
  * covers the enemy's body (a huge enemy: any tile it occupies — body.js), within RAID_SEARCH tiles (Chebyshev) of the
- * enemy, inside the field rect, that the member's position may be deployed on (grid.canStand: never the 深水区 —
- * player report #3 after 0.1.0) and that is free (Battle.isReservedTile: no living unit, no knocked-out operator's
- * body — player report F5 —, no waiting piece's tile). The nearest first (Chebyshev, then 0.01·Manhattan); last
- * tie-break the offset in the member's facing-RIGHT frame (sim/dir.js localOrder; for a RIGHT-facing unit the plain
- * tile-key order), so the landing tile turns with its direction. Only the tiles a range offset leads back to from a
- * body tile are looked at, so a search that finds nothing stays cheap.
+ * enemy, inside the field rect and on the member's own board (Battle.onOwnBoard — "再部署" goes where its player deploys:
+ * never a boss field's hand row 0 or 临时整备区 row 1, both inside BOSS_RECT and buildable high ground, nor the half of the
+ * 联防 or boss field that is not its player's; community reports of 2026-10-06, items 40 and 16.3: a ranged member landed
+ * on the 临时整备区 row of a solo leader round, and on the right half of the one-helper 联防 map), that the member's
+ * position may be deployed on (grid.canStand: never the 深水区 —
+ * player report #3 after 0.1.0 —, and for a melee member low ground only, never a 高台: GitHub #148) and that is free
+ * (Battle.isReservedTile: no living unit, no knocked-out operator's body — player report F5 —, no waiting piece's tile).
+ * A melee member that blocks takes a tile where its block applies first — ground units pass it (not a 围墙 / 围栏 tile,
+ * where a unit blocks no ground enemy: Battle._blockerFor) and an enemy ground path runs through it
+ * (Battle.groundPathTiles) or its enemy stands on it — over one where it would block nothing (the owner's decision of
+ * 2026-10-06 after GitHub
+ * #148: a member landed on a 围墙 tile, drawn raised, while a road tile covered its enemy too [ASSUMED: the official
+ * landing picks among the legal tiles at random]); then the nearest (Chebyshev, then 0.01·Manhattan); last tie-break
+ * the offset in the member's facing-RIGHT frame (sim/dir.js localOrder; for a RIGHT-facing unit the plain tile-key
+ * order), so the landing tile turns with its direction. Only the tiles a range offset leads back to from a body tile
+ * are looked at, so a search that finds nothing stays cheap.
  */
 function raidTile(battle, u, e, reach) {
   const er = Math.round(e.y), ec = Math.round(e.x);
   const ranged = u.def?.position === 'RANGED';
-  let best = null, bd = Infinity, bo = null;
-  for (const k of bodyKeys(e)) {
+  const body = bodyKeys(e);
+  const path = !ranged && u.s.blockCnt > 0 ? battle.groundPathTiles() : null;
+  let best = null, bp = 2, bd = Infinity, bo = null;
+  for (const k of body) {
     const br = Math.floor(k / COLS), bc = k - br * COLS;
     for (let i = 0; i < reach.length; i += 2) {
       const r = br - reach[i], c = bc - reach[i + 1], dr = r - er, dc = c - ec;
       if (Math.abs(dr) > RAID_SEARCH || Math.abs(dc) > RAID_SEARCH) continue;
-      if (!battle.grid.inRect(r, c) || !battle.grid.canStand(r, c, { ranged }) || battle.isReservedTile(r, c)) continue;
+      if (!battle.grid.inRect(r, c) || !battle.onOwnBoard(u.player, r, c) || !battle.grid.canStand(r, c, { ranged }) || battle.isReservedTile(r, c)) continue;
+      const t = r * COLS + c;
+      const p = path && battle.grid.tile(r, c).pass === 'ALL' && (path.has(t) || body.includes(t)) ? 0 : 1;   // its block applies
       const d = Math.max(Math.abs(dr), Math.abs(dc)) + 0.01 * (Math.abs(dr) + Math.abs(dc));
       const o = localOrder(dr, dc, u.dir);
-      if (d < bd - 1e-9 || (Math.abs(d - bd) <= 1e-9 && localBefore(o, bo))) { best = [r, c]; bd = d; bo = o; }
+      if (p < bp || (p === bp && (d < bd - 1e-9 || (Math.abs(d - bd) <= 1e-9 && localBefore(o, bo))))) { best = [r, c]; bp = p; bd = d; bo = o; }
     }
   }
   return best;
@@ -316,7 +335,17 @@ function raidPoll(battle, st) {
   for (const u of st.members[ID.raid]) {
     if (!onField(u) || !u.canAct) continue;
     const since = Math.max(u.lastAttackAt ?? -Infinity, u.deployedAt ?? -Infinity, u.mem[KEY.raid] ?? -Infinity);
-    const ready = !!(u.skill && u.skill.ready && !(u.skill.active && u.skill.isTimed));
+    // 技能就绪: a charged skill, or a passive skill that is on (GitHub #49: skills.js `ready` is false for every passive,
+    // so 缄默德克萨斯 / 宴 … only ever jumped on the idle trigger; the reporter's footage of the official game shows
+    // 缄默德克萨斯 jumping within her passive's 10 s with no enemy in range). The engine keeps a passive on for the whole
+    // deployment, so such a member may jump whenever nothing is in its range [ASSUMED: "技能就绪" of a passive = the
+    // skill being on]; the landing rule below keeps it from hopping. Here only — the global `ready` stays as it is.
+    // A deploy-timed skill (#109: kind 'duration' with no SP — spType 'none' — run from the deployment: 宴 S2, 斯卡蒂 S2,
+    // 伊内丝 S3, 缄默德克萨斯 S1–S3, 耀骑士临光 S2, the generic "部署后…N秒内" passives) counts the same way while its
+    // window runs — the 10 s of the reporter's footage; once it has ended only the idle trigger is left.
+    const sk = u.skill;
+    const deploySkillOn = !!(sk && sk.active && (sk.kind === 'passive' || sk.spType === 'none'));
+    const ready = !!(sk && !sk.noSkill && ((sk.ready && !(sk.active && sk.isTimed)) || deploySkillOn));
     const idleOk = battle.time - since >= idle - 1e-9;
     if (!(ready || idleOk)) continue;
     if (battle.enemiesInKeys(u.rangeKeys || [], u, u.profile).length) continue;

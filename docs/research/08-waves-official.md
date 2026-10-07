@@ -551,10 +551,10 @@ Everything in `docs/BALANCE.md` §4 (the tuned tables) and the `tools/balance.mj
 2. **Stat scaling and balance.**
    - Delete every `enemyHpMul`, `enemyAtkMul` and `bossHpMul` in `data/tuning.json`. Keep the `titles` block.
    - Remove the `soloMul` in `bountySpawns`.
-   - `config.bossHpScale`: co-op pool = `bloodPoint[difficulty]` with no alive-player factor; solo stays a flagged config value. (2026-10-01: × alive / 4 available behind `aliveScaling`, off, see §6 #7.)
+   - `config.bossHpScale`: co-op pool = `bloodPoint[difficulty]` with no alive-player factor; solo stays a flagged config value. (2026-10-01: × alive / 4 available behind `aliveScaling`, off, see §6 #7.) (2026-10-06: replaced by the owner's decision adopting PR #209 — `bloodPoint` × the players alive at the fight's start, solo × 1; `perPlayer: false` restores the fixed pool; DESIGN §25.13.4.)
    - Keep `enemyScale` (PRTS table) and the 终极 speed ×1.15 from R3.
    - Re-run `tools/balance.mjs --tuning off` only to report, not to tune.
-3. **Pathing** (`server/sim/grid.js`, `server/sim/ai.js`, `server/sim/Battle.js`):
+3. **Pathing** (`server/sim/grid.js`, `server/sim/ai.js`, `server/sim/Battle.js` — since 0.2.0 `server/sim/battle/spawns.js` / `tiles.js`):
    - Add `Grid.flowField(dest)` as in §3.4, cached per `(dest, version)`.
    - `planLeg` for WALK: follow the smoothed parents from the enemy's tile to the leg target and re-plan on version change. That is the same trigger as today.
    - Crates: `setObstacle` marks a cost-1000 obstacle-like tile, not an impassable one. The existing "blocked enemy attacks the crate" logic stays.
@@ -581,7 +581,7 @@ Everything in `docs/BALANCE.md` §4 (the tuned tables) and the `tools/balance.mj
 | # | Question | Default |
 |---|---|---|
 | 1 | Do 射击台 (act1 m03 (10,3)/(10,4)) and 土石结构 block ground movement? | Block [ASSUMED] |
-| 2 | Leader HP pool in solo, and in co-op with fewer than 4 alive players | co-op `bloodPoint` (× alive / 4 behind `aliveScaling`, off — ask the user, 2026-10-01); solo config value (flagged) |
+| 2 | Leader HP pool in solo, and in co-op with fewer than 4 alive players | co-op `bloodPoint` (× alive / 4 behind `aliveScaling`, off — ask the user, 2026-10-01); solo config value (flagged). Answered 2026-10-06 (the owner, PR #209): `bloodPoint` × the players alive at the fight's start, solo × 1 (DESIGN §25.13.4) |
 | 3 | Unit of `maxPlayTime` | Real seconds (×2 game) [ASSUMED] |
 | 4 | Exact 联防 predelay formula (`_CalculateActionPredelayConsiderUid`) | 0.5 s per owner [ASSUMED] |
 | 5 | DEF reduction in the 70 % / 80 % bases | HP/ATK only (下半 text) |

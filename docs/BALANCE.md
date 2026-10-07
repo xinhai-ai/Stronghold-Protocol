@@ -15,9 +15,11 @@ kinds / counts and routes must follow the official game; research 08 §6–§7, 
   `k` copies, no kept fly placeholders; verified against all 429 official entry × round compositions and the official
   count distribution (同盟 险境 R3 ≤ 10 enemies, R13 ≈ 37 — the old generator averaged 28 / 81);
 * stats = the PRTS per-round `enemyScale` table only (`data/config.json`, 终极 ×1.15 speed from R3);
-* leader pool = `bloodPoint[difficulty]` in co-op — one pool for every boss field, whatever the number of alive players
-  (config `bossHpScale.aliveScaling` would make it × alive / 4; off — the user chose the fixed pool, DESIGN §20.10); solo keeps ×0.25,
-  flagged [ASSUMED] in data;
+* leader pool = `bloodPoint[difficulty]` × the players alive when the fight starts — one pool for every boss field; solo
+  × 1 (the owner's decision of 2026-10-06, adopting PR #209: it replaces the fixed pool of DESIGN §20.10, co-op
+  bloodPoint whatever the count and solo × 0.25 [ASSUMED] — config `bossHpScale.perPlayer: false`, `solo: 0.25` restores
+  it; DESIGN §25.13.4). The bots' solo matches got 4× the leader HP: in the golden corpus 4 of the 6 solo matches that
+  reached and won the Final Assault now lose it (team LP 0 with 93k–176k of the pool left);
 * leader parts and drones (DESIGN §20.10): a 剑 / 锤 / 碎铳之簧 passes every damage it takes to its leader 1:1 (PRTS "等量的
   无来源生命流失"; until 2026-10-01 half, and a 剑 / 锤 only while grounded — the dive hits [ASSUMED], the handbook says
   "被击落时"); a 胄 drone that dies (whoever kills it, DESIGN §20.13) costs 2 % of the leader's shown max HP = the pool (unchanged from v2.5; which "最大生命值" the
@@ -70,7 +72,7 @@ and runs the real
 `Battle` with full content (kits, talents, bonds with layers, IN_BATTLE 特质, equipment, bands, summons). Co-op rounds
 field **4 boards** against the same wave and then run **联防** exactly like the match (`unite.js`: ≤ 2 perfect helpers,
 only the survivors cost their source LP). Boss rounds build the Final Assault fields exactly like `Match.startFinalAssault`
-(pairs / `_s` for a lone player, shared pool `GameData.bossPoolHp` = `bloodPoint` (solo ×0.25), merged team LP of 15 per player, leaks' `lpr`,
+(pairs / `_s` for a lone player, shared pool `GameData.bossPoolHp` = `bloodPoint` × the players alive (solo × 1, §25.13.4), merged team LP of 15 per player, leaks' `lpr`,
 −1 LP/s after 150 s) and record the pool damage by 150 s, the kill time and the win rate.
 
 Metrics: **capped leaks** = min(leaks, 10) per board and round (what that board alone would lose; the targets below
@@ -201,8 +203,8 @@ earlier commit (a current run differs for every leader) and were not refreshed h
 
 Reading: the early game is easy everywhere (official R1–R3 bring 3–10 enemies); leaks concentrate on the second-half
 specials (深池逐火 TIMES embers, stealth 隐形弩手组长 / 重弩突袭者, 疯狂的逐腐兽, 掠海漂移体) and 终极 R6–R11, where co-op
-boards still leak 3–6 and 联防 halves the LP cost. Solo leaders (bloodPoint × 0.25 [ASSUMED]) are the hard part of the
-solo modes; the solo pool factor is the one open number here (research 08 §8 #2).
+boards still leak 3–6 and 联防 halves the LP cost. Solo leaders (bloodPoint × 0.25 [ASSUMED] when these tables were
+measured; × 1 since the owner's decision of 2026-10-06, §25.13.4) are the hard part of the solo modes.
 
 Reproduce: `node tools/balance.mjs --mode all --difficulty ALL --tuning off [--bots 5] [--json]`.
 
@@ -424,8 +426,10 @@ on a leader is cancelled (`MAX_BATTLE_DAMAGE`: 0 damage, nothing to the pool —
   `--profile` above ≈ 4.9 would have pushed the 170-layer R15 core curve, +20 % jitter, past 999) and
   `matchrun.mjs --layers N` adds at most the room left under 999, so `--check` stays clean on a boosted run.
 - **Pool size and the line**: a drone that dies (whoever kills it, DESIGN §20.13) costs 假想敌：胄 0.02 × the pool
-  max (【死亡集群】, boss_1 / boss_8; `bosses.js DRONE_LINK_BASE 'pool'`). Today that is at most 144000 (boss_8 ABYSS 7.2M) and lands; a pool above 14999950 would make every
-  drone kill a cancelled hit. Re-check this whenever the pool size changes (research 11 §6).
+  max (【死亡集群】, boss_1 / boss_8; `bosses.js DRONE_LINK_BASE 'pool'`). With the pool per player alive (§25.13.4) the
+  hidden 胄 终极 pool is 21.6M / 28.8M at 3 / 4 players, so a drone is 432000 / 576000 — above the line; the link is a
+  share, no hit, and passes it (`Battle.loseHp noHitLimit` [ASSUMED]: research 11 §2.1 checks every damage modifier, but
+  which max HP the official link reads is not documented). Re-check this whenever the pool size changes (research 11 §6).
 
 
 ### 2026-10-06 本分支规则调整

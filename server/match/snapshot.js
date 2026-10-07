@@ -190,7 +190,7 @@ const PLAYER_FIELDS = Object.freeze([
   'pendingFunds', 'ready', 'infoReady', 'lastEmoteAt', 'loadout', 'shop', 'offers', 'hand', 'temp', 'prepsEnded',
   '_tempDue', 'board', 'layers', 'pendingLayerGains', 'bondCountBonus', 'effects', 'bounties', 'counters', 'round',
   'deployCapBonus', 'deployCapMin', 'deviceOverrides', 'tileOverrides', 'stats', 'eliminatedRound', 'lpAtFinal',
-  'lastResult',
+  'lastResult', 'standIns', 'diy', 'diyStock', 'diyBanned',
 ]);
 
 /** The RNG streams the match owns (server/sim/rng.js createRng, state()/setState). */
@@ -358,13 +358,22 @@ export function restoreMatch(m, doc, { createRngFromState, log = console } = {})
     const ps = m.players.get(p.playerId);
     for (const k of PLAYER_FIELDS) {
       if (k === 'playerId') continue;
-      ps[k] = decodeState(p[k]);
+      if (Object.hasOwn(p, k)) ps[k] = decodeState(p[k]);
     }
     if (ps._tempDue === null || !(ps._tempDue instanceof Map)) ps._tempDue = new Map();
     if (ps.board === null || !(ps.board instanceof Map)) ps.board = new Map();
     // derived state
     ps.m = m;
     ps.gd = m.gd;
+    // Rebuild the self-selected data view and stock methods; only the saved remaining counts are copied back.
+    const stockEntries = ps.diyStock?.entries;
+    ps.setNotOwned(ps.standIns || []);
+    ps.setDiy(ps.diy || {});
+    ps.initDiyStock(new Set([...(m.disabledBonds || []), ...(m.staticInactiveBonds || [])]));
+    if (stockEntries instanceof Map) for (const [id, saved] of stockEntries) {
+      const entry = ps.diyStock.entries.get(id);
+      if (entry) entry.left = Math.max(0, Math.min(entry.cap, Math.trunc(Number(saved.left) || 0)));
+    }
     ps.connected = ps.isBot ? true : false;   // every socket is gone: the lobby rebinds on hello
     ps._deployMap = null;
     ps._deployField = undefined;

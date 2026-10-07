@@ -25,6 +25,7 @@
 
 import { captureMatch, SNAPSHOT_VERSION } from './match/snapshot.js';
 import { PersistenceWorker } from './workers/persistenceClient.js';
+import { t } from '../shared/i18n.js';
 
 /** Document layout version (bumped when the shape below changes). */
 export const PERSIST_VERSION = 1;
@@ -49,7 +50,7 @@ export function sessionDoc(s, now) {
     token: s.token,
     name: s.name,
     roomCode: s.roomCode || null,
-    loadout: s.loadout || null,
+    loadout: s.loadout || null, notOwned: s.notOwned || null, diy: s.diy || null, lang: s.lang || 'zh-CN',
     resumeWindowMs: typeof s.resumeWindowMs === 'number' && s.resumeWindowMs > 0 ? s.resumeWindowMs : null,
     connected: !!s.connected,
     disconnectedAt: s.connected || s.disconnectedAt == null ? now : s.disconnectedAt,
@@ -61,7 +62,7 @@ function seatDoc(seat) {
   return {
     seat: seat.seat, playerId: seat.playerId, name: seat.name, isBot: !!seat.isBot,
     ready: !!seat.ready, left: !!seat.left, connected: !!seat.connected && !seat.left,
-    loadout: seat.loadout || null,
+    loadout: seat.loadout || null, notOwned: seat.notOwned || null, diy: seat.diy || null,
   };
 }
 
@@ -127,11 +128,11 @@ export function restoreServer({ doc, registry, lobby, now = Date.now(), log = no
     const session = registry.adopt({
       playerId: s.playerId,
       token: s.token,
-      name: typeof s.name === 'string' ? s.name : '博士',
+      name: typeof s.name === 'string' ? s.name : t('博士'),
       disconnectedAt: since,
       resumeWindowMs: windowMs,
       roomCode: s.roomCode,
-      loadout: s.loadout,
+      loadout: s.loadout, notOwned: s.notOwned, diy: s.diy, lang: s.lang,
       addr: s.addr,
     });
     if (session) stats.sessions++;

@@ -25,6 +25,25 @@ before(async () => {
   srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true, MatchClass: StubMatch, matchmakingWaitMs: 1000, matchmakingTickMs: 10 });
 });
 
+test('public and room matchmaking retain operator ownership and self-selected picks', async () => {
+  const c = await player('QLoadout');
+  const session = srv.registry.byId(c.id);
+  session.notOwned = ['chess_char_4_22_a'];
+  session.diy = { chess_char_5_diy1_a: { charId: 'char_112_siege', skillIndex: 2 } };
+  for (const inRoom of [false, true]) {
+    if (inRoom) {
+      assert.equal((await c.request({ t: 'room.create', mode: 'coop', difficulty: 'ABYSS' })).t, 'ok');
+      await c.waitFor('room.state', (s) => s.code);
+    }
+    assert.equal((await c.request({ t: 'match.join', mode: 'coop', difficulty: 'ABYSS', fillBots: false })).t, 'ok');
+    const entry = srv.lobby.queueByPlayer.get(c.id);
+    assert.deepEqual(entry.players[0].notOwned, session.notOwned);
+    assert.deepEqual(entry.players[0].diy, session.diy);
+    assert.equal((await c.request({ t: 'match.leave' })).t, 'ok');
+  }
+  assert.equal((await c.request({ t: 'room.leave' })).t, 'ok');
+});
+
 test('four alliance queue entries start one four-seat preparation match immediately', async () => {
   const cs = await Promise.all(['A', 'B', 'C', 'D'].map(player));
   for (const c of cs) {

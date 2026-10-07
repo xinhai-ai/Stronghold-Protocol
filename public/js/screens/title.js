@@ -1,4 +1,6 @@
-// Title screen: season-style backdrop, big title 卫戍协议：盟约, remembered nickname, 开始.
+// Title screen: season-style backdrop, big title 卫戍协议：盟约, remembered nickname, 开始, the language menu
+// (中文 | English | every pack in public/i18n/, ui/lang.js; a title in an alphabetic script — English — is the big one and
+// the small wordmark above it hides).
 //
 // Pressing 开始 validates the nickname (1..NAME_MAX_LEN chars, no control characters), stores it,
 // marks this tab as "entered" (so reloads skip the title) and hands the name to net.js, which
@@ -9,7 +11,7 @@
 // pure CSS/SVG (radar, ridgelines, glow), so it never issues a request that can 404.
 
 import { useMemo, useState } from '../../vendor/hooks.module.js';
-import { NAME_MAX_LEN, APP_VERSION } from '../../../shared/constants.js';
+import { NAME_MAX_LEN, APP_VERSION, DEV_BUILD } from '../../../shared/constants.js';
 import { html, Button, Icon, MicroLabel, TextField, PingPill, Modal } from '../ui/components.js';
 import { AnnouncementButton } from '../ui/announcement.js';
 import { GuideButton } from '../ui/guide.js';
@@ -19,6 +21,9 @@ import { store, useStore, shallowEqual } from '../store.js';
 import { data, useData } from '../data.js';
 import { FullscreenButton, detectFeatures } from '../ui/device.js';
 import { updateSettings, useSettings } from '../ui/settings.js';
+import { LangToggle, useLang } from '../ui/lang.js';
+import { t, N_ } from '../../../shared/i18n.js';
+import { scriptOf } from '../../../shared/i18nPacks.js';
 import { SettingsModal } from '../ui/settings.js';
 import { ResourceLauncher } from '../ui/resourcePanel.js';
 import { GIcon } from '../ui/gameComponents.js';
@@ -179,8 +184,8 @@ function Ridges() {
 }
 
 const STATUS_TEXT = {
-  idle: '准备连接', connecting: '正在连接服务器', connected: '已连接服务器', handshaking: '正在验证身份',
-  online: '已连接服务器', reconnecting: '连接中断，正在重连', closed: '连接已关闭',
+  idle: N_('准备连接'), connecting: N_('正在连接服务器'), connected: N_('已连接服务器'), handshaking: N_('正在验证身份'),
+  online: N_('已连接服务器'), reconnecting: N_('连接中断，正在重连'), closed: N_('连接已关闭'),
 };
 
 /** Title screen component. */
@@ -188,6 +193,7 @@ export function TitleScreen() {
   const conn = useStore((s) => s.connection, shallowEqual);
   const pendingJoin = useStore((s) => s.ui.pendingJoin);
   const settings = useSettings();
+  useLang(); // re-render on a language switch
   const [name, setName] = useState(() => store.get().me.name || identity.loadName() || '');
   const [aboutOpen, setAboutOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -207,7 +213,7 @@ export function TitleScreen() {
 
   const valid = isValidName(name);
   const start = () => {
-    if (!valid) { toast('请输入博士代号', 'warn'); return; }
+    if (!valid) { toast(t('请输入博士代号'), 'warn'); return; }
     enterSession(name);
   };
 
@@ -216,6 +222,9 @@ export function TitleScreen() {
 
   // touch screens: no autofocus (it would pop the on-screen keyboard over a landscape phone's whole view)
   const touchUi = useMemo(() => detectFeatures().coarse, []);
+  // a title in an alphabetic script (English, French …) is the big one in the display face and the wordmark above it
+  // hides; a CJK / kana / Hangul title keeps the Chinese layout (shared/i18nPacks.js scriptOf — a pack needs no flag)
+  const alphabetic = scriptOf(t('卫戍协议')) === 'alphabetic';
   return html`<div class="screen title-screen">
     <div class=${`title-bg${bgLoaded ? ' has-art' : ''}${ridgesLoaded ? ' has-ridges' : ''}`} aria-hidden="true">
       ${backdrop ? html`<img class="title-bg__art" src=${backdrop} alt="" draggable=${false}
@@ -240,33 +249,36 @@ export function TitleScreen() {
       <div><${MicroLabel} tone="mint">RHODES ISLAND // SIMULATION SERVICE<//><br /><${MicroLabel}>TACTICAL CO-OP NODE · 02<//></div>
     </div>
     <div class="title-corner title-corner--tr">
-      <${MicroLabel} tone="hi">TARGET POINT<//><br /><${MicroLabel}>STRONGHOLD PROTOCOL<//>
+      <div>
+        <${LangToggle} class="title-lang" />
+        <${MicroLabel} tone="hi">TARGET POINT<//><br /><${MicroLabel}>STRONGHOLD PROTOCOL<//>
+      </div>
     </div>
 
     <main class="title-main">
       <${Emblem} />
-      <div class="title-en">
+      ${alphabetic ? null : html`<div class="title-en">
         <span class="title-en__a">STRONGHOLD PROTOCOL</span>
         <span class="title-en__b">ALLIANCE</span>
-      </div>
-      <h1 class="title-cn">卫戍协议<span class="title-cn__colon">：</span><em>盟约</em></h1>
-      <p class="title-tag">调配资金与干员，与同伴协同布防，抵御多波次进攻，直至击败敌方领袖。</p>
+      </div>`}
+      <h1 class=${`title-cn${alphabetic ? ' title-cn--latin' : ''}`}>${t('卫戍协议')}<span class="title-cn__colon">${alphabetic ? ': ' : '：'}</span><em>${t('盟约')}</em></h1>
+      <p class="title-tag">${t('调配资金与干员，与同伴协同布防，抵御多波次进攻，直至击败敌方领袖。')}</p>
 
       <div class="title-login">
         ${pendingJoin ? html`<div class="title-invite">
           <${Icon} name="key" />
-          <span>收到同盟邀请</span><b class="num">${pendingJoin}</b><span class="t-lo">· 输入代号后将自动加入</span>
+          <span>${t('收到同盟邀请')}</span><b class="num">${pendingJoin}</b><span class="t-lo">${t('· 输入代号后将自动加入')}</span>
         </div>` : null}
-        <${TextField} label="博士代号" micro="CALLSIGN" size="lg" icon="user" value=${name} maxLength=${NAME_MAX_LEN}
-          placeholder="输入你的代号（最多 ${NAME_MAX_LEN} 字）" autoFocus=${!touchUi}
+        <${TextField} label=${t('博士代号')} micro="CALLSIGN" size="lg" icon="user" value=${name} maxLength=${NAME_MAX_LEN}
+          placeholder=${t('输入你的代号（最多 {NAME_MAX_LEN} 字）', { NAME_MAX_LEN })} autoFocus=${!touchUi}
           onInput=${setName} onEnter=${start} />
-        <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" disabled=${!valid} onClick=${start}>开始<//>
+        <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" disabled=${!valid} onClick=${start}>${t('开始')}<//>
         <div class="title-conn">
           <span class=${`status-dot ${dotClass}`}></span>
-          <span>${STATUS_TEXT[conn.status] || conn.status}</span>
+          <span>${STATUS_TEXT[conn.status] ? t(STATUS_TEXT[conn.status]) : conn.status}</span>
           ${conn.status === 'online' ? html`<${PingPill} ms=${conn.ping} />` : null}
-          <${GuideButton} class="title-guide" />
-          <button type="button" class="title-settings fsbtn tapx" aria-label="设置" title="设置"
+          <${GuideButton} class="title-guide" label=${t('玩法说明')} />
+          <button type="button" class="title-settings fsbtn tapx" aria-label=${t('设置')} title=${t('设置')}
             onClick=${() => setSettingsOpen(true)}><${GIcon} name="gear" /></button>
           <${FullscreenButton} class="title-fs" />
         </div>
@@ -274,7 +286,7 @@ export function TitleScreen() {
       <div class="title-about-wrap">
         <${AnnouncementButton} variant="ghost" />
         <${Button} variant="ghost" size="sm" class="title-about-button" aria-haspopup="dialog"
-          onClick=${() => setAboutOpen(true)}>关于本服务器<//>
+          onClick=${() => setAboutOpen(true)}>${t('关于本服务器')}<//>
       </div>
     </main>
 
@@ -282,35 +294,36 @@ export function TitleScreen() {
     <${SettingsModal} open=${settingsOpen} onClose=${() => setSettingsOpen(false)} />
 
     <footer class="title-foot">
-      <span>非官方同人复刻 · 游戏素材版权归 上海鹰角网络 / Yostar 所有</span>
+      <span>${t('非官方同人复刻 · 游戏素材版权归 上海鹰角网络 / Yostar 所有')}</span>
       <${MicroLabel}>v${APP_VERSION} · WEB SIMULATION<//>
+      ${DEV_BUILD ? html`<span class="title-dev" role="note">${t('开发版 · 不稳定，请勿用于公开服务器')}</span>` : null}
     </footer>
-    <${Modal} open=${aboutOpen} title="关于本服务器" class="title-about" width="min(7.4rem, 94vw)"
+    <${Modal} open=${aboutOpen} title=${t('关于本服务器')} class="title-about" width="min(7.4rem, 94vw)"
       onClose=${() => setAboutOpen(false)}
-      actions=${html`<${Button} variant="primary" data-autofocus onClick=${() => setAboutOpen(false)}>关闭<//>`}>
+      actions=${html`<${Button} variant="primary" data-autofocus onClick=${() => setAboutOpen(false)}>${t('关闭')}<//>`}>
       <dl class="title-about__links">
         <div>
-          <dt>联系邮箱</dt>
+          <dt>${t('联系邮箱')}</dt>
           <dd><a href="mailto:linxia@fastmail.com">linxia@fastmail.com</a></dd>
         </div>
         <div>
-          <dt>问题反馈</dt>
-          <dd><a href="https://space.bilibili.com/401522003" target="_blank" rel="noopener noreferrer">B 站：临夏俨然</a></dd>
-          <p class="title-about__hint">如果遇到服务器方面的问题，可以通过 B 站私信或发送邮件联系。</p>
+          <dt>${t('问题反馈')}</dt>
+          <dd><a href="https://space.bilibili.com/401522003" target="_blank" rel="noopener noreferrer">${t('B 站：临夏俨然')}</a></dd>
+          <p class="title-about__hint">${t('如果遇到服务器方面的问题，可以通过 B 站私信或发送邮件联系。')}</p>
         </div>
         <div>
-          <dt>本服务器使用的 GitHub 仓库</dt>
+          <dt>${t('本服务器使用的 GitHub 仓库')}</dt>
           <dd><a href="https://github.com/xinhai-ai/Stronghold-Protocol" target="_blank" rel="noopener noreferrer">https://github.com/xinhai-ai/Stronghold-Protocol</a></dd>
         </div>
       </dl>
       <div class="title-about__disclaimer">
-        <h3>版权与免责声明</h3>
-        <p>本站为纯公益的非官方同人复刻，仅供学习、研究和个人非商业娱乐，不收取任何费用；与上海鹰角网络、Yostar 及其关联方没有任何关联，也未获得其授权或认可。</p>
-        <p>《明日方舟》及「卫戍协议」相关名称、角色、美术、模型、界面、音乐音效、文本与游戏数据的版权归上海鹰角网络及其授权方所有。项目自编代码采用 GPL-3.0-or-later 许可证，游戏素材与数据不属于该许可证的授权范围；第三方库和字体保留各自的许可证。</p>
-        <p>请勿将游戏素材与数据用于盈利，包括出售或付费分发、收费开服、付费房间或会员、植入广告、与本项目挂钩的打赏、赞助或众筹，以及打包进收费产品或服务。上述限制针对游戏素材与数据，GPL 本身允许在其条款下商业使用代码。</p>
-        <p>本站按「原样」提供，不附带任何明示或暗示的担保。使用、架设或公开本项目涉及的网络安全、第三方工具与服务及当地法律法规等风险，由使用者自行承担。本站不需要也不会索取任何游戏账号。</p>
-        <p>如相关权利人认为本站内容不妥，请通过上方邮箱联系，我们会尽快核实并删除相关内容，必要时停止提供服务。</p>
-        <p>完整声明请参阅上游项目的 <a href="https://github.com/sganggs/Stronghold-Protocol/blob/v0.1.4/NOTICE.md" target="_blank" rel="noopener noreferrer">版权与使用声明（NOTICE）</a>及 <a href="https://github.com/sganggs/Stronghold-Protocol/blob/v0.1.4/LICENSE" target="_blank" rel="noopener noreferrer">代码许可证</a>。</p>
+        <h3>${t('版权与免责声明')}</h3>
+        <p>${t('本站为纯公益的非官方同人复刻，仅供学习、研究和个人非商业娱乐，不收取任何费用；与上海鹰角网络、Yostar 及其关联方没有任何关联，也未获得其授权或认可。')}</p>
+        <p>${t('《明日方舟》及「卫戍协议」相关名称、角色、美术、模型、界面、音乐音效、文本与游戏数据的版权归上海鹰角网络及其授权方所有。项目自编代码采用 GPL-3.0-or-later 许可证，游戏素材与数据不属于该许可证的授权范围；第三方库和字体保留各自的许可证。')}</p>
+        <p>${t('请勿将游戏素材与数据用于盈利，包括出售或付费分发、收费开服、付费房间或会员、植入广告、与本项目挂钩的打赏、赞助或众筹，以及打包进收费产品或服务。上述限制针对游戏素材与数据，GPL 本身允许在其条款下商业使用代码。')}</p>
+        <p>${t('本站按「原样」提供，不附带任何明示或暗示的担保。使用、架设或公开本项目涉及的网络安全、第三方工具与服务及当地法律法规等风险，由使用者自行承担。本站不需要也不会索取任何游戏账号。')}</p>
+        <p>${t('如相关权利人认为本站内容不妥，请通过上方邮箱联系，我们会尽快核实并删除相关内容，必要时停止提供服务。')}</p>
+        <p>${t('完整声明请参阅上游项目的')} <a href="https://github.com/sganggs/Stronghold-Protocol/blob/v0.1.4/NOTICE.md" target="_blank" rel="noopener noreferrer">${t('版权与使用声明（NOTICE）')}</a>${t('及')} <a href="https://github.com/sganggs/Stronghold-Protocol/blob/v0.1.4/LICENSE" target="_blank" rel="noopener noreferrer">${t('代码许可证')}</a>。</p>
       </div>
     <//>
   </div>`;

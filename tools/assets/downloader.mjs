@@ -11,7 +11,8 @@
 // - Idempotent: an existing file is kept when its size matches the ledger entry
 //   of a previous download or the expected byte count from research, or (when
 //   neither is known) when it passes format validation. The ledger lives in
-//   .cache/assets-ledger.json.
+//   .cache/assets-ledger.json. `keepExisting` (fetch-assets --add-only) keeps
+//   every existing file as it is; `written` = the files this run wrote.
 
 import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -40,6 +41,7 @@ export class Downloader {
    * @param {number} [o.retries]
    * @param {number} [o.timeoutMs]
    * @param {boolean} [o.force] re-download even when files exist
+   * @param {boolean} [o.keepExisting] never re-download or rewrite an existing file (a checkout sharing public/assets)
    * @param {(msg:string)=>void} [o.log]
    * @param {typeof fetch} [o.fetchImpl]
    * @param {number} [o.backoffMs] base retry delay (doubles per attempt)
@@ -47,13 +49,16 @@ export class Downloader {
    * @param {string} [o.proxyPrefix] HTTPS prefix for GitHub downloads
    * @param {MirrorPolicy} [o.mirrorPolicy] invocation-wide policy and mirror circuit breaker
    */
-  constructor({ root, ledgerPath, concurrency = 16, retries = 3, timeoutMs = 120000, force = false, log = console.log, fetchImpl = globalThis.fetch, backoffMs = 400, source = 'direct', proxyPrefix, mirrorPolicy }) {
+  constructor({ root, ledgerPath, concurrency = 16, retries = 3, timeoutMs = 120000, force = false, keepExisting = false, log = console.log, fetchImpl = globalThis.fetch, backoffMs = 400, source = 'direct', proxyPrefix, mirrorPolicy }) {
     this.root = root;
     this.ledgerPath = ledgerPath;
     this.concurrency = Math.max(1, Math.min(64, Number(concurrency) || 16));
     this.retries = Math.max(1, Number(retries) || 3);
     this.timeoutMs = timeoutMs;
-    this.force = force;
+    this.force = force && !keepExisting;
+    this.keepExisting = !!keepExisting;
+    /** @type {Set<string>} the files (paths under root) this run wrote */
+    this.written = new Set();
     this.log = log;
     this.fetch = fetchImpl;
     this.network = mirrorPolicy ?? new MirrorPolicy({ source, proxyPrefix, log });
@@ -92,6 +97,7 @@ export class Downloader {
     let st;
     try { st = await stat(abs); } catch { return -1; }
     if (!st.isFile() || st.size <= 0) return -1;
+    if (this.keepExisting) return st.size;
     const led = this.ledger.files[job.rel];
     if (job.mutable) {
       // Post-processed files (atlases) change size; validate content instead.
@@ -171,6 +177,7 @@ export class Downloader {
           return { status: 'error', bytes: 0, error: `write failed: ${e.message}` };
         }
         this.ledger.files[job.rel] = { url: src, bytes: r.buf.length };
+        this.written.add(job.rel);
         this.dirty++;
         const sizeChanged = !!(job.bytes && job.bytes !== r.buf.length && !job.mutable);
         return { status: 'ok', bytes: r.buf.length, url: src, sizeChanged };

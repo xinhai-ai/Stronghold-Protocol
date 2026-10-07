@@ -1,4 +1,5 @@
-// Documentation ⇄ code consistency (docs/DESIGN.md, DATA.md, META.md, SIM.md, README.md, DEPLOY.md, PLAYING.md).
+// Documentation ⇄ code consistency (docs/DESIGN.md with docs/design/ and docs/history/, DATA.md, META.md, SIM.md, README.md,
+// DEPLOY.md, PLAYING.md).
 // Every rule the final documentation sweep corrected is checked twice: the code still behaves as the docs now say, and
 // the stale wording does not come back. Topics: combat / boss clocks in REAL seconds (overtime after 150 real s,
 // m.public.overtimeAt), 联防 helper order (unite.helperOrder, research 08 §5), boss results handed over instead of a
@@ -24,7 +25,7 @@
 // battle only — the 休整期 is silent).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GameData } from '../server/match/gamedata.js';
@@ -47,10 +48,21 @@ import { BAND_TURN_SECONDS } from '../server/match/Match.js';
 import { SPINE_EVICT_DELAY_MS, SPINE_QUIET_DELAY_MS } from '../public/js/assets.js';
 import { RETRY_DELAYS_MS } from '../public/js/data.js';
 import { DATA, makeMatch } from './match/harness.js';
+import { KIT_FILES } from '../server/sim/content/kits/index.js';
+import { designText } from './helpers/designDocs.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const doc = (p) => readFileSync(join(ROOT, p), 'utf8');
-const DESIGN = doc('docs/DESIGN.md');
+/** server/sim/Battle.js with its method modules (server/sim/battle/*.js) as one text. */
+const battleText = () => [doc('server/sim/Battle.js'), ...readdirSync(join(ROOT, 'server/sim/battle')).sort().map((f) => doc(`server/sim/battle/${f}`))].join('\n');
+// the Match class: the façade (constructor) and its method modules (server/match/match/)
+const matchText = () => [doc('server/match/Match.js'), ...readdirSync(join(ROOT, 'server/match/match')).sort().map((f) => doc(`server/match/match/${f}`))].join('\n');
+// the PlayerState class: the façade (header, constructor) and its method modules (server/match/player/)
+const playerText = () => [doc('server/match/PlayerState.js'), ...readdirSync(join(ROOT, 'server/match/player')).sort().map((f) => doc(`server/match/player/${f}`))].join('\n');
+// the sources of a former kits/tierN.js: its helpers (kits/shared/tierN.js) and its kit files (kits/ops/, kits/index.js)
+const tierSources = (t) => [`server/sim/content/kits/shared/tier${t}.js`, ...KIT_FILES[t - 1].map((f) => `server/sim/content/kits/ops/${f}`)];
+// the design document: the index docs/DESIGN.md and its sections in docs/design/ + docs/history/, in § order
+const DESIGN = designText(ROOT);
 const META = doc('docs/META.md');
 const DATA_MD = doc('docs/DATA.md');
 const SIM = doc('docs/SIM.md');
@@ -254,7 +266,7 @@ test('回环射手 boomerang and 蕾缪安 S3 shells (user playtest #3 items 4�
   assert.match(SIM, /`none\|arrow\|bolt\|bomb\|lob\|orb\|drone\|enemy\|boomerang\|droneBomb\|chain\|chainHeal`/);
   assert.match(DESIGN, /BOOMERANG_RETURN_SPEED/);
   // 蕾缪安: one shell every 0.3 s after the skill (PRTS), fx 'bombardShell' then 'bombard' — the kit's constants
-  const kit = readFileSync(join(ROOT, 'server/sim/content/kits/tier6.js'), 'utf8');
+  const kit = readFileSync(join(ROOT, 'server/sim/content/kits/ops/chess_char_6_01-lemuen.js'), 'utf8');
   assert.match(kit, /const LEMUEN_SHELL_INTERVAL = 0\.3;/);
   assert.match(kit, /battle\.fx\('bombardShell'/);
   assert.match(DESIGN, /'bombardShell' \{x, y, id: shooter, r, t: flight game s, i\}/);
@@ -285,7 +297,8 @@ test('user playtest #4 (DESIGN §18): picking by tile, timers, 机变 two taps, 
   // #1 the tile under the pointer; the dragged model held under the pointer (no touch lift, probe or body shapes)
   assert.equal(ENEMY_REACH, 0.6);
   const app = readFileSync(join(ROOT, 'public/js/render/app.js'), 'utf8');
-  assert.match(app, /export const DRAG_HOLD_TILES = 0\.45;/);
+  const tune = readFileSync(join(ROOT, 'public/js/render/app/tune.js'), 'utf8');
+  assert.match(tune, /export const DRAG_HOLD_TILES = 0\.45;/);
   assert.ok(!/TOUCH_LIFT_TILES|drawnAt|pickShape|pieceDragOver/.test(app), 'no touch lift, pixel probe or body shapes (user playtest #4 item 1)');
   assert.match(DESIGN, /`DRAG_HOLD_TILES` = 0\.45 tile/);
   assert.match(DESIGN, /`ENEMY_REACH` 0\.6 tile/);
@@ -366,7 +379,7 @@ test('user playtest #5 (DESIGN §19): blocking, 联防 forced exit, huge bosses,
   assert.match(PLAYING, /自缚、无法被阻挡/);
   // #3 elements: one hasHp, the pipeline guard, 脆弱 vs 元素伤害, element healing per type
   assert.equal(typeof DAMAGE.hasHp, 'function');
-  for (const f of ['server/sim/content/kits/tier5.js', 'server/sim/content/kits/tier6.js', 'server/sim/content/items/battle.js']) {
+  for (const f of [...tierSources(5), ...tierSources(6), 'server/sim/content/items/battle.js']) {
     assert.ok(!/const hasHp = /.test(readFileSync(join(ROOT, f), 'utf8')), `${f}: no local hasHp copy`);
   }
   assert.match(s55, /元素伤害 takes 元素脆弱 \(`elementalTakenMul`\) alone, not `dmgTakenMul`/);
@@ -450,7 +463,7 @@ test('user playtest #6 (DESIGN §20): summons, skill triggers, blocking, push fo
   assert.match(SIM, /\*\*every blocker\*\* — melee units/);
   assert.ok(!/targets by its range alone: no/.test(SIM), 'SIM: the melee-only rule is gone');
   assert.match(PLAYING, /\*\*阻挡了就一定能打到\*\*/);
-  const battleSrc = readFileSync(join(ROOT, 'server/sim/Battle.js'), 'utf8');
+  const battleSrc = battleText();
   assert.ok(!/meleeUnit/.test(battleSrc) && !/export function meleeUnit/.test(readFileSync(join(ROOT, 'server/sim/targeting.js'), 'utf8')), 'no melee gate in the engine');
   // #15 / #16: skill triggers and the 3 s operation cooldown (code = §5.6 = §19.2 superseded)
   assert.equal(AUTO_OP_COOLDOWN, 3);
@@ -553,11 +566,12 @@ test('playtest6b follow-up (DESIGN §20.10–§20.13): leader HP, 直接乘算, 
   assert.equal(BOND_LAYER_CAP, 999);
   assert.equal(layerGainRoom(995, 10), 4);
   assert.ok(!('BOND_LAYER_CAP' in SIM_CONST) && !('layerRoom' in SIM_CONST), 'no second cap in server/sim/constants.js');
-  for (const f of ['server/match/PlayerState.js', 'server/match/Match.js', 'server/sim/Battle.js']) {
+  for (const f of ['server/match/player/economy.js', 'server/match/match/settle.js', 'server/sim/battle/economy.js']) {
     const src = doc(f);
     assert.match(src, /layerGainRoom/, `${f} clamps with layerGainRoom`);
     assert.ok(!/layerRoom\b/.test(src), `${f}: no layerRoom`);
   }
+  for (const [name, src] of [['Match', matchText()], ['PlayerState', playerText()]]) assert.ok(!/layerRoom\b/.test(src), `${name}: no layerRoom`);
   // 限伤: official constant, not an overflow — no doc keeps the boss-HP branch's "fixed-point overflow, not modelled"
   assert.equal(BOSS_HIT_LIMIT, 300000);
   for (const [name, text] of [['BALANCE', BALANCE], ['DATA', DATA_MD], ['PLAYING', PLAYING], ['SIM', SIM], ['META', META], ['research 02', R02], ['DESIGN', DESIGN]]) {
@@ -567,7 +581,9 @@ test('playtest6b follow-up (DESIGN §20.10–§20.13): leader HP, 直接乘算, 
   assert.match(BALANCE, /superseded by that binary evidence/);
   assert.match(R11, /MAX_BATTLE_DAMAGE = 300000/);
   assert.match(R02, /MAX_GARRISON_STACK = 999/);
-  // §20.9: elite settled, 999 / 限伤 official with their flips, the fixed leader pool settled (aliveScaling off in the data)
+  // §20.9: elite settled, 999 / 限伤 official with their flips, the fixed leader pool settled then — replaced on 2026-10-06
+  // by the owner's decision adopting PR #209 (a pool per player alive at the fight's start, §25.13.4), which the
+  // record points to; the data carries the new rule
   assert.match(s209, /\| A merge's elite \(§20\.11\) \| takes the consumed deployed copy's tile/);
   assert.match(s209, /`shared\/constants\.js BOND_LAYER_CAP = 0`/);
   assert.match(s209, /`shared\/constants\.js BOSS_HIT_LIMIT = 0`/);
@@ -611,8 +627,8 @@ test('playtest6b QA residuals (DESIGN §20.14): the held boss result, the cue be
   assert.ok(s2014.length > 100, '§20.14 exists');
   const intro = S20.slice(0, S20.indexOf('### 20.1 '));
   assert.match(intro, /residual issues are handled in §20\.14/);
-  // the held 'cleared' result: Match.js = §14 = §20.14 = META
-  const match = doc('server/match/Match.js');
+  // the held 'cleared' result: Match (match/reports.js, match/bossRounds.js) = §14 = §20.14 = META
+  const match = matchText();
   assert.match(match, /if \(result\.reason === 'cleared' && pool && reported - f\.bossAcked >= pool\.hp - 1\) \{\s*f\.heldResult = result;/);
   assert.match(match, /_bossHandover\(f, why, \{ demote = false \} = \{\}\) \{\s*if \(f\.done \|\| f\.mode !== 'client' \|\| f\.heldResult\) return;/);
   assert.match(match, /const BOSS_MIN_CLEAR_GS = 5;/, 'the budget itself is unchanged');
@@ -702,9 +718,12 @@ test('player feedback after 0.1.0 (DESIGN §21, v0.1.1): every report mapped, th
 test('batch 6 after 0.1.0 (DESIGN §21.21–§21.25): the hammer per deployment, 起飞, fenced tiles, bodies, the PR fixes — code and docs agree', async () => {
   const sec = (n) => DESIGN.slice(DESIGN.indexOf(`## ${n}.`), DESIGN.indexOf(`## ${n + 1}.`) > 0 ? DESIGN.indexOf(`## ${n + 1}.`) : undefined);
   // F1: 不死 before 复活, once per deployment (§5.4 = SIM = items/battle.js)
+  // (0.2.0: the 复活 answer the knock-out — `death` hooks ahead of 阿戈尔 5 (11) and 不屈 (10), community report on 埃芒加德)
   const { PRIO_REVIVE, PRIO_RESPAWN } = await import('../server/sim/content/items/battle.js');
-  assert.equal(PRIO_RESPAWN, PRIO_REVIVE - 1);
-  assert.match(sec(5), /\| `fatal` \|[^\n]*坚固维式重锤, once per deployment\) `PRIO_REVIVE` −100 → items' 复活 \(M3茧甲\) `PRIO_RESPAWN` −101 → 埃芒加德 −110/);
+  const { PRIO_BAND_REVIVE } = await import('../server/sim/content/bands/battle.js');
+  assert.ok(PRIO_REVIVE < 0 && PRIO_RESPAWN > PRIO_BAND_REVIVE && PRIO_BAND_REVIVE > 11);
+  assert.match(sec(5), /\| `fatal` \|[^\n]*坚固维式重锤, once per deployment\) `PRIO_REVIVE` −100/);
+  assert.match(sec(5), /\| `death` \|[^\n]*items' 复活 \(M3茧甲\) `PRIO_RESPAWN` 13 → 埃芒加德 `PRIO_BAND_REVIVE` 12/);
   assert.match(SIM, /坚固维式重锤 — once per deployment/);
   assert.match(PLAYING, /\*\*每次部署一次\*\*/);
   // F2: onBuy = a shop purchase (§6.4 = META)
@@ -748,12 +767,12 @@ test('batch 6 QA residuals (DESIGN §21.21–§21.25): the lock per deployment f
   const sub = (n) => { const a = DESIGN.indexOf(`### 21.${n} `); const b = DESIGN.indexOf('\n### 21.', a + 5); return DESIGN.slice(a, b > 0 ? b : DESIGN.indexOf('\n## 22.') > 0 ? DESIGN.indexOf('\n## 22.') : undefined); };
   // F1: the lock belongs to the deployment (deploymentOf), its window to the battle (holdsUndying); revives open one
   const IB = await import('../server/sim/content/items/battle.js');
-  for (const f of ['holdsUndying', 'revivedInPlace']) assert.equal(typeof IB[f], 'function', f);
+  for (const f of ['holdsUndying', 'reviveNow']) assert.equal(typeof IB[f], 'function', f);
   const items = doc('server/sim/content/items/battle.js');
   assert.match(items, /function deploymentOf\(u\)/);
   assert.ok(!/S\.on\('deploy', \(c\) => \{\s*if \(c\.unit !== u \|\| c\.initial\) return;\s*hs\.undyingUsed/.test(items), 'no per-grant re-arm hook');
-  assert.match(doc('server/sim/content/bands/battle.js'), /revivedInPlace\(u\)/);
-  assert.match(doc('server/sim/content/kits/tier4.js'), /if \(holdsUndying\(battle, unit\)\) return;/);
+  assert.match(doc('server/sim/content/bands/battle.js'), /reviveNow\(battle, c, 'band'\)/); // since 0.2.0 a redeploy, no longer in place
+  assert.match(doc('server/sim/content/kits/ops/chess_char_4_01-rmixer.js'), /if \(holdsUndying\(battle, unit\)\) return;/);
   assert.match(sub(21), /\*\*QA after the integration, fixed\*\*: \(1\) the lock lived in the hooks of the carrier's hammer grants/);
   assert.match(sub(21), /both in-place revives now call `revivedInPlace`/);
   assert.match(sub(20), /the lock belongs to the deployment, so a borrowed hammer \(萨尔贡 × 娜仁图亚\) follows the same rule \| `content\/items\/battle\.js deploymentOf` returning one key/);
@@ -766,14 +785,14 @@ test('batch 6 QA residuals (DESIGN §21.21–§21.25): the lock per deployment f
   // F3: 卢西恩 / 锏 count only the allies they can hurt — since 0.1.2 (§22.12) the targets of their trigger selection
   // (targetsNear → canTargetAlly, which skips an airborne 起飞 ally for a ground enemy); the player text keeps auras and counters
   assert.match(doc('server/sim/content/bosses.js'), /cond: \(b\) => targetsNear\(b, e, LUCIEN_AOE_RADIUS\)\.length > 0/);
-  assert.match(doc('server/sim/content/enemies.js'), /const inR = \(b, e, s\) => targetsNear\(b, e, [^\n]*\)\.length > 0/);
+  assert.match(doc('server/sim/content/enemies/leaders.js'), /const inR = \(b, e, s\) => targetsNear\(b, e, [^\n]*\)\.length > 0/);
   assert.match(doc('server/sim/targeting.js'), /if \(f\.liftoff && evadesGround\(e, a\)\) return false;/);
   assert.match(sub(22), /they count only the allies they can hurt \(`!evadesGround`\)/);
   assert.match(sub(20), /an area skill cast because allies are near counts only those it can hurt/);
   assert.ok(!/燃烧区域和减益都落不到她身上/.test(PLAYING), 'PLAYING: no blanket 减益 claim');
   assert.match(PLAYING, /地面敌人的光环和全场效果[^\n]*照常生效/);
   // F5: rule 3 counts every board piece's home, removed or not
-  const battleSrc = doc('server/sim/Battle.js');
+  const battleSrc = battleText();
   assert.match(battleSrc, /a\.uid != null && \(a\.kind === 'op' \|\| a\.kind === 'token'\) && a\.homeR === r && a\.homeC === c/);
   assert.match(sub(24), /Every board piece's home counts now, on the field or not/);
   assert.match(SIM, /the piece on the field or not — a summon leaves its home free only once it has expired or been\nkilled/);
@@ -807,7 +826,7 @@ test('突变细胞 after the WA merge (DESIGN §21.1): the carrier is destroyed,
   assert.match(PLAYING, /原来的格子空出来，剩余可放置角色加 1/);
   assert.match(DATA.items.chess_item_5_08_e_a.note, /进入整备区，需要重新部署/);
   // the code: a destroy, then a gain through acquireChess; _mergeChess has no carrier-tile option left
-  const PS = doc('server/match/PlayerState.js');
+  const PS = playerText();
   const { PlayerState } = await import('../server/match/PlayerState.js');
   assert.equal(PlayerState.prototype.transformChess.length, 2, 'transformChess(piece, newId)');
   assert.equal(PlayerState.prototype._mergeChess.length, 2, '_mergeChess(baseId, incoming)');
@@ -837,9 +856,10 @@ test('the deliberate trigger deviation (DESIGN §21.29): six 重装 skills DEFAU
   assert.match(r03, /上半 \(act1autochess, 2025-11\) shipped no TANK row/);
   assert.match(r03, /下半 \(act2autochess, 2026-03-14\) added `TANK \| \| \| 0 \| TAKE_DAMAGE` for every skill index/);
   assert.match(r03, /\*\*Deliberate deviation\*\* \(the owner, 2026-10-03/);
-  // PR #12's kit lines stay; their comments give this reason, not the community summary
-  const t1 = doc('server/sim/content/kits/tier1.js');
-  assert.equal((t1.match(/trigger: 'DEFAULT',/g) || []).length, 2, "PR #12's two kit lines");
+  // PR #12's kit line stays (雷蛇 S2; 深巡 S2 dropped its own in 0.2.0 and reads its data's ACTIVE_RANGE, the owner's
+  // decision of 2026-10-05); the comments give this reason, not the community summary
+  const t1 = tierSources(1).map(doc).join('\n');
+  assert.equal((t1.match(/trigger: 'DEFAULT',/g) || []).length, 1, "PR #12's kit line left (雷蛇 S2)");
   assert.ok(!/offensive skills activate when an enemy is in their skill range/.test(t1));
   assert.ok(!/documented for skillIndex 0/.test(t1));
   assert.match(DATA_MD, /a deliberate deviation, `tools\/build-data\.mjs TRIGGER_DEVIATIONS`, DESIGN §21\.29/);

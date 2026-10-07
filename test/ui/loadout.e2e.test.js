@@ -243,19 +243,33 @@ describe('干员调配 overlay (real server, headless Chrome)', { skip: !ENABLED
     await page.waitForSelector('.lo-top .lo-deadline', { visible: true, timeout: 3000 });
     assert.match(await page.$eval('.lo-top .lo-deadline', (el) => el.getAttribute('aria-label')), /剩余\d+秒/);
     // review: the two new 导出 / 导入 buttons must fit next to the countdown on a narrow phone in landscape (667×375).
+    // 0.2.0: the third tab (自选编队) ran the right column into the tabs there, at 844×390, and in English at every size.
     // Only the size changes (toggling isMobile / hasTouch would make puppeteer reload the page).
-    await page.setViewport({ width: 667, height: 375 });
-    const bar = await page.evaluate(() => {
-      const top = document.querySelector('.lo-top');
-      const right = document.querySelector('.lo-top__right').getBoundingClientRect();
-      const center = document.querySelector('.lo-top__center').getBoundingClientRect();
-      const buttons = [...document.querySelectorAll('.lo-top__right .btn')].map((b) => Math.round(b.getBoundingClientRect().right));
-      return { overflow: top.scrollWidth - top.clientWidth, overlap: right.left < center.right, offscreen: right.right > innerWidth, buttons };
-    });
-    assert.ok(bar.overflow <= 0, `the top bar does not scroll sideways (${JSON.stringify(bar)})`);
-    assert.equal(bar.overlap, false, `the right column does not run into the title (${JSON.stringify(bar)})`);
-    assert.equal(bar.offscreen, false, `every button ends inside the viewport (${JSON.stringify(bar)})`);
-    await page.screenshot({ path: path.join(OUT, 'loadout-narrow-toolbar.png') });
+    const switchLang = async (lang) => {
+      await page.evaluate((l) => import('/js/ui/lang.js').then((m) => m.switchLang(l)), lang);
+      await page.waitForFunction((l) => document.documentElement.lang.startsWith(l) && /[一-鿿]/.test(document.querySelector('.lo-tabs').textContent) === (l === 'zh'), { timeout: 5000 }, lang);
+    };
+    for (const [lang, sizes] of [['zh', [[667, 375], [844, 390]]], ['en', [[667, 375], [844, 390], [1920, 1080]]]]) {
+      if (lang !== 'zh') await switchLang(lang);
+      for (const [w, h] of sizes) {
+        await page.setViewport({ width: w, height: h });
+        const bar = await page.evaluate(() => {
+          const top = document.querySelector('.lo-top');
+          const tabs = document.querySelector('.lo-tabs');
+          const right = document.querySelector('.lo-top__right').getBoundingClientRect();
+          const center = document.querySelector('.lo-top__center').getBoundingClientRect();
+          const buttons = [...document.querySelectorAll('.lo-top__right .btn')].map((b) => Math.round(b.getBoundingClientRect().right));
+          return { overflow: top.scrollWidth - top.clientWidth, overlap: right.left < center.right, offscreen: right.right > innerWidth, tabsCut: tabs.scrollWidth - tabs.clientWidth, buttons };
+        });
+        const at = `${lang} ${w}×${h} ${JSON.stringify(bar)}`;
+        assert.ok(bar.overflow <= 0, `the top bar does not scroll sideways (${at})`);
+        assert.equal(bar.overlap, false, `the right column does not run into the title (${at})`);
+        assert.equal(bar.offscreen, false, `every button ends inside the viewport (${at})`);
+        assert.ok(bar.tabsCut <= 0, `the three tabs show in full (${at})`);
+        if (w === 667) await page.screenshot({ path: path.join(OUT, `loadout-narrow-toolbar${lang === 'zh' ? '' : `-${lang}`}.png`) });
+      }
+    }
+    await switchLang('zh');
     await page.setViewport({ width: 1920, height: 1080 });
     await page.type('.lo-search input', '隐现');
     await page.waitForFunction(() => document.querySelectorAll('.lo-card').length === 1, { timeout: 5000 });

@@ -1,11 +1,13 @@
-// Tier-4 operator kits (server/sim/content/kits/tier4.js): one signature test per chess (+ elite checks), real battles
+// Tier-4 operator kits (server/sim/content/kits/ops/chess_char_4_*.js): one signature test per chess (+ elite checks), real battles
 // through the harness. Numbers are read back from the data blackboards so the tests follow data changes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
 import { getDefaultSource } from '../../server/sim/simdata.js';
-import kits from '../../server/sim/content/kits/tier4.js';
+import { TIER_KITS } from '../../server/sim/content/kits/index.js';
 import { absoluteRangeKeys } from '../../server/sim/targeting.js';
+
+const kits = TIER_KITS[3];
 
 const ds = getDefaultSource();
 const D = (id) => ds.getChess(id);
@@ -501,7 +503,10 @@ test('灵知 S2: 130 % ATK arts + 2.5 s cold to all in range; fully charged cast
   assert.ok(h.runUntil(() => u.skill.activations >= 2, 20));
   const starts = noisy(h, 'skillStart').filter((c) => c.unit === u).map((c) => c.t);
   const colds = (T) => noisy(h, 'statusApplied').filter((c) => c.source === u && c.status === 'cold' && c.duration === bb.cold && c.t === T).length;
-  assert.equal(colds(starts[0]), 4, 'charged: two colds on each of the two enemies');
+  const freezes = (T) => noisy(h, 'statusApplied').filter((c) => c.source === u && c.status === 'freeze' && c.t === T).length;
+  // charged: two colds on each of the two enemies — each enemy's pair becomes one freeze (友方寒冷 「两两一对」, since 0.2.0)
+  assert.equal(colds(starts[0]), 2, 'charged: the first cold on each enemy lands as a cold');
+  assert.equal(freezes(starts[0]), 2, 'charged: the second cold on each enemy turns the pair into a freeze');
   assert.equal(colds(starts[1]), 2, 'single charge: one cold each');
   // normal attacks chill for 1 s
   assert.ok(noisy(h, 'statusApplied').some((c) => c.source === u && c.status === 'cold' && c.duration === t0.cold));
@@ -857,7 +862,7 @@ test('卡涅利安 / 蜜蜡 elite trait: keep DEF +100 % / RES +10 during the sk
   }
 });
 
-test('魔王 S3: range up, trait heal 65 % ATK/s, 鼓舞 +65 % of her max HP, HP redistributed every 2 s; motes ×1.5; 萨卡兹 −10 %', () => {
+test('魔王 S3: range up, trait 65 % ATK/s (生命回复速度), 鼓舞 +65 % of her max HP, HP redistributed every 2 s; motes ×1.5; 萨卡兹 −10 %', () => {
   const id = 'chess_char_4_25_a', bb = D(id).skill.bb, t0 = D(id).talents[0].bb, t1 = D(id).talents[1].bb;
   const sarkaz = withTags(dummy({ key: 'enemy_sarkaz' }), ['sarkaz']);
   const h = makeBattle({ defs: { enemies: { enemy_sarkaz: sarkaz } }, units: [{ chessId: id, row: 10, col: 5 }, { chessId: 'chess_char_1_02_a', row: 10, col: 6 }, { chessId: 'chess_char_4_17_a', row: 9, col: 5 }],
@@ -870,10 +875,11 @@ test('魔王 S3: range up, trait heal 65 % ATK/s, 鼓舞 +65 % of her max HP, HP
   const n0 = noisy(h, 'damaged').length;
   h.b.dealDamage(e, a, { amount: 1000, type: 'true' });
   approx(noisy(h, 'damaged')[n0].amount, 1000 * (1 - t1.damage_resistance), 1e-9);
-  // trait heal ×1.5 with a mote
-  h.runUntil(() => noisy(h, 'heal').some((c) => c.source === u && c.target === a), 3);
-  const hl = noisy(h, 'heal').find((c) => c.source === u && c.target === a);
-  approx(hl.amount, u.s.atk * D(id).traitBb['attack@atk_to_hp_recovery_ratio'] * t0['attack@trait_mul'] * a.s.healingTakenMul, 1e-6);
+  // the trait: 生命回复速度 (an hpRegen buff — PRTS 分支特性信息 吟游者; professions.js bardRegen), ×1.5 with a mote
+  const trait = (x) => x.findBuff(`trait:bard:${u.id}`)?.mods.hpRegen ?? 0;
+  h.run(0.3);
+  approx(trait(a), u.s.atk * D(id).traitBb['attack@atk_to_hp_recovery_ratio'] * t0['attack@trait_mul'], 1e-6, 'trait ×1.5 with a mote');
+  assert.equal(noisy(h, 'heal').filter((c) => c.source === u && c.target === a).length, 0, 'no heal of hers');
   // S3
   h.b.dealDamage(null, b, { amount: b.s.maxHp * 0.7, type: 'true' });
   assert.ok(u.skill.activate('test', { free: true }));
@@ -884,9 +890,8 @@ test('魔王 S3: range up, trait heal 65 % ATK/s, 鼓舞 +65 % of her max HP, HP
   for (let i = 0; i < 90 && !redistributed; i++) { h.step(); redistributed = h.events.some((ev) => ev[0] === 'fx' && ev[1] === 'redistribute'); }
   assert.ok(redistributed);
   approx(a.hpRatio, b.hpRatio, 1e-9, 'equal HP ratios after redistribution');
-  h.runUntil(() => noisy(h, 'heal').filter((c) => c.source === u && c.target === b && c.t > 0.8).length >= 1, 3);
-  const sh = noisy(h, 'heal').filter((c) => c.source === u && c.target === b).pop();
-  approx(sh.amount, u.s.atk * bb['attack@atk_to_hp_recovery_ratio'] * t0['attack@trait_mul'] * b.s.healingTakenMul, 1e-6, 'trait 65 %');
+  h.run(0.3);
+  approx(trait(b), u.s.atk * bb['attack@atk_to_hp_recovery_ratio'] * (b.findBuff(`cetsyr:mote:${u.id}`) ? t0['attack@trait_mul'] : 1), 1e-6, 'trait 65 %');
   h.runUntil(() => !u.skill.active, 40);
   h.run(0.3);
   approx(a.s.maxHp, a.base.maxHp, 1e-9, '鼓舞 gone');

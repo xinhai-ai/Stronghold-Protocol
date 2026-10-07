@@ -151,155 +151,155 @@ Param names below are the keys of `items[].normal.params` / `items[].golden.para
 
 ### STAT - 属性型 Flat stat modifiers (always on while equipped)
 
-- **维式重锤** (`chess_item_1_01_e_a`, TI, 1) - ATK% += atk (additive with other ATK% buffs)  
+- **维式重锤** (`chess_item_1_01_e_a`, TI, 1) - ATK% += atk (additive with other ATK% buffs)
   params: `atk=0.15/0.25`; buff keys: `env_gbuff_new_with_verify`
-- **坚守盾牌** (`chess_item_1_02_e_a`, TI, 1) - DEF% += def  
+- **坚守盾牌** (`chess_item_1_02_e_a`, TI, 1) - DEF% += def
   params: `def=0.2/0.35`; buff keys: `env_gbuff_new_with_verify`
-- **源石溶剂** (`chess_item_1_05_e_a`, TI, 1) - ATK% += atk; in battle the carrier takes `damage` true damage per second — 无来源 持续 damage, not a 流失 (PRTS 盟约记录 修正 "并非流失", 备注 "造成无来源真实持续环境伤害"): shields and damage-taken modifiers apply, it counts as 受到伤害 (受击回复 SP, the 重装 skill trigger, 信仰搅拌机 S3 counters); can kill the carrier. Every 敌人类我方单位 of the field (炎佑, a partner's too) takes the same tick while a carrier is on the field — once per second however many carriers (PRTS 备注 "全场范围内的所有敌人类我方单位也会获得此装备的…效果").  
+- **源石溶剂** (`chess_item_1_05_e_a`, TI, 1) - ATK% += atk; in battle the carrier takes `damage` true damage per second — 无来源 持续 damage, not a 流失 (PRTS 盟约记录 修正 "并非流失", 备注 "造成无来源真实持续环境伤害"): shields and damage-taken modifiers apply, it counts as 受到伤害 (受击回复 SP, the 重装 skill trigger, 信仰搅拌机 S3 counters); can kill the carrier. Every 敌人类我方单位 of the field (炎佑, a partner's too) takes the same tick while a carrier is on the field — once per second however many carriers (PRTS 备注 "全场范围内的所有敌人类我方单位也会获得此装备的…效果").
   params: `atk=0.4/0.6, damage=60.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **不屈弹射器** (`chess_item_2_01_e_a`, TII, 1) - respawnTime *= (1 + respawn_time) (i.e. -30%/-50%); maxHP% += max_hp (-30%).  
+- **不屈弹射器** (`chess_item_2_01_e_a`, TII, 1) - respawnTime *= (1 + respawn_time) (i.e. -30%/-50%); maxHP% += max_hp (-30%).
   params: `respawn_time=-0.3/-0.5, max_hp=-0.3`; buff keys: `env_gbuff_new_with_verify`
-- **萨尔贡浓茶** (`chess_item_2_04_e_a`, TII, 2) - spRecoveryPerSec += sp_recovery_per_sec (flat, on top of base 1 SP/s for auto-recovery skills).  
+- **萨尔贡浓茶** (`chess_item_2_04_e_a`, TII, 2) - spRecoveryPerSec += sp_recovery_per_sec (flat, on top of base 1 SP/s for auto-recovery skills).
   params: `sp_recovery_per_sec=0.15/0.25`; buff keys: `env_gbuff_new_with_verify`
-- **叙拉古正装** (`chess_item_3_01_e_a`, TIII, 2) - Carrier ASPD += attack_speed. Allies deployed on the 2 tiles left/right of the carrier (perpendicular to its facing direction) get ASPD += attack_speed_1 while the carrier is on the field.  
+- **叙拉古正装** (`chess_item_3_01_e_a`, TIII, 2) - Carrier ASPD += attack_speed. Allies deployed on the 2 tiles left/right of the carrier (perpendicular to its facing direction) get ASPD += attack_speed_1 while the carrier is on the field.
   params: `attack_speed=15.0/25.0, at_root=1.0, attack_speed_1=10.0/15.0`; buff keys: `env_gbuff_new_with_verify, char_dynamic_ability_new`
-- **激光发射器** (`chess_item_3_03_e_a`, TIII, 2) - Carrier's attacks ignore magic_resist_penetrate (percent) of target RES: effRES = RES * (1 - p).  
+- **激光发射器** (`chess_item_3_03_e_a`, TIII, 2) - Carrier's attacks ignore magic_resist_penetrate (percent) of target RES: effRES = RES * (1 - p).
   params: `magic_resist_penetrate=0.25/0.45`; buff keys: `env_gbuff_new_with_verify`
-- **歌利亚头盔** (`chess_item_3_06_e_a`, TIII, 2) - maxHP% += init_max_hp; additionally, if at deploy time the tile directly in front of the carrier (facing direction) has no allied operator, maxHP% += ex_max_hp.  
+- **歌利亚头盔** (`chess_item_3_06_e_a`, TIII, 2) - maxHP% += init_max_hp; additionally, if at deploy time the tile directly in front of the carrier (facing direction) has no allied operator, maxHP% += ex_max_hp.
   params: `init_max_hp=0.25/0.45, ex_max_hp=0.15/0.25`; buff keys: `env_gbuff_new_with_verify`
-- **阿戈尔重刃** (`chess_item_3_07_e_a`, TIII, 2) - ATK% += atk; ASPD += attack_speed (-10).  
+- **阿戈尔重刃** (`chess_item_3_07_e_a`, TIII, 2) - ATK% += atk; ASPD += attack_speed (-10).
   params: `atk=0.4/0.6, attack_speed=-10.0`; buff keys: `env_gbuff_new_with_verify`
-- **奥术法阵** (`chess_item_3_08_e_a`, TIII, 1) - RES += magic_resistance (flat); each attack applies 失去特殊能力 (silence: enemy loses its special abilities/talents) to target for `silence` s.  
+- **奥术法阵** (`chess_item_3_08_e_a`, TIII, 1) - RES += magic_resistance (flat); each attack applies 失去特殊能力 (silence: enemy loses its special abilities/talents) to target for `silence` s.
   params: `magic_resistance=20.0/30.0, silence=5.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **加速维式重锤** (`chess_item_3_10_e_a`, TIII, 2) - ATK% += atk; ASPD += attack_speed (the hammer 'special effect' = the ASPD part).  
+- **加速维式重锤** (`chess_item_3_10_e_a`, TIII, 2) - ATK% += atk; ASPD += attack_speed (the hammer 'special effect' = the ASPD part).
   params: `atk=0.25/0.45, attack_speed=30.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
 
 ### ON_HIT - 战斗触发 On-attack / on-skill / time-window combat effects
 
-- **战栗维式重锤** (`chess_item_2_03_e_a`, TII, 2) - ATK% += atk. If carrier is a MELEE(ground) operator: on each attack, prob chance to apply 战栗(Tremble: target cannot normal-attack while blocked) for disarmed_duration s. Special effect doubled (prob x2 [ASSUMED]) when carrier also has 蒸汽之心 and is Victoria.  
+- **战栗维式重锤** (`chess_item_2_03_e_a`, TII, 2) - ATK% += atk. If carrier is a MELEE(ground) operator: on each attack, prob chance to apply 战栗(Tremble: target cannot normal-attack while blocked) for disarmed_duration s. Special effect doubled (prob x2 [ASSUMED]) when carrier also has 蒸汽之心 and is Victoria.
   params: `atk=0.2/0.35, prob=0.1, disarmed_duration=2.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **精准狙击镜** (`chess_item_3_02_e_a`, TIII, 2) - If distance(carrier tile, target) >= radius (3 tiles, Chebyshev/Euclid on tile grid [ASSUMED Euclidean]), outgoing damage *= damage_scale.  
+- **精准狙击镜** (`chess_item_3_02_e_a`, TIII, 2) - If distance(carrier tile, target) >= radius (3 tiles, Chebyshev/Euclid on tile grid [ASSUMED Euclidean]), outgoing damage *= damage_scale.
   params: `radius=3.0, damage_scale=1.3/1.5`; buff keys: `env_gbuff_new_with_verify`
-- **炎国短刀** (`chess_item_3_04_e_a`, TIII, 2) - Each time the carrier activates a skill: stacks = min(stacks+1, atk_buff_cnt); ATK% += atk * stacks. Stacks reset each battle.  
+- **炎国短刀** (`chess_item_3_04_e_a`, TIII, 2) - Each time the carrier activates a skill: stacks = min(stacks+1, atk_buff_cnt); ATK% += atk * stacks. Stacks reset each battle.
   params: `prob=1.0, atk=0.05/0.08, atk_buff_cnt=10.0`; buff keys: `env_gbuff_new_with_verify`
-- **突袭手雷** (`chess_item_3_11_e_a`, TIII, 1) - For `duration` s after EACH deploy, every attack stuns the target for `stun` s.  
+- **突袭手雷** (`chess_item_3_11_e_a`, TIII, 1) - For `duration` s after EACH deploy, every attack stuns the target for `stun` s.
   params: `stun=2.0, duration=10.0/15.0`; buff keys: `env_gbuff_new_with_verify`
-- **有限加速器** (`chess_item_4_03_e_a`, TIV, 2) - After each attack or heal: stacks = min(stacks+1, max_buff_cnt); ASPD += attack_speed * stacks. Resets each battle.  
+- **有限加速器** (`chess_item_4_03_e_a`, TIV, 2) - After each attack or heal: stacks = min(stacks+1, max_buff_cnt); ASPD += attack_speed * stacks. Resets each battle.
   params: `attack_speed=1.0/2.0, max_buff_cnt=60.0, atk=0.0`; buff keys: `env_gbuff_new_with_verify`
-- **卡西米尔竞技旗** (`chess_item_4_07_e_a`, TIV, 2) - After each deploy: outgoing damage *= damage_scale for `interval` (15) s; afterwards every ex_interval (0.5) s the multiplier changes by damage_scale_minus until it reaches 1.0.  
+- **卡西米尔竞技旗** (`chess_item_4_07_e_a`, TIV, 2) - After each deploy: outgoing damage *= damage_scale for `interval` (15) s; afterwards every ex_interval (0.5) s the multiplier changes by damage_scale_minus until it reaches 1.0.
   params: `damage_scale=1.35/1.6, interval=15.0, ex_interval=0.5, damage_scale_minus=-0.04/-0.07`; buff keys: `env_gbuff_new_with_verify`
-- **拉特兰桥夹** (`chess_item_4_08_e_a`, TIV, 1) - Ammo-type skills: when ammo remaining becomes 1, prob chance to restore ceil(ammo_percent * maxAmmo) [ASSUMED rounding] bullets; max max_trigger_cnt triggers per deploy.  
+- **拉特兰桥夹** (`chess_item_4_08_e_a`, TIV, 1) - Ammo-type skills: when ammo remaining becomes 1, prob chance to restore ceil(ammo_percent * maxAmmo) [ASSUMED rounding] bullets; max max_trigger_cnt triggers per deploy.
   params: `prob=0.5/0.6, ammo_percent=0.4/0.6, max_trigger_cnt=3.0`; buff keys: `env_gbuff_new_with_verify`
-- **灼燃维式重锤** (`chess_item_4_09_e_a`, TIV, 2) - ATK% += atk. When dealing ARTS damage: also inflict 灼燃损伤(Burn elemental damage) = damage_scale * that damage.  
+- **灼燃维式重锤** (`chess_item_4_09_e_a`, TIV, 2) - ATK% += atk. When dealing ARTS damage: also inflict 灼燃损伤(Burn elemental damage) = damage_scale * that damage.
   params: `atk=0.3/0.5, damage_scale=0.1`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **催泪瓦斯** (`chess_item_5_01_e_a`, TV, 2) - On attack: prob chance to add 1 layer of 麻痹(Paralysis: each layer interrupts one enemy normal attack, max 3 layers).  
+- **催泪瓦斯** (`chess_item_5_01_e_a`, TV, 2) - On attack: prob chance to add 1 layer of 麻痹(Paralysis: each layer interrupts one enemy normal attack, max 3 layers).
   params: `prob=0.03/0.05`; buff keys: `env_gbuff_new_with_verify`
-- **谢拉格不融冰** (`chess_item_5_02_e_a`, TV, 2) - On attack: prob chance to apply 寒冷(Cold: ASPD -30; cold again while cold -> Frozen) for `cold` s.  
+- **谢拉格不融冰** (`chess_item_5_02_e_a`, TV, 2) - On attack: prob chance to apply 寒冷(Cold: ASPD -30; cold again while cold -> Frozen) for `cold` s.
   params: `prob=0.12/0.2, cold=1.5`; buff keys: `env_gbuff_new_with_verify`
-- **双模机械臂** (`chess_item_5_03_e_a`, TV, 3) - ATK% += atk; carrier's physical and arts damage becomes 弱点伤害(weakness damage): each hit is dealt as whichever of physical/arts yields MORE damage against that target's DEF/RES.  
+- **双模机械臂** (`chess_item_5_03_e_a`, TV, 3) - ATK% += atk; carrier's physical and arts damage becomes 弱点伤害(weakness damage): each hit is dealt as whichever of physical/arts yields MORE damage against that target's DEF/RES.
   params: `atk=0.3/0.5`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
 
 ### SURVIVAL - 生存 Survival (taunt, shields, undying, revive, DR, CC-immunity)
 
-- **坚固维式重锤** (`chess_item_3_09_e_a`, TIII, 2) - ATK% += atk. The first lethal damage of each deployment (the text says only 首次; once per deployment is the user's first-hand memory of the official mode, 2026-10-03 — DESIGN §21.21): HP cannot drop below 1 for undeadable_duration s.  
+- **坚固维式重锤** (`chess_item_3_09_e_a`, TIII, 2) - ATK% += atk. The first lethal damage of each deployment (the text says only 首次; once per deployment is the user's first-hand memory of the official mode, 2026-10-03 — DESIGN §21.21): HP cannot drop below 1 for undeadable_duration s.
   params: `atk=0.25/0.45, undeadable_duration=8.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **蜂鸣器** (`chess_item_4_02_e_a`, TIV, 1) - tauntLevel = 1 (enemies prefer this unit as target); maxHP% += max_hp.  
+- **蜂鸣器** (`chess_item_4_02_e_a`, TIV, 1) - tauntLevel = 1 (enemies prefer this unit as target); maxHP% += max_hp.
   params: `taunt_level=1.0, max_hp=0.4/0.6`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **伪装服** (`chess_item_4_04_e_a`, TIV, 1) - First time the carrier takes damage in a battle: gain 隐匿(Camouflage: not targeted by ranged enemies unless blocking) for `duration` s.  
+- **伪装服** (`chess_item_4_04_e_a`, TIV, 1) - First time the carrier takes damage in a battle: gain 隐匿(Camouflage: not targeted by ranged enemies unless blocking) for `duration` s.
   params: `duration=15.0/25.0`; buff keys: `env_gbuff_new_with_verify`
-- **防暴盾** (`chess_item_4_05_e_a`, TIV, 2) - While the carrier is blocking >=1 enemy: damage taken from sources NOT blocked by the carrier *= damage_scale.  
+- **防暴盾** (`chess_item_4_05_e_a`, TIV, 2) - While the carrier is blocking >=1 enemy: damage taken from sources NOT blocked by the carrier *= damage_scale.
   params: `damage_scale=0.6/0.3`; buff keys: `env_gbuff_new_with_verify`
-- **休眠子裔** (`chess_item_4_06_e_a`, TIV, 2) - For each target hit by an attack: heal self hp_ratio * maxHP.  
+- **休眠子裔** (`chess_item_4_06_e_a`, TIV, 2) - For each target hit by an attack: heal self hp_ratio * maxHP.
   params: `hp_ratio=0.02/0.04`; buff keys: `env_gbuff_new_with_verify`
-- **浓缩嗅盐** (`chess_item_4_10_e_a`, TIV, 2) - While HP/maxHP > hp_ratio: immune to stun, freeze, sleep, and other CC 'special states' [ASSUMED list: stun/freeze/sleep/levitate/palsy].  
+- **浓缩嗅盐** (`chess_item_4_10_e_a`, TIV, 2) - While HP/maxHP > hp_ratio: immune to stun, freeze, sleep, and other CC 'special states' [ASSUMED list: stun/freeze/sleep/levitate/palsy].
   params: `hp_ratio=0.7/0.4`; buff keys: `env_gbuff_new_with_verify`
-- **护盾无人机** (`chess_item_4_11_e_a`, TIV, 2) - Each heal the carrier performs: prob chance to give the healed target 1 shield layer (max max_stack_cnt layers; 1 layer blocks one instance of damage).  
+- **护盾无人机** (`chess_item_4_11_e_a`, TIV, 2) - Each heal the carrier performs: prob chance to give the healed target 1 shield layer (max max_stack_cnt layers; 1 layer blocks one instance of damage).
   params: `prob=0.1/0.15, max_stack_cnt=1.0`; buff keys: `env_gbuff_new_with_verify`
-- **M3茧甲** (`chess_item_4_12_e_a`, TIV, 3) - When the carrier is defeated during the battle phase: revive immediately in place at full HP [ASSUMED full HP] up to max_respawn_cnt times per battle.  
+- **M3茧甲** (`chess_item_4_12_e_a`, TIV, 3) - When the carrier is defeated during the battle phase: revive immediately at full HP up to max_respawn_cnt times per battle — PRTS 备注 "“复活”的实现方式为：受益者因移动之外的原因退场时下次部署的再部署时间和费用归零": since 0.2.0 the knock-out stands and the carrier redeploys at once, free, where it lies (its 被击倒时 and 部署时 effects run; in place before).
   params: `max_respawn_cnt=1.0/2.0`; buff keys: `env_gbuff_new_with_verify`
 
 ### SP - 技力 SP gain
 
-- **迅捷作战粮** (`chess_item_3_05_e_a`, TIII, 2) - On deploy: SP += sp_each_person * (1 + N), N = number of OTHER deployed operators sharing at least one bond with the carrier [ASSUMED interpretation].  
+- **迅捷作战粮** (`chess_item_3_05_e_a`, TIII, 2) - On deploy: SP += sp_each_person * (1 + N), N = number of OTHER deployed operators sharing at least one bond with the carrier [ASSUMED interpretation].
   params: `sp_each_person=3.0/6.0`; buff keys: `env_gbuff_new_with_verify`
 
 ### ECONOMY - 经济 Consumed on equip, gives funds
 
-- **盟约之币** (`chess_item_1_03_e_a`, TI, 1) - On equip: destroy item, player.funds += randInt(min,max) (normal 1, golden 2). Does not use an equip slot.  
+- **盟约之币** (`chess_item_1_03_e_a`, TI, 1) - On equip: destroy item, player.funds += randInt(min,max) (normal 1, golden 2). Does not use an equip slot.
   params: `min=1.0/2.0, max=1.0/2.0`; buff keys: `equip_destory_gain_random_coin`
-- **精打细算玩偶** (`chess_item_2_05_e_a`, TII, 3) - On equip: destroy item; register a permanent player effect: at the start of every subsequent round player.funds += count (stackable).  
+- **精打细算玩偶** (`chess_item_2_05_e_a`, TII, 3) - On equip: destroy item; register a permanent player effect: at the start of every subsequent round player.funds += count (stackable).
   params: `count=1.0/2.0`; buff keys: `gain_coin_when_round_start`
-- **见钱眼开玩偶** (`chess_item_2_07_e_a`, TII, 1) - On equip: destroy item; at the start of NEXT round only: player.funds += count.  
+- **见钱眼开玩偶** (`chess_item_2_07_e_a`, TII, 1) - On equip: destroy item; at the start of NEXT round only: player.funds += count.
   params: `count=2.0/4.0`; buff keys: `use_equip_gain_coin_when_next_round_start`
-- **骑士储蓄罐** (`chess_item_3_12_e_a`, TIII, 3) - On equip: destroy item, player.funds += randInt(min,max) inclusive (normal 1-6, golden 2-12).  
+- **骑士储蓄罐** (`chess_item_3_12_e_a`, TIII, 3) - On equip: destroy item, player.funds += randInt(min,max) inclusive (normal 1-6, golden 2-12).
   params: `min=1.0/2.0, max=6.0/12.0`; buff keys: `equip_destory_gain_random_coin`
 
 ### RECRUIT - 调度 Roster manipulation (get / transform / promote operators, deploy cap)
 
-- **紧急调度券** (`chess_item_2_02_e_a`, TII, 2) - On equip: destroy item; pick `count` random operator(s) currently displayed in the player's shop (调度中心) slots, move them to hand for free; those shop slots become empty.  
+- **紧急调度券** (`chess_item_2_02_e_a`, TII, 2) - On equip: destroy item; pick `count` random operator(s) currently displayed in the player's shop (调度中心) slots, move them to hand for free; those shop slots become empty.
   params: `count=1.0/2.0`; buff keys: `use_equip_reward_random_char_chess_in_shop`
-- **简易通讯机** (`chess_item_2_06_e_a`, TII, 2) - On equip: destroy item; give player `count` random NORMAL-quality operator(s) that share at least one bond with the target operator (tier <= current shop level [ASSUMED]).  
+- **简易通讯机** (`chess_item_2_06_e_a`, TII, 2) - On equip: destroy item; give player `count` random NORMAL-quality operator(s) that share at least one bond with the target operator (tier <= current shop level [ASSUMED]).
   params: `count=1.0/2.0`; buff keys: `use_equip_reward_char_chess_with_same_bond`
-- **寻呼模块** (`chess_item_4_01_e_a`, TIV, 4) - On equip: destroy item; open a special shop refresh with refresh_cnt(3) operators sharing a bond with the target (tier <= current shop level); player takes choice_cnt(1) of them for free. Never merges (upgradeNum=100).  
+- **寻呼模块** (`chess_item_4_01_e_a`, TIV, 4) - On equip: destroy item; open a special shop refresh with refresh_cnt(3) operators sharing a bond with the target (tier <= current shop level); player takes choice_cnt(1) of them for free. Never merges (upgradeNum=100).
   params: `refresh_cnt=3.0, choice_cnt=1.0`; buff keys: `use_equip_reward_special_goods_char_chess`
-- **信标** (`chess_item_5_04_e_a`, TV, 3) - On equip: destroy BOTH the item and the target operator; special refresh of refresh_cnt(2) operators of the SAME tier as the target, take choice_cnt(1) free. Multiplayer: at next prep phase send 1 copy of the original operator to the teammate who has the most operators of that operator's bond(s) (tie -> random). Cannot target DIY(自编) operators. Never merges.  
+- **信标** (`chess_item_5_04_e_a`, TV, 3) - On equip: destroy BOTH the item and the target operator; special refresh of refresh_cnt(2) operators of the SAME tier as the target, take choice_cnt(1) free. Multiplayer: at next prep phase send 1 copy of the original operator to the teammate who has the most operators of that operator's bond(s) (tie -> random). Cannot target DIY(自编) operators. Never merges.
   params: `refresh_cnt=2.0, choice_cnt=1.0`; buff keys: `use_equip_recruit_new_char_and_give_char_to_player_most_bond`
-- **拟态物质** (`chess_item_5_05_e_a`, TV, 4) - On equip: destroy item; if player owns >= 2 NORMAL copies of the target operator (field+hand), give 1 more normal copy (usually triggers 3->elite merge); else give 1 random normal operator sharing a bond with the target. Never merges.  
+- **拟态物质** (`chess_item_5_05_e_a`, TV, 4) - On equip: destroy item; if player owns >= 2 NORMAL copies of the target operator (field+hand), give 1 more normal copy (usually triggers 3->elite merge); else give 1 random normal operator sharing a bond with the target. Never merges. With >= 2 owned and no copy left in the pool (an elite holds 3 of a tier-6's 5) the remake gives nothing: the else is only for < 2 owned (GitHub #207, 0.2.0).
   params: `-`; buff keys: `use_equip_reward_char_chess`
-- **博士投影** (`chess_item_5_06_e_a`, TV, 5) - Normal: equip onto any normal operator (occupies a slot until next round start), at the start of the next round destroy item and promote the operator to elite(精锐/golden). Golden: on equip, destroy item and promote immediately. On promotion, equipped items return to hand.  
+- **博士投影** (`chess_item_5_06_e_a`, TV, 5) - Normal: equip onto any normal operator (occupies a slot until next round start), at the start of the next round destroy item and promote the operator to elite(精锐/golden). Golden: on equip, destroy item and promote immediately. On promotion, equipped items return to hand.
   params: `-`; buff keys: `equip_round_start_upgrade_char`
-- **商业包装方案** (`chess_item_5_07_e_a`, TV, 3) - Stays equipped. Counter of operators SOLD by the player (any): every `count` sales, give 1 random NORMAL operator sharing a bond with the carrier, tier <= current shop level.  
+- **商业包装方案** (`chess_item_5_07_e_a`, TV, 3) - Stays equipped. Counter of operators SOLD by the player (any): every `count` sales, give 1 random NORMAL operator sharing a bond with the carrier, tier <= current shop level.
   params: `count=8.0/7.0`; buff keys: `sell_char_count_gain_equip_owner_bond`
-- **突变细胞** (`chess_item_5_08_e_a`, TV, 2) - After the battle ends: replace the carrier with a random operator one tier higher (max tier 6); item consumed [ASSUMED]. Keeps elite status? [ASSUMED: result is NORMAL quality; other equipped item returns to hand]. Never merges.  
-  **Addendum (player feedback after 0.1.0):** the cell is **not consumed**. PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注: "生效时，原干员销毁，获得一名高一阶的随机初始干员（最高六阶）" (normal result confirmed); PRTS 卫戍协议/帮助: "佩戴的装备无法手动卸除，在失去该干员（干员出售、销毁、合并等）或装备合并为进阶品质时自动卸除" (a destroyed operator's equipment comes off); the official text never says 销毁 for the cell (every consumable's does); players re-inject it every round (bilibili cv47000418 "之后就是一直打针，扎到核心卡或者叠层手干员就换人扎"; cg.163.com guide 2025-11-15 "这个道具可以无限使用"; bilibili cv48003106 "扎了好几次") — the destroyed operator's equipment, the cell included, returns to the hand.  
-  **Addendum 2 (where the new operator goes):** it is **gained into the 整备区**, not left on the carrier's tile. Official gameplay footage — bilibili BV1vzyVBuEN9 (上半, ≈ 8:24) and BV1Qkw1zMEoR (下半, ≈ 7:25) — shows the next prep with the carrier's tile empty, the remaining-deploy counter (剩余可放置角色) one higher and the bench holding the returned equipment and the new tier+1 operator, which the player then deploys by hand. This is the 备注 read as written (a destroy, then a gain) and PRTS 卫戍协议/帮助's rule that everything recruited or gained is sent to the 手牌区 ("被发送至手牌区的物资优先从右到左填充空位"); an outside contributor's playtest (the closed PR #2) said the same. A merge the new operator completes is an ordinary gained copy's merge: the carrier is gone first, so its tile is no copy's (DESIGN §21.1).  
+- **突变细胞** (`chess_item_5_08_e_a`, TV, 2) - After the battle ends: replace the carrier with a random operator one tier higher (max tier 6); item consumed [ASSUMED]. Keeps elite status? [ASSUMED: result is NORMAL quality; other equipped item returns to hand]. Never merges.
+  **Addendum (player feedback after 0.1.0):** the cell is **not consumed**. PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注: "生效时，原干员销毁，获得一名高一阶的随机初始干员（最高六阶）" (normal result confirmed); PRTS 卫戍协议/帮助: "佩戴的装备无法手动卸除，在失去该干员（干员出售、销毁、合并等）或装备合并为进阶品质时自动卸除" (a destroyed operator's equipment comes off); the official text never says 销毁 for the cell (every consumable's does); players re-inject it every round (bilibili cv47000418 "之后就是一直打针，扎到核心卡或者叠层手干员就换人扎"; cg.163.com guide 2025-11-15 "这个道具可以无限使用"; bilibili cv48003106 "扎了好几次") — the destroyed operator's equipment, the cell included, returns to the hand.
+  **Addendum 2 (where the new operator goes):** it is **gained into the 整备区**, not left on the carrier's tile. Official gameplay footage — bilibili BV1vzyVBuEN9 (上半, ≈ 8:24) and BV1Qkw1zMEoR (下半, ≈ 7:25) — shows the next prep with the carrier's tile empty, the remaining-deploy counter (剩余可放置角色) one higher and the bench holding the returned equipment and the new tier+1 operator, which the player then deploys by hand. This is the 备注 read as written (a destroy, then a gain) and PRTS 卫戍协议/帮助's rule that everything recruited or gained is sent to the 手牌区 ("被发送至手牌区的物资优先从右到左填充空位"); an outside contributor's playtest (the closed PR #2) said the same. A merge the new operator completes is an ordinary gained copy's merge: the carrier is gone first, so its tile is no copy's (DESIGN §21.1).
   params: `-`; buff keys: `char_chess_transformation_equip`
-- **人事部文档** (`chess_item_6_08_e_a`, TVI, 4) - On equip: destroy item; player's max deployable operator count becomes `count` (9) (base maxBattleChessCnt = 8). Never merges; a second copy has no further effect [ASSUMED].  
+- **人事部文档** (`chess_item_6_08_e_a`, TVI, 4) - On equip: destroy item; player's max deployable operator count becomes `count` (9) (base maxBattleChessCnt = 8). Never merges; a second copy has no further effect [ASSUMED].
   params: `count=9.0`; buff keys: `equip_destory_deployment_cnt_change`
 
 ### BOND - 盟约层数 Bond-layer consumables
 
-- **随身身份牌** (`chess_item_1_04_e_a`, TI, 1) - On equip: destroy item; for EACH bond of the target operator: bondLayer[bond] += layer (works even if that bond is not activated).  
+- **随身身份牌** (`chess_item_1_04_e_a`, TI, 1) - On equip: destroy item; for EACH bond of the target operator: bondLayer[bond] += layer (works even if that bond is not activated).
   params: `layer=3.0/6.0`; buff keys: `use_equip_reward_char_chess_bond_layer`
 
 ### BOND_GRANT - 盟约赋予 Grants an extra bond
 
-- **变形同构体** (`chess_item_6_09_e_a`, TVI, 3) - Carrier additionally counts as a member of bond B where B = giveBondId of the OTHER item equipped on the same operator (see bondGrantTable). No effect if the other item has giveBondId=null. Never merges.  
+- **变形同构体** (`chess_item_6_09_e_a`, TVI, 3) - Carrier additionally counts as a member of bond B where B = giveBondId of the OTHER item equipped on the same operator (see bondGrantTable). No effect if the other item has giveBondId=null. Never merges.
   params: `-`; buff keys: ``
 
 ### SET - 套装 Two-piece set (天马)
 
-- **天马之盔** (`chess_item_5_09_e_a`, TV, 3) - maxHP% += max_hp. If carrier also holds 天马之枪 (either quality): regen hp_recovery_per_sec_by_max_hp_ratio * maxHP per second.  
+- **天马之盔** (`chess_item_5_09_e_a`, TV, 3) - maxHP% += max_hp. If carrier also holds 天马之枪 (either quality): regen hp_recovery_per_sec_by_max_hp_ratio * maxHP per second.
   params: `max_hp=0.5/0.75, hp_recovery_per_sec_by_max_hp_ratio=0.08`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **天马之枪** (`chess_item_6_01_e_a`, TVI, 3) - ATK% += atk. If carrier also holds 天马之盔: every damage instance additionally deals atk_scale * ATK as TRUE damage [ASSUMED: % of ATK, per blackboard key atk_scale; description says 30% true damage].  
+- **天马之枪** (`chess_item_6_01_e_a`, TVI, 3) - ATK% += atk. If carrier also holds 天马之盔: every damage instance additionally deals atk_scale * ATK as TRUE damage [ASSUMED: % of ATK, per blackboard key atk_scale; description says 30% true damage].
   params: `atk=0.4/0.6, atk_scale=0.3`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
 
 ### BOND_SIGNATURE - VI阶盟约专属 Bond-gated signature items (bonus if carrier has bond X, extra bonus if paired with bond's base item)
 
-- **铳骑之威** (`chess_item_6_02_e_a`, TVI, 4) - ATK% += atk. If carrier has bond Laterano: on each attack, prob chance to fire an extra bullet at 1 enemy in range dealing atk_scale_1 * ATK physical damage; if carrier also holds 拉特兰桥夹 -> atk_scale_2 * ATK.  
+- **铳骑之威** (`chess_item_6_02_e_a`, TVI, 4) - ATK% += atk. If carrier has bond Laterano: on each attack, prob chance to fire an extra bullet at 1 enemy in range dealing atk_scale_1 * ATK physical damage; if carrier also holds 拉特兰桥夹 -> atk_scale_2 * ATK.
   params: `prob=0.35, atk_scale_1=1.5, atk_scale_2=3.0, atk=0.4/0.6`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **天师古鼎** (`chess_item_6_03_e_a`, TVI, 4) - maxHP% += max_hp. If carrier has bond Yan: at battle start ASPD += attack_speed * min(k, max_cnt), k = operators the player acquired during THIS round's prep. If also holding 炎国短刀: each time the player acquires an operator, funds += count (max `max` times per round).  
+- **天师古鼎** (`chess_item_6_03_e_a`, TVI, 4) - maxHP% += max_hp. If carrier has bond Yan: at battle start ASPD += attack_speed * min(k, max_cnt), k = operators the player acquired during THIS round's prep. If also holding 炎国短刀: each time the player acquires an operator, funds += count (max `max` times per round).
   params: `attack_speed=25.0, max_cnt=3.0, max_hp=0.45/0.7, count=2.0, max=3.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify, equip_with_another_gain_coin_when_gain_char`
-- **海沟实验体** (`chess_item_6_04_e_a`, TVI, 4) - Flat damage reduction: each incoming hit reduced by `value` (180/300, min 0 [ASSUMED]). If carrier has bond Aegir: when taking damage, deal atk_scale * ATK arts damage to the source (internal CD lock_duration 0.5 s); if also holding 阿戈尔重刃, one additional hit of atk_scale * ATK arts (same CD).  
+- **海沟实验体** (`chess_item_6_04_e_a`, TVI, 4) - Flat damage reduction: each incoming hit reduced by `value` (180/300, min 0 [ASSUMED]). If carrier has bond Aegir: when taking damage, deal atk_scale * ATK arts damage to the source (internal CD lock_duration 0.5 s); if also holding 阿戈尔重刃, one additional hit of atk_scale * ATK arts (same CD).
   params: `lock_duration=0.5, atk_scale=0.5, value=180.0/300.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **蒸汽之心** (`chess_item_6_05_e_a`, TVI, 4) - ASPD += attack_speed_1 (35/55). If carrier has bond Victoria: gains the special effects of every hammer (灼燃/坚固/加速/战栗) currently equipped by ANY of the player's on-field operators (burn 10% of arts dmg, undying 8 s, ASPD +30, 10% tremble 2 s). If it also holds a hammer-series item, that hammer's special effect is doubled (burn 20%, undying 16 s, ASPD +60, tremble prob 20% [ASSUMED doubling targets]).  
+- **蒸汽之心** (`chess_item_6_05_e_a`, TVI, 4) - ASPD += attack_speed_1 (35/55). If carrier has bond Victoria: gains the special effects of every hammer (灼燃/坚固/加速/战栗) currently equipped by ANY of the player's on-field operators (burn 10% of arts dmg, undying 8 s, ASPD +30, 10% tremble 2 s). If it also holds a hammer-series item, that hammer's special effect is doubled (burn 20%, undying 16 s, ASPD +60, tremble prob 20% [ASSUMED doubling targets]).
   params: `damage_scale=0.1, undeadable_duration=8.0, attack_speed=30.0, prob=0.1, disarmed_duration=2.0, attack_speed_1=35.0/55.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
-- **耶拉冈德之泪** (`chess_item_6_06_e_a`, TVI, 4) - RES += magic_resistance. If carrier has bond Kjerag: every `interval` (1 s) each Cold or Frozen enemy inside the carrier's attack range takes atk_scale * ATK arts damage; atk_scale_ex (100%) if carrier also holds 谢拉格不融冰.  
+- **耶拉冈德之泪** (`chess_item_6_06_e_a`, TVI, 4) - RES += magic_resistance. If carrier has bond Kjerag: every `interval` (1 s) each Cold or Frozen enemy inside the carrier's attack range takes atk_scale * ATK arts damage; atk_scale_ex (100%) if carrier also holds 谢拉格不融冰.
   params: `atk_scale=0.3, interval=1.0, atk_scale_ex=1.0, magic_resistance=30.0/50.0`; buff keys: `char_dynamic_ability_new, env_gbuff_new_with_verify`
-- **黄沙罗盘** (`chess_item_6_07_e_a`, TVI, 4) - Initial SP += init_sp (30/50). If carrier has bond Sargon: when its FIRST skill ends, SP += sp (30). If also holding 萨尔贡浓茶: each time the carrier activates a skill, all Sargon operators on field gain addition_sp (3) SP.  
+- **黄沙罗盘** (`chess_item_6_07_e_a`, TVI, 4) - Initial SP += init_sp (30/50). If carrier has bond Sargon: when its FIRST skill ends, SP += sp (30). If also holding 萨尔贡浓茶: each time the carrier activates a skill, all Sargon operators on field gain addition_sp (3) SP.
   params: `sp=30.0, addition_sp=3.0, init_sp=30.0/50.0`; buff keys: `env_gbuff_new_with_verify`
-- **骑士戒律** (`chess_item_6_10_e_a`, TVI, 4) - respawnTime *= (1 + respawn_time) (-40%/-60%). If carrier has bond Kazimierz: for `duration` (20) s after activating a skill, enemies inside its attack range get ASPD x attack_speed(0.65) and move speed x move_speed(0.65) (i.e. -35%). If also holding 卡西米尔竞技旗: during skill duration ATK% += atk (+100%), and lethal damage does not retreat it; it retreats when the skill ends.  
+- **骑士戒律** (`chess_item_6_10_e_a`, TVI, 4) - respawnTime *= (1 + respawn_time) (-40%/-60%). If carrier has bond Kazimierz: for `duration` (20) s after activating a skill, enemies inside its attack range get ASPD x attack_speed(0.65) and move speed x move_speed(0.65) (i.e. -35%). If also holding 卡西米尔竞技旗: during skill duration ATK% += atk (+100%), and lethal damage does not retreat it; it retreats when the skill ends.
   params: `respawn_time=-0.4/-0.6, max_hp=0.0, duration=20.0, atk=1.0, move_speed=0.65, attack_speed=0.65`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify, char_dynamic_ability_new`
-- **家族徽章** (`chess_item_6_11_e_a`, TVI, 4) - spRecoveryPerSec += sp_recovery_per_sec (0.2/0.35). If carrier has bond Siracusa: while Camouflaged, ATK% += atk_per_sec per second (2%/s) up to max_atk (+100%, i.e. 200% ATK); the bonus lasts until the first damage dealt after camouflage ends, or until the carrier leaves the field. If also holding 叙拉古正装: that first hit after losing camouflage additionally deals atk_scale (800%) * ATK true damage.  
+- **家族徽章** (`chess_item_6_11_e_a`, TVI, 4) - spRecoveryPerSec += sp_recovery_per_sec (0.2/0.35). If carrier has bond Siracusa: while Camouflaged, ATK% += atk_per_sec per second (2%/s) up to max_atk (+100%, i.e. 200% ATK); the bonus lasts until the first damage dealt after camouflage ends, or until the carrier leaves the field. If also holding 叙拉古正装: that first hit after losing camouflage additionally deals atk_scale (800%) * ATK true damage.
   params: `sp_recovery_per_sec=0.2/0.35, atk_per_sec=0.02, max_atk=1.0, atk_scale=8.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
 
 ### MAGIC - 法术 Arts: placed on a map tile, not equipped
 
-- **“神秘顾客”** (`chess_item_6_01_m`, TVI, 2) - Drag onto the field: choose a special bounty (hunter_band_1). When actively destroyed: +1 fund and the item passes to the next player. UNUSED in act2 (no band/garrison grants it) - implement last or skip.  
+- **“神秘顾客”** (`chess_item_6_01_m`, TVI, 2) - Drag onto the field: choose a special bounty (hunter_band_1). When actively destroyed: +1 fund and the item passes to the next player. UNUSED in act2 (no band/garrison grants it) - implement last or skip.
   params: `count=1.0`; buff keys: `trap_create_self_choice, trap_disney_special`
-- **画卷** (`chess_item_6_02_m`, TVI, 2) - Drag onto a map tile during prep. Range 1-1 = the tile itself + the tile in front (facing). Gives the player a copy of 1 operator inside that range, INCLUDING elite status and equipped items (copies go to hand). Consumed.  
+- **画卷** (`chess_item_6_02_m`, TVI, 2) - Drag onto a map tile during prep. Range 1-1 = the tile itself + the tile in front (facing). Gives the player a copy of 1 operator inside that range, INCLUDING elite status and equipped items (copies go to hand). Consumed.
   params: `-`; buff keys: `trap_copy_front_char`
-- **教鞭** (`chess_item_6_03_m`, TVI, 2) - Drag onto the field during prep: opens a personal bounty choice (choice event hunter_band_1). The chosen bounty adds extra enemies to your next battle; killing them / perfect defence grants funds (see ENEMY_GAIN '...悬赏' effects). Consumed.  
+- **教鞭** (`chess_item_6_03_m`, TVI, 2) - Drag onto the field during prep: opens a personal bounty choice (choice event hunter_band_1). The chosen bounty adds extra enemies to your next battle; killing them / perfect defence grants funds (see ENEMY_GAIN '...悬赏' effects). Consumed.
   params: `-`; buff keys: `trap_create_self_choice`
 
 ## 5. 变形同构体 (Damazti Isomorph) bond-grant table [DATA]
@@ -411,7 +411,7 @@ Pools referenced but NOT defined in client data (server-side) - proposed content
 - `pool_equip_vict` (维多利亚 bond, every 25 layers): {灼燃, 坚固, 加速, 战栗}维式重锤, uniform.
 - `pool_equip_pepe` (佩佩): 盟约之币 45%, 萨尔贡浓茶 45%, 黄沙罗盘 10% (golden 佩佩: 40/40/20).
 - `pool_equip_rockr` (洛洛 "定制品"): {有限加速器, 激光发射器, 护盾无人机, 双模机械臂, 蜂鸣器} uniform.
-- `pool_equip_kathe` (band_cathy 定向投放, on each shop upgrade 3 choose 1) and `pool_equip_narant` (band_narant, every even round 2 choose 1): tier <= new shop level normal EQUIP.
+- `pool_equip_kathe` (band_cathy 定向投放, on each shop upgrade 3 choose 1): every shop-eligible normal EQUIP, whatever the shop level (0.2.0: players' first-hand report 「原版凯瑟琳1升2都能有6本装备」; tier <= new shop level until then), uniform [ASSUMED]. `pool_equip_narant` (band_narant, every even round 2 choose 1): tier <= shop level normal EQUIP [ASSUMED].
 - garrison_45 / 134 / 135 exist but are not referenced by any operator in `charChessDataDict` (unused this season).
 
 ## 9. Status / damage terms used by items

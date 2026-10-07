@@ -5,6 +5,7 @@ import { createStore, useStore } from '../store.js';
 import { formatBytes } from '../resources/common.js';
 import { clearResources, exportResources, importResources, inspectResources, pauseResources,
   resourceState, startResources, subscribeResources } from '../resources/index.js';
+import { t } from '../../../shared/i18n.js';
 
 const RESOURCE_DOWNLOAD_URL = 'https://t.bilibili.com/1256354225629167619';
 
@@ -17,7 +18,7 @@ export function byteText(st) {
 
 export function detailText(st) {
   if (!st.total) return '';
-  return [st.tier1Total ? `必需 ${st.tier1Done}/${st.tier1Total}` : '', `全部 ${st.done}/${st.total}`, byteText(st)].filter(Boolean).join(' · ');
+  return [st.tier1Total ? t('必需 {tier1Done}/{tier1Total}', { tier1Done: st.tier1Done, tier1Total: st.tier1Total }) : '', t('全部 {done}/{total}', { done: st.done, total: st.total }), byteText(st)].filter(Boolean).join(' · ');
 }
 
 export function percent(st) {
@@ -39,33 +40,33 @@ function useResources() {
 }
 
 function stateText(st, enabled) {
-  if (st.archive) return st.archive === 'import' ? '正在导入' : '正在导出';
-  if (st.phase === 'foreign') return '另一标签页处理中';
-  if (busy(st)) return '处理中';
-  if (st.complete) return '全部已保存';
-  if (st.selectionComplete && st.tier1Total) return '必备已保存';
-  return enabled ? '已暂停' : '未开启';
+  if (st.archive) return st.archive === 'import' ? t('正在导入') : t('正在导出');
+  if (st.phase === 'foreign') return t('另一标签页处理中');
+  if (busy(st)) return t('处理中');
+  if (st.complete) return t('全部已保存');
+  if (st.selectionComplete && st.tier1Total) return t('必备已保存');
+  return enabled ? t('已暂停') : t('未开启');
 }
 
 export function ResourceRow({ enabled }) {
   const st = useResources();
   return html`<div class="set-res">
     <div class="set-row">
-      <span class="set-row__label">预载资源<${MicroLabel}>PRELOAD<//></span>
-      <${Button} variant="secondary" size="sm" icon="expand" onClick=${openResources}>资源管理<//>
+      <span class="set-row__label">${t('预载资源')}<${MicroLabel}>PRELOAD<//></span>
+      <${Button} variant="secondary" size="sm" icon="expand" onClick=${openResources}>${t('资源管理')}<//>
     </div>
-    <p class="set-hint">${stateText(st, enabled)} · 管理必备与可选资源，或导入、导出 ZIP 资源包。</p>
+    <p class="set-hint">${stateText(st, enabled)} ${t('· 管理必备与可选资源，或导入、导出 ZIP 资源包。')}</p>
   </div>`;
 }
 
 export function ResourceLauncher({ enabled }) {
   const st = useResources();
   return html`<div class=${`res-pill${enabled ? ' is-on' : ''}`}>
-    <button type="button" class="res-pill__head" title="管理预载资源和 ZIP 资源包" onClick=${openResources}>
-      <span class="res-pill__label">预载资源<${MicroLabel}>PRELOAD<//></span>
+    <button type="button" class="res-pill__head" title=${t('管理预载资源和 ZIP 资源包')} onClick=${openResources}>
+      <span class="res-pill__label">${t('预载资源')}<${MicroLabel}>PRELOAD<//></span>
       <span class="res-pill__state">${stateText(st, enabled)}</span>
     </button>
-    <p class="res-pill__hint">必备 / 可选资源 · ZIP 导入与导出</p>
+    <p class="res-pill__hint">${t('必备 / 可选资源 · ZIP 导入与导出')}</p>
   </div>`;
 }
 
@@ -78,20 +79,20 @@ function ResourceTier({ st, tier, optional, onOptional, disabled }) {
   const unknown = groups.some((g) => g.unknownSize);
   return html`<section class="resource-tier">
     <header class="resource-tier__head">
-      <div><h3>${tier === 1 ? '必备资源' : '可选资源'}</h3>
-        <p>${tier === 1 ? '地图、干员图片与 Spine 等画面资源' : '角色语音、音效、背景音乐与玩法说明图片'}</p></div>
+      <div><h3>${tier === 1 ? t('必备资源') : t('可选资源')}</h3>
+        <p>${tier === 1 ? t('地图、干员图片与 Spine 等画面资源') : t('角色语音、音效、背景音乐与玩法说明图片')}</p></div>
       ${tier === 2 ? html`<label class="resource-choice"><input type="checkbox" checked=${optional} disabled=${disabled}
-        onChange=${(e) => onOptional(e.currentTarget.checked)} />同时预载</label>` : html`<${MicroLabel}>REQUIRED<//>`}
+        onChange=${(e) => onOptional(e.currentTarget.checked)} />${t('同时预载')}</label>` : html`<${MicroLabel}>REQUIRED<//>`}
     </header>
-    <div class="resource-tier__summary"><span class="num">${done} / ${total} 个文件</span>
-      <span class="num">${unknown ? '部分大小未知' : `${formatBytes(bytes)} / ${formatBytes(totalBytes)}`}</span></div>
+    <div class="resource-tier__summary"><span class="num">${t('{done} / {total} 个文件', { done, total })}</span>
+      <span class="num">${unknown ? t('部分大小未知') : `${formatBytes(bytes)} / ${formatBytes(totalBytes)}`}</span></div>
     <${ProgressBar} value=${done} max=${Math.max(1, total)} size="sm" tone=${tier === 1 ? 'mint' : 'amber'} />
     <ul class="resource-tier__list">
       ${groups.map((group) => html`<li key=${group.id}
-        class=${st.archivePhase === 'import' && st.archiveGroup === group.id ? 'is-importing' : ''}><span>${group.name}
-          ${st.archivePhase === 'import' && st.archiveGroup === group.id ? html`<small>正在导入</small>` : null}</span>
+        class=${st.archivePhase === 'import' && st.archiveGroup === group.id ? 'is-importing' : ''}><span>${t(group.name)}
+          ${st.archivePhase === 'import' && st.archiveGroup === group.id ? html`<small>${t('正在导入')}</small>` : null}</span>
         <span class="num">${group.present}/${group.wanted}</span>
-        <span class="num">${group.unknownSize ? '大小待确认' : formatBytes(group.totalBytes)}</span></li>`)}
+        <span class="num">${group.unknownSize ? t('大小待确认') : formatBytes(group.totalBytes)}</span></li>`)}
     </ul>
   </section>`;
 }
@@ -122,40 +123,40 @@ export function ResourceHost({ enabled, optional, onChange, onOptional }) {
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch { /* controller displays the error */ }
   };
-  return html`<${Modal} open=${open} onClose=${closeResources} title="预载资源管理" micro="RESOURCE MANAGER" class="resource-modal"
+  return html`<${Modal} open=${open} onClose=${closeResources} title=${t('预载资源管理')} micro="RESOURCE MANAGER" class="resource-modal"
     actions=${html`
-      ${busy(st) ? html`<${Button} variant="secondary" icon="hourglass" onClick=${pauseResources}>${archiveBusy ? '取消处理' : '暂停下载'}<//>`
+      ${busy(st) ? html`<${Button} variant="secondary" icon="hourglass" onClick=${pauseResources}>${archiveBusy ? t('取消处理') : t('暂停下载')}<//>`
         : html`<${Button} variant="primary" icon="play" disabled=${!st.supported}
-          onClick=${() => enabled ? startResources() : onChange(true)}>${st.selectionComplete ? '检查资源' : enabled ? '继续下载' : '开始预载'}<//>`}
-      <${Button} variant="secondary" onClick=${closeResources}>关闭<//>`}>
+          onClick=${() => enabled ? startResources() : onChange(true)}>${st.selectionComplete ? t('检查资源') : enabled ? t('继续下载') : t('开始预载')}<//>`}
+      <${Button} variant="secondary" onClick=${closeResources}>${t('关闭')}<//>`}>
     <div class="resource-manager">
-      <p class="resource-manager__intro">先预载必备资源；可选资源可按需加载。关闭此窗口后，下载会在后台继续。</p>
+      <p class="resource-manager__intro">${t('先预载必备资源；可选资源可按需加载。关闭此窗口后，下载会在后台继续。')}</p>
       <div class="resource-manager__tiers">
         <${ResourceTier} st=${st} tier=${1} />
         <${ResourceTier} st=${st} tier=${2} optional=${optional} onOptional=${onOptional} disabled=${archiveBusy} />
       </div>
       <p class=${`resource-manager__status${st.error ? ' is-error' : ''}`} role="status" aria-live="polite">
-        ${st.message || (enabled ? '预载已开启' : '选择下载范围，然后开始预载；也可以直接导入资源包。')}</p>
+        ${st.message || (enabled ? t('预载已开启') : t('选择下载范围，然后开始预载；也可以直接导入资源包。'))}</p>
       ${st.worker ? html`<p class="resource-manager__warn">${st.worker}</p>` : null}
-      ${st.failed ? html`<p class="resource-manager__warn">${st.failed} 个文件下载失败，继续下载时重试。</p>` : null}
-      ${st.skipped ? html`<p class="resource-manager__warn">${st.skipped} 个文件超过单文件缓存上限，使用时按需加载。</p>` : null}
+      ${st.failed ? html`<p class="resource-manager__warn">${t('{failed} 个文件下载失败，继续下载时重试。', { failed: st.failed })}</p>` : null}
+      ${st.skipped ? html`<p class="resource-manager__warn">${t('{skipped} 个文件超过单文件缓存上限，使用时按需加载。', { skipped: st.skipped })}</p>` : null}
       <section class="resource-archive">
-        <h3>ZIP 资源包</h3>
-        <p>可将已缓存的资源导出为 ZIP 并发送给朋友，也可以前往我的动态下载资源包。支持导入旧版本资源包；导入会校验完整性，只复用当前版本仍有效的文件，并增量下载缺少的资源。</p>
+        <h3>${t('ZIP 资源包')}</h3>
+        <p>${t('可将已缓存的资源导出为 ZIP 并发送给朋友，也可以前往我的动态下载资源包。支持导入旧版本资源包；导入会校验完整性，只复用当前版本仍有效的文件，并增量下载缺少的资源。')}</p>
         ${st.archive ? html`<${ProgressBar} value=${st.archivePercent} max=${100} size="sm" tone="mint" />` : null}
         <input ref=${fileInput} type="file" accept=".zip,application/zip,application/x-zip-compressed" hidden onChange=${importFile} />
         <div class="res-actions">
-          <${Button} variant="secondary" disabled=${archiveBusy || !st.supported} onClick=${() => fileInput.current?.click()}>导入 ZIP<//>
-          <${Button} variant="secondary" disabled=${archiveBusy || !st.supported || !st.done} onClick=${exportFile}>导出 ZIP<//>
+          <${Button} variant="secondary" disabled=${archiveBusy || !st.supported} onClick=${() => fileInput.current?.click()}>${t('导入 ZIP')}<//>
+          <${Button} variant="secondary" disabled=${archiveBusy || !st.supported || !st.done} onClick=${exportFile}>${t('导出 ZIP')}<//>
           <${Button} variant="secondary" icon="link" disabled=${!RESOURCE_DOWNLOAD_URL}
-            title=${RESOURCE_DOWNLOAD_URL ? '前往我的动态下载资源包' : '下载链接待补充'}
-            onClick=${() => window.open(RESOURCE_DOWNLOAD_URL, '_blank', 'noopener,noreferrer')}>前往下载<//>
+            title=${RESOURCE_DOWNLOAD_URL ? t('前往我的动态下载资源包') : t('下载链接待补充')}
+            onClick=${() => window.open(RESOURCE_DOWNLOAD_URL, '_blank', 'noopener,noreferrer')}>${t('前往下载')}<//>
         </div>
       </section>
       <div class="resource-manager__maintenance">
-        <button type="button" class="res-link" disabled=${archiveBusy} onClick=${() => { void clearResources(); }}>清理缓存</button>
-        ${enabled ? html`<button type="button" class="res-link" onClick=${() => onChange(false)}>关闭预载</button>` : null}
-        <span>关闭预载会保留已缓存资源。</span>
+        <button type="button" class="res-link" disabled=${archiveBusy} onClick=${() => { void clearResources(); }}>${t('清理缓存')}</button>
+        ${enabled ? html`<button type="button" class="res-link" onClick=${() => onChange(false)}>${t('关闭预载')}</button>` : null}
+        <span>${t('关闭预载会保留已缓存资源。')}</span>
       </div>
     </div>
   <//>`;

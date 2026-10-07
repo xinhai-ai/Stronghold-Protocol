@@ -1,3 +1,4 @@
+// i18n-ignore-file: API summaries keep configured content and bilingual HTTP errors.
 // Read-only public HTTP APIs. Project only documented fields, never session ids or private match data.
 import { createHash } from 'node:crypto';
 import { DIFFICULTY_NAMES, MAX_SEATS } from '../shared/constants.js';

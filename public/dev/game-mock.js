@@ -394,6 +394,20 @@ function startCombat(phase) {
     pub.unite = leakMock ? { helpers: ['ai_2', 'p3'], leakers: ['p1', 'p4'] } : { helpers: ['p1', 'ai_2'], leakers: ['p3'] };
     if (leakMock) { leftOf('p1', 13); leftOf('p4', 3); pub.players[0].status = 'done'; pub.players[2].status = 'helping'; } else leftOf('p3', 12);
   }
+  // the result box after a 联防 (server settle → m.public.uniteResult, ui/gameLogic/phases.js uniteResultBox; GitHub #235):
+  // ?phase=SETTLE&variant=unite — you (p1) leaked and the helpers stopped every enemy: nobody paid → 全员无伤！;
+  // `unite,through` — 3 got through and you were charged 3 → 生命值减少 −3; `unite,through,helper` — you HELPED, a
+  // teammate leaked and paid → the official title alone (全员无伤！ would be false for that teammate); `unite,dead` — you
+  // were eliminated before the round, so `losses` (alive players only, like the server) does not list you → no box.
+  // Without `unite` the SETTLE view has no uniteResult: the round's own battle result box takes over (battleResultBox).
+  if (phase === PHASE.SETTLE && VARIANTS.has('unite')) {
+    const helpers = ['ai_2', 'p3'], leakers = ['p1', 'p4'];
+    pub.uniteResult = VARIANTS.has('through')
+      ? { through: 3, helpers, leakers, losses: { p1: 3, p4: 0, ai_2: 0, p3: 0 } }
+      : { through: 0, helpers, leakers, losses: { p1: 0, p4: 0, ai_2: 0, p3: 0 } };
+    if (VARIANTS.has('helper')) pub.uniteResult = { through: 3, helpers: ['p1', 'ai_2'], leakers: ['p3'], losses: { p1: 0, ai_2: 0, p3: 4, p4: 0 } };
+    if (VARIANTS.has('dead')) delete pub.uniteResult.losses.p1;
+  }
   const countKill = () => {
     if (phase !== PHASE.UNITE) return;
     const pid = leakMock ? 'p1' : 'p3';
@@ -438,7 +452,9 @@ function startCombat(phase) {
     for (const p of board.slice(0, 5)) {
       const c = data.lookup('chess', pick(S.pool).chessId);
       const r = boss ? p.row - 7 : p.row;
-      units.push({ id: id++, kind: 'op', side: 'ally', ownerId: 'ai_2', defId: c.chessId, name: c.name, tier: c.tier, golden: false, spine: c.charId, avatar: c.assets.avatar, x: 20 - p.col, y: r, facing: -1, maxHp: c.stats.maxHp });
+      // 联防: the second helper's board on the other half, shifted 8 columns (server unite.js); boss pairs: mirrored
+      const x = kind === 'unite' ? p.col + 8 : 20 - p.col;
+      units.push({ id: id++, kind: 'op', side: 'ally', ownerId: 'ai_2', defId: c.chessId, name: c.name, tier: c.tier, golden: false, spine: c.charId, avatar: c.assets.avatar, x, y: r, facing: kind === 'unite' ? 1 : -1, maxHp: c.stats.maxHp });
     }
   }
   const enemyKeys = S.priv.nextEnemies.map((e) => e.enemyKey);
@@ -448,7 +464,7 @@ function startCombat(phase) {
     const key = enemyKeys[i % enemyKeys.length];
     const e = data.lookup('enemies', key);
     const y = boss ? [2, 5, 3][i % 3] : [9, 12][i % 2];
-    const startX = boss ? (i % 2 ? 17 : 3) : 10;
+    const startX = boss ? (i % 2 ? 17 : 3) : kind === 'unite' ? 18 : 10; // escaped_multi: the right half's gates
     enemies.push({ id: id++, kind: 'enemy', side: 'enemy', ownerId: ME, defId: key, name: e?.name, spine: key, avatar: key, x: startX + rnd() * 0.3, y, facing: -1, maxHp: e?.stats?.maxHp || 3000, hp: e?.stats?.maxHp || 3000, spawnAt: i * 0.9, dir: boss ? (i % 2 ? -1 : 1) : -1, dead: false });
   }
   if (boss) {
@@ -456,7 +472,8 @@ function startCombat(phase) {
     const e = data.lookup('enemies', bossRec.enemyKey);
     enemies.push({ id: id++, kind: 'enemy', side: 'enemy', ownerId: ME, defId: bossRec.enemyKey, name: bossRec.name, spine: bossRec.enemyKey, avatar: bossRec.enemyKey, x: 10, y: 3, facing: -1, maxHp: e?.stats?.maxHp || 1e5, hp: (e?.stats?.maxHp || 1e5) * 0.62, spawnAt: 0, dir: 0, boss: true, dead: false });
   }
-  const field = { fieldId, kind, rect, stageId: pub.stageId, units: units.map((u) => ({ ...u })) };
+  // the 联防 field fights on its own map (server unite.js uniteStageId: 2 helpers → escaped_multi; GitHub #41)
+  const field = { fieldId, kind, rect, stageId: kind === 'unite' ? 'act1autochess_escaped_multi' : pub.stageId, units: units.map((u) => ({ ...u })) };
   store.patch('match', { field });
   const allyState = units.map((u) => ({ ...u, hp: u.maxHp * (0.55 + rnd() * 0.45), sp: rnd() * 20, spMax: 20 }));
   const t0 = performance.now();
@@ -681,7 +698,7 @@ async function mockRequest(t, f = {}) {
         const who = f.fieldId.replace(/^n:/, '');
         if (who !== ME) {
           const units = shuffle(S.pool).slice(0, 6).map((c, i) => ({ id: 900 + i, kind: 'op', side: 'ally', ownerId: who, defId: c.chessId, name: c.name, tier: c.tier, golden: i === 0, spine: c.charId, avatar: c.assets.avatar, x: [3, 4, 5, 7, 8, 5][i], y: [9, 9, 10, 11, 12, 12][i], facing: 1, maxHp: c.stats.maxHp }));
-          // like server/match/Match.js prepFieldMeta: a read-only prep board with THEIR coming enemies (the pen shows them)
+          // like server/match/match/views.js prepFieldMeta: a read-only prep board with THEIR coming enemies (the pen shows them)
           const theirs = S.priv.nextEnemies.filter((e) => e.source !== 'bounty').slice(0, 3).map((e) => ({ ...e, gate: 'upper', count: e.count + 1 }));
           store.patch('match', { field: { fieldId: f.fieldId, kind: 'normal', rect: { ...GEO.NORMAL_RECT }, stageId: pub.stageId, units, prep: true, nextEnemies: theirs } });
         }

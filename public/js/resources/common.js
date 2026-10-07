@@ -1,3 +1,4 @@
+import { N_ } from '../../../shared/i18n.js';
 // public/js/resources/common.js — shared pieces of the optional asset preload (docs/ASSETS.md「Preload」).
 //
 // No DOM and no Preact: the page (store.js / index.js), the Service Worker (service.js) and the Node tests all import
@@ -25,14 +26,14 @@ export const MANIFEST_URL = '/data/resource-manifest.json';
 export const SW_URL = '/resource-sw.js';
 
 export const RESOURCE_GROUPS = Object.freeze({
-  map: { name: '地图与棋盘', tier: TIER_ESSENTIAL },
-  character: { name: '干员与敌人图片', tier: TIER_ESSENTIAL },
-  spine: { name: 'Spine 模型与特效', tier: TIER_ESSENTIAL },
-  ui: { name: '界面、图标与字体', tier: TIER_ESSENTIAL },
-  voice: { name: '角色语音', tier: TIER_REST },
-  sfx: { name: '音效', tier: TIER_REST },
-  music: { name: '背景音乐', tier: TIER_REST },
-  other: { name: '玩法说明与其他资源', tier: TIER_REST },
+  map: { name: N_('地图与棋盘'), tier: TIER_ESSENTIAL },
+  character: { name: N_('干员与敌人图片'), tier: TIER_ESSENTIAL },
+  spine: { name: N_('Spine 模型与特效'), tier: TIER_ESSENTIAL },
+  ui: { name: N_('界面、图标与字体'), tier: TIER_ESSENTIAL },
+  voice: { name: N_('角色语音'), tier: TIER_REST },
+  sfx: { name: N_('音效'), tier: TIER_REST },
+  music: { name: N_('背景音乐'), tier: TIER_REST },
+  other: { name: N_('玩法说明与其他资源'), tier: TIER_REST },
 });
 
 export function resourceGroup(file) {

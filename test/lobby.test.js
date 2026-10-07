@@ -1659,7 +1659,7 @@ describe('match result replay', () => {
     await back.terminate();
     const again = await pool.connect();
     await again.hello('Guest', guest.token);
-    await again.expectNone(null, (m) => !['welcome', 'site.announcement'].includes(m.t), 300);
+      await again.expectNone(null, (m) => !['welcome', 'site.announcement', 'site.popupAnnouncement', 'presence'].includes(m.t), 300);
   });
 
   test('real Match: a human who is away when the match finishes gets its m.result on resume', async () => {

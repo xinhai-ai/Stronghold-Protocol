@@ -1,5 +1,6 @@
-// test/build.test.js — the served-runtime build tag (server/index.js computeBuildTag / buildTag): the signal that lets
-// an already-open page notice a deploy (public/js/ui/buildGuard.js; /healthz `build`).
+// test/build.test.js — the served-runtime build tag (server/http/buildTag.js computeBuildTag / buildTag, exported by
+// server/index.js): the signal that lets an already-open page notice a deploy (public/js/ui/buildGuard.js;
+// /healthz `build`).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

@@ -38,6 +38,9 @@
 .uthumb.is-golden::after { content: ''; position: absolute; inset: -2px; border: 1px solid rgba(255, 198, 0, .7); pointer-events: none; clip-path: inherit; }
 .uthumb.is-dim .uthumb__art img { filter: grayscale(.85) brightness(.55); }
 .uthumb__tag { position: absolute; right: 0; bottom: 0; font-size: calc(var(--ut) * .17); line-height: 1.2; padding: 0 .03rem; background: #a9c3d8; color: #0b1520; font-weight: 700; }
+/* 0.2.0 补位: the small 「替补」 mark of a stand-in's thumbnail (the result lineup, bond popup members — screens/result.js,
+   ui/bondStrip.js) */
+.uthumb__si { position: absolute; right: 0; bottom: 0; font-size: max(calc(var(--ut) * .2), 8px); line-height: 1.2; padding: 0 .03rem; background: var(--ice); color: var(--ice-900); font-weight: 700; opacity: .9; pointer-events: none; }
 
 .bglyph { display: inline-grid; place-items: center; width: .24rem; height: .24rem; flex: none; }
 .bglyph img { width: 100%; height: 100%; object-fit: contain; filter: brightness(0) invert(.86) sepia(.4) hue-rotate(110deg) saturate(2.5); }
@@ -82,6 +85,8 @@
 .dhead__chips { display: flex; align-items: center; gap: .08rem; flex-wrap: wrap; }
 .dhead__name { font-size: .32rem; font-weight: 900; letter-spacing: .04em; line-height: 1.2; }
 .dhead__en { font-family: var(--font-display); font-size: .12rem; letter-spacing: .2em; color: var(--text-dim); text-transform: uppercase; }
+/* 0.2.0 补位: the replaced operator under a stand-in's name (「银灰的替补」, ui/detailPanel.js ChessDetail) */
+.dhead__for { display: block; font-size: max(.13rem, 9px); letter-spacing: .04em; color: var(--ice); }
 .dhead__flavor { font-size: .13rem; color: var(--text-lo); font-style: italic; }
 .dhead__class { display: flex; align-items: center; gap: .06rem; flex-wrap: wrap; font-size: .15rem; color: var(--text-md); margin-top: .06rem; }
 .dhead__class .sep { width: 1px; height: .16rem; background: var(--line-2); }
@@ -90,6 +95,9 @@
 .dtag-elite, .dtag-token, .dtag-kind { font-size: .13rem; font-weight: 700; padding: .01rem .08rem; letter-spacing: .08em; }
 .dtag-elite { background: var(--gold); color: #1d1400; }
 .dtag-token { background: #a9c3d8; color: #0b1520; }
+/* 0.2.0 自选编队 / 补位: the card of a 自选 piece, of a chess fielded as its stand-in (ui/detailPanel.js ChessDetail) */
+.dtag-diy { font-size: .13rem; font-weight: 700; padding: .01rem .08rem; letter-spacing: .08em; background: var(--mint-500); color: var(--text-on-mint); }
+.dtag-standin { font-size: .13rem; font-weight: 700; padding: .01rem .08rem; letter-spacing: .08em; background: var(--ice); color: var(--ice-900); }
 .dtag-kind { border: 1px solid var(--line-2); color: var(--text-lo); font-weight: 500; }
 .drank { font-size: .13rem; font-weight: 700; padding: .01rem .08rem; }
 .drank--normal { background: var(--bg-4); color: var(--text-md); }
@@ -362,6 +370,10 @@ button.bpop__harmony:hover { border-style: solid; color: #fff; }
 .ibond__ban .icon { width: .12rem; height: .12rem; }
 .ibanned { display: flex; flex-wrap: wrap; gap: .06rem; }
 .ibanned__one { padding: 0; background: none; border: 0; }
+/* 0.2.0: the player's own 自选 pieces out of the shop this match (ui/matchInfo.js DiyBannedLine) */
+.idiybanned { margin: .08rem 0 0; font-size: .13rem; line-height: 1.5; }
+.idiybanned .diybanned__tag { display: inline-block; margin-right: .05rem; padding: 0 .05rem; font-size: .11rem; font-weight: 700;
+  background: var(--mint-500); color: var(--text-on-mint); }
 
 /* ---- 机变 overlay ---- */
 .spov { position: absolute; inset: 0 0 0 2.8rem; z-index: 20; }
@@ -551,6 +563,13 @@ button.bpop__harmony:hover { border-style: solid; color: #fff; }
 .tempnote__rule { font-size: .12rem; line-height: 1.45; color: rgba(255, 220, 214, .88); }
 @media (prefers-reduced-motion: reduce) { .tempnote__frame polygon, .tempnote__label { animation: none; } }
 .sp-reduced-motion .tempnote__frame polygon, .sp-reduced-motion .tempnote__label { animation: none; }
+/* 0.2.0 补位: 「替补：X」 under the player's own prep pieces of a chess they do not own (screens/game/standInTags.js) */
+.sitags { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+.sitag { position: absolute; transform: translate(-50%, .02rem); pointer-events: none; white-space: nowrap; font-size: max(.12rem, 9px); font-weight: 700;
+  line-height: 1.35; padding: 0 .05rem; letter-spacing: .03em; background: var(--ice); color: var(--ice-900); box-shadow: 0 1px 3px rgba(0, 0, 0, .7); opacity: .92; }
+.sitag--board { background: #c2e3ff; }
+.sitag--diy { background: var(--mint-500); color: var(--text-on-mint); }
+.gm.is-dragging .sitags { display: none; }
 
 /* ---- underframe: the selection diamond of a tapped own piece (ui/underframe.js): 撤退 / 出售 +N / 销毁 ----
    It sits above every HUD panel (detail card z 9, bond popup, drawer, shop bar): only its buttons take pointer events,

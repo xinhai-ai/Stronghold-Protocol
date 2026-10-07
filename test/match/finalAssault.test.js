@@ -33,12 +33,6 @@ test('boss pool: solo × 1, co-op × 4 with alive / 4; shared and never negative
   assert.equal(bossPoolHp(fallback, 'boss_1', 2), gd.bossPoolHp('boss_1', 2), 'fallback also attenuates');
   assert.equal(bossPoolHp(new GameData(RAW, 'mode_single_abyss'), 'boss_5', 1), 3000000);
   assert.equal(bossPoolHp(new GameData(RAW, 'mode_single_funny'), 'boss_2', 1), 225000);
-  // the balance layer multiplies the pool (docs/BALANCE.md)
-  for (const modeId of ['mode_single_funny', 'mode_multi_hard']) {
-    const tuned = new GameData(DATA, modeId);
-    const raw = new GameData(RAW, modeId);
-    assert.equal(bossPoolHp(tuned, 'boss_2', 4), Math.max(1, Math.round(bossPoolHp(raw, 'boss_2', 4) * tuned.bossHpMul('boss_2'))));
-  }
   const pool = new SharedBossPool(100);
   assert.equal(pool.damage('a', 60), 60);
   assert.equal(pool.damage('b', 60), 40);

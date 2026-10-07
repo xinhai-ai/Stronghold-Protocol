@@ -222,7 +222,7 @@ test('generic text rules: 泡泡 stops attacking; 小满 sleeps ≤3 enemies onc
 });
 
 test('generic element: 塑心 charges add 85 % ATK of 凋亡 (apoptosis) damage to the gauge', () => {
-  // the generic kit's numbers (tier6.js has a hand-written 塑心 kit whose talent amplifies apoptosis in range)
+  // the generic kit's numbers (kits/ops/chess_char_6_09-cello.js is a hand-written 塑心 kit whose talent amplifies apoptosis in range)
   const h = makeBattle({ defs: { enemies: { enemy_dummy: dummy() } }, units: [{ chessId: 'chess_char_6_09_a', row: 10, col: 4 }], enemies: [{ key: 'enemy_dummy', pos: [10, 6] }], timeLimit: 60, content: 'generic' });
   const u = h.unit('chess_char_6_09_a');
   assert.ok(h.runUntil(() => u.skill.activations >= 1 && h.enemy('enemy_dummy').elem.apoptosis > 0, 40));

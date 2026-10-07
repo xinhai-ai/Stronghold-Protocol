@@ -122,7 +122,7 @@ test('built simulation retains operator kits and domain mechanics: same determin
   }
 });
 
-test('built simulation matches Node for 0.1.4 sleep, deploy skills and Egir devour mechanics', async () => {
+test('built simulation matches Node for sleep, Egir, 0.2.0 stand-ins and self-selected operator kits', async () => {
   const simulation = Object.values(manifest).find((m) => m.name === 'simulation');
   const namespaces = Object.values(await import(pathToFileURL(path.join(outDir, simulation.file)).href));
   const spec = namespaces.find((n) => typeof n?.createBattleFromSpec === 'function');
@@ -132,8 +132,10 @@ test('built simulation matches Node for 0.1.4 sleep, deploy skills and Egir devo
   const selected = [
     ...scenariosOf('roster').filter((sc) => ['roster-039', 'roster-042'].includes(sc.id)),
     ...scenariosOf('bonds').filter((sc) => sc.id === 'bond-egirShip-high'),
+    ...scenariosOf('standins').filter((sc) => ['standin-01', 'standin-09'].includes(sc.id)),
+    ...scenariosOf('diy').filter((sc) => ['diy-001', 'diy-019', 'diy-048', 'diy-100'].includes(sc.id)),
   ];
-  assert.equal(selected.length, 3, 'representative upstream scenarios exist');
+  assert.equal(selected.length, 9, 'representative upstream scenarios exist');
   for (const sc of selected) {
     const input = nativeSpec.buildBattleSpec({ ...sc, battleId: sc.id, fieldId: sc.fieldId ?? 'g', content: 'full' });
     const options = { quiet: true, recordEvents: true };
@@ -159,4 +161,8 @@ test('build detection follows built files and separately served worker modules',
   const updated = computeBuildTag(temp);
   await fs.writeFile(path.join(publicDir, 'resource-sw.js'), '// new worker');
   assert.notEqual(computeBuildTag(temp), updated);
+  const workerUpdated = computeBuildTag(temp);
+  await fs.mkdir(path.join(temp, 'shared'), { recursive: true });
+  await fs.writeFile(path.join(temp, 'shared/i18n.js'), '// resource categories used by the worker');
+  assert.notEqual(computeBuildTag(temp), workerUpdated);
 });

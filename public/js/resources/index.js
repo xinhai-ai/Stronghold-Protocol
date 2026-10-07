@@ -11,6 +11,7 @@
 
 import { CACHE_PREFIX, MANIFEST_URL, SW_URL, TIER_ESSENTIAL, TIER_REST, checkAbort, formatBytes, resourceGroup, validateManifest } from './common.js';
 import { ResourceStore } from './store.js';
+import { t } from '../../../shared/i18n.js';
 
 /** @type {any} */
 const state = {
@@ -107,9 +108,9 @@ const selectionComplete = (s) => (s.tier1Present >= (s.tier1Wanted ?? s.tier1))
 
 /** Why this browser cannot keep the resources (empty ⇒ it can). */
 export function unsupportedReason() {
-  if (!globalThis.isSecureContext) return '需要 HTTPS（或 localhost）才能预载资源';
-  if (!globalThis.caches) return '当前浏览器不支持 Cache Storage';
-  if (!globalThis.navigator?.serviceWorker) return '当前浏览器不支持 Service Worker';
+  if (!globalThis.isSecureContext) return t('需要 HTTPS（或 localhost）才能预载资源');
+  if (!globalThis.caches) return t('当前浏览器不支持 Cache Storage');
+  if (!globalThis.navigator?.serviceWorker) return t('当前浏览器不支持 Service Worker');
   return '';
 }
 
@@ -127,9 +128,9 @@ export function resourceContext() {
       // Revalidate the HTTP cache on every page load. On a wire-level 304 the browser supplies the cached JSON body.
       res = await fetch(MANIFEST_URL, { cache: 'no-cache', signal });
     } catch (err) {
-      return { error: `无法读取资源清单：${err?.message || err}` };
+      return { error: t('无法读取资源清单：{0}', { 0: err?.message || err }) };
     }
-    if (!res.ok) return { error: `无法读取资源清单：HTTP ${res.status}` };
+    if (!res.ok) return { error: t('无法读取资源清单：HTTP {status}', { status: res.status }) };
     let manifest;
     try {
       manifest = validateManifest(await res.json());
@@ -178,7 +179,7 @@ export async function syncResources(enabled, includeOptional = optional) {
   if (!enabled) {
     controller?.abort();
     archiveController?.abort();
-    set({ phase: state.complete ? 'ready' : 'paused', message: state.complete ? '预载已停止；已保存的资源保留，可继续下载或清理缓存。' : '已停止预载。' });
+    set({ phase: state.complete ? 'ready' : 'paused', message: state.complete ? t('预载已停止；已保存的资源保留，可继续下载或清理缓存。') : t('已停止预载。') });
     return;
   }
   if (changed) controller?.abort();
@@ -219,7 +220,7 @@ function watchOtherTab(store) {
   }
   return store.status().then((st) => set({
     ...counters(st), phase: 'foreign', error: false,
-    message: st.complete ? '资源已全部预载完成。' : '另一个标签页正在预载⋯回到这个标签页时会自动继续。',
+    message: st.complete ? t('资源已全部预载完成。') : t('另一个标签页正在预载⋯回到这个标签页时会自动继续。'),
   }));
 }
 
@@ -233,11 +234,11 @@ function start() {
 }
 
 async function startDownload(signal) {
-  set({ phase: 'checking', message: '正在检查已保存的资源…', error: false });
+  set({ phase: 'checking', message: t('正在检查已保存的资源…'), error: false });
   const ctx = await resourceContext();
   if (!current || signal.aborted) { set({ phase: 'paused' }); return; }
   if (ctx.error || ctx.unsupported || ctx.empty) {
-    const message = ctx.error || ctx.unsupported || '服务器没有可预载的资源';
+    const message = ctx.error || ctx.unsupported || t('服务器没有可预载的资源');
     set({ phase: 'error', message, error: true, supported: !ctx.unsupported });
     if (ctx.unsupported) void dropWorker();
     return;
@@ -248,16 +249,16 @@ async function startDownload(signal) {
   // does NOT stop the download (the page fills Cache Storage itself) — it only means nothing can be served offline.
   ensureWorker().catch((err) => {
     console.warn('[resources] service worker not registered — the cached assets cannot be served without the network', err);
-    set({ worker: `预载服务未启用（${err?.message || err}），资源仍会下载，但不会从本机缓存读取。` });
+    set({ worker: t('预载服务未启用（{0}），资源仍会下载，但不会从本机缓存读取。', { 0: err?.message || err }) });
   });
   const before = await store.status();
   if (!current || signal.aborted) { set({ phase: 'paused' }); return; }
   const ready = selectionComplete(before);
-  set({ ...counters(before), phase: ready ? 'ready' : 'download', message: ready ? optional ? '资源已全部预载完成。' : '必备资源已预载完成；可选资源按需加载。' : '' });
+  set({ ...counters(before), phase: ready ? 'ready' : 'download', message: ready ? optional ? t('资源已全部预载完成。') : t('必备资源已预载完成；可选资源按需加载。') : '' });
   if (ready) { if (before.complete) await withDownloadLock(() => store.prune()); return; }
   const onProgress = (p) => {
     // "整理" instead of "下载" when the files came out of an older cache: nothing is being fetched (store.js 的迁移).
-    const message = p.adopted > 0 && p.downloaded === 0 ? '正在整理已保存的资源（无需重新下载）…' : '';
+    const message = p.adopted > 0 && p.downloaded === 0 ? t('正在整理已保存的资源（无需重新下载）…') : '';
     set({ ...counters(p), phase: 'download', failed: p.failed, error: false, message });
   };
   try {
@@ -274,19 +275,19 @@ async function startDownload(signal) {
       ...counters(after),
       phase: 'ready',
       error: false,
-      message: !optional && selectionComplete(after) ? '必备资源已预载完成；可选资源按需加载。' : after.complete
-        ? `资源已全部预载完成（${formatBytes(after.bytes)}）。`
-        : `已保存 ${after.count}/${after.total} 个文件；未完成的会在下次开启时重试。`,
+      message: !optional && selectionComplete(after) ? t('必备资源已预载完成；可选资源按需加载。') : after.complete
+        ? t('资源已全部预载完成（{0}）。', { 0: formatBytes(after.bytes) })
+        : t('已保存 {count}/{total} 个文件；未完成的会在下次开启时重试。', { count: after.count, total: after.total }),
     });
   } catch (err) {
     if (err?.name === 'AbortError') {
       const now = await store.status().catch(() => null);
-      set({ ...(now ? counters(now) : {}), phase: 'paused', message: current ? '已暂停，可继续下载或清理缓存。' : '已停止预载。' });
+      set({ ...(now ? counters(now) : {}), phase: 'paused', message: current ? t('已暂停，可继续下载或清理缓存。') : t('已停止预载。') });
       return;
     }
     const message = err?.name === 'QuotaExceededError' || /quota|空间不足/i.test(String(err?.message || ''))
-      ? '浏览器存储空间不足：已保存的文件保留，可清理缓存后重试。'
-      : `预载失败：${err?.message || err}`;
+      ? t('浏览器存储空间不足：已保存的文件保留，可清理缓存后重试。')
+      : t('预载失败：{0}', { 0: err?.message || err });
     const now = await store.status().catch(() => null);
     set({ ...(now ? counters(now) : {}), phase: 'error', message, error: true });
   }
@@ -297,7 +298,7 @@ export function pauseResources() {
   archiveController?.abort();
   if (controller) {
     controller.abort();
-    set({ message: '正在暂停…' });
+    set({ message: t('正在暂停…') });
   }
 }
 
@@ -317,7 +318,7 @@ function transferArchive(kind, file) {
   archiveController = new AbortController();
   const signal = archiveController.signal;
   set({ archive: kind, archivePhase: '', archivePercent: 0, archiveGroup: '',
-    message: kind === 'import' ? '正在准备校验资源包…' : '正在准备导出资源包…', error: false });
+    message: kind === 'import' ? t('正在准备校验资源包…') : t('正在准备导出资源包…'), error: false });
   transferPromise = (async () => {
     if (activeRun) await activeRun;
     const ctx = await resourceContext();
@@ -340,7 +341,7 @@ function transferArchive(kind, file) {
         const status = p.getStatus?.();
         set({ ...(status ? counters(status) : {}), archivePhase: p.phase, archivePercent: percent,
           archiveGroup: p.file ? resourceGroup(p.file) : '',
-          message: `${p.phase === 'export' ? '正在导出' : p.phase === 'verify' ? '正在校验' : '正在导入'}资源包：${percent}%` });
+          message: t('{0}资源包：{percent}%', { 0: p.phase === 'export' ? t('正在导出') : p.phase === 'verify' ? t('正在校验') : t('正在导入'), percent }) });
       };
       return kind === 'import'
         ? archive.importResourceZip(ctx.store, file, { signal, onProgress })
@@ -352,10 +353,10 @@ function transferArchive(kind, file) {
     const missing = status.tier1Wanted - status.tier1Present + (optional ? status.tier2Wanted - status.tier2Present : 0);
     set({ ...counters(status), failed: 0, phase: selectionComplete(status) ? 'ready' : 'paused',
       message: kind === 'export'
-        ? `已导出 ${outcome.count} 个资源文件。`
-        : `已导入 ${outcome.imported} 个资源文件，跳过 ${outcome.skippedPackage} 个不适用的资源；${missing === 0 ? '所选资源已齐全。' : `所选资源还需下载 ${missing} 个文件。`}` });
+        ? t('已导出 {count} 个资源文件。', { count: outcome.count })
+        : t('已导入 {imported} 个资源文件，跳过 {skippedPackage} 个不适用的资源；{2}', { imported: outcome.imported, skippedPackage: outcome.skippedPackage, 2: missing === 0 ? t('所选资源已齐全。') : t('所选资源还需下载 {missing} 个文件。', { missing }) }) });
     if (kind === 'import') {
-      await ensureWorker().catch((err) => set({ worker: `预载服务未启用（${err?.message || err}）` }));
+      await ensureWorker().catch((err) => set({ worker: t('预载服务未启用（{0}）', { 0: err?.message || err }) }));
     }
     checkAbort(signal);
     return outcome;
@@ -364,9 +365,9 @@ function transferArchive(kind, file) {
     const status = await ctx.store?.status().catch(() => null);
     const aborted = err?.name === 'AbortError';
     set({ ...(status ? counters(status) : {}), phase: aborted ? 'paused' : 'error', error: !aborted,
-      message: aborted ? '资源包处理已取消，已保存的资源保留。'
-        : /quota|空间不足/i.test(String(err?.message || '')) ? '浏览器存储空间不足，已保存的资源保留，可清理后重试。'
-          : `资源包${kind === 'import' ? '导入' : '导出'}失败：${err?.message || err}` });
+      message: aborted ? t('资源包处理已取消，已保存的资源保留。')
+        : /quota|空间不足/i.test(String(err?.message || '')) ? t('浏览器存储空间不足，已保存的资源保留，可清理后重试。')
+          : t('资源包{0}失败：{1}', { 0: kind === 'import' ? t('导入') : t('导出'), 1: err?.message || err }) });
     throw err;
   }).finally(() => {
     archiveController = null;
@@ -398,14 +399,14 @@ export async function clearResources() {
     return { busy: false };
   });
   if (outcome.busy) {
-    set({ message: '另一个标签页正在处理资源，请暂停后再清理。' });
+    set({ message: t('另一个标签页正在处理资源，请暂停后再清理。') });
     return;
   }
   if (!current) await dropWorker();
   set({
     done: 0, tier1Done: 0, tier2Done: 0, bytes: 0, failed: 0, complete: false, error: false,
     phase: current ? 'paused' : 'off',
-    message: '已清理预载资源缓存。',
+    message: t('已清理预载资源缓存。'),
     selectionComplete: false,
     groups: state.groups.map((g) => ({ ...g, present: 0, bytes: 0 })),
   });
@@ -413,10 +414,10 @@ export async function clearResources() {
 
 /** Opening the manager checks the cache without starting network asset downloads. */
 export async function inspectResources() {
-  if (!activeRun && !transferPromise) set({ phase: 'checking', error: false, message: '正在检查已保存的资源…' });
+  if (!activeRun && !transferPromise) set({ phase: 'checking', error: false, message: t('正在检查已保存的资源…') });
   const ctx = await resourceContext();
   if (!ctx.store) {
-    set({ phase: 'error', supported: !ctx.unsupported, error: true, message: ctx.error || ctx.unsupported || '服务器没有可预载的资源' });
+    set({ phase: 'error', supported: !ctx.unsupported, error: true, message: ctx.error || ctx.unsupported || t('服务器没有可预载的资源') });
     // A later open can retry a temporarily unavailable manifest.
     contextPromise = null;
     return;
@@ -426,6 +427,6 @@ export async function inspectResources() {
     set({ ...counters(status), version: ctx.manifest.version, supported: true,
       ...(!activeRun && !transferPromise ? { phase: selectionComplete(status) ? 'ready' : 'paused', message: '', error: false } : {}) });
   } catch (err) {
-    set({ phase: 'error', error: true, message: `无法读取本机资源缓存：${err?.message || err}` });
+    set({ phase: 'error', error: true, message: t('无法读取本机资源缓存：{0}', { 0: err?.message || err }) });
   }
 }

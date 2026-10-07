@@ -336,7 +336,7 @@ export function ShopBar({ priv, editable, collapsed, onCollapse, onBuy, onLevel,
       </button>
       <button type="button" class="toolbtn toolbtn--amber" disabled=${!!refReason} onClick=${onRefresh} title=${refReason || t('刷新商店 · {0}', { 0: shortcutLabel(shortcuts, 'refresh') })}>
         <${Img} src=${uiUrl(data.get('assets'), 'shopPanel/refresh_icon')} class="toolbtn__img" fallback=${html`<${Icon} name="refresh" />`} />
-        <span${t('刷新')}新</span>
+        <span>${t('刷新')}</span>
         ${free > 0 ? html`<span class="toolbtn__free">${t('免费 ×{free}', { free })}</span>` : html`<${HexBadge} value=${shop.refreshPrice ?? 1} tone=${refReason ? 'dark' : 'gold'} size="sm" />`}
         <kbd>${shortcutLabel(shortcuts, 'refresh')}</kbd>
       </button>

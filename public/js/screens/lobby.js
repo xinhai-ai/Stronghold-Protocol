@@ -252,7 +252,7 @@ function MatchQueuePanel({ queue, onCancel }) {
   return html`<section class="match-queue brackets" aria-live="polite">
     <div class="match-queue__scan" aria-hidden="true"></div>
     <div class="match-queue__head"><${Icon} name="signal" /><div><${MicroLabel} tone="mint">ALLIANCE MATCHMAKING<//><strong>${t('正在寻找同盟队友')}</strong></div><span class="match-queue__count num">${queue.count}/${queue.capacity}</span></div>
-    <div class="match-queue__meta"><span${t('匹配剩余')}余 <b class="num">${left}s</b></span><span>${queue.fillBots ? t('倒计时结束后由 AI 补齐空位') : t('仅匹配真实队友')}</span></div>
+    <div class="match-queue__meta"><span>${t('匹配剩余')} <b class="num">${left}s</b></span><span>${queue.fillBots ? t('倒计时结束后由 AI 补齐空位') : t('仅匹配真实队友')}</span></div>
     <${Button} variant="danger" size="sm" icon="close" onClick=${onCancel}>${t('退出匹配')}<//>
   </section>`;
 }

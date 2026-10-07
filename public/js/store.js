@@ -12,7 +12,7 @@
 //                 locally (the live LP of ui/hud.js liveLp, user playtest #3 item 2). Under client-side combat `field`
 //                 is published by the runner (the m.field shape of the battle on screen, `local: true`).
 //   ticker      – recent `m.ticker` lines, emotes – recent `m.emote` events
-//   announcement – active site-wide temporary notice (absolute server start / end), independent of match resets
+//   announcement – active scrolling notice; popupAnnouncement – independently scheduled dialog notice
 //   clock       – { offset, rtt } server clock correction: serverNow ≈ Date.now() + offset
 //   presence    – { online, serverNow } authenticated WebSocket player count
 //   ui          – small bits of local UI state shared between screens, including matchmaking status
@@ -84,6 +84,7 @@ export const initialState = Object.freeze({
   ticker: [],
   emotes: [],
   announcement: null,
+  popupAnnouncement: null,
   clock: { offset: 0, rtt: null, synced: false },
   presence: { online: null, serverNow: null },
   ui: { pendingJoin: null, restoring: false, matchQueue: null, buildStale: false },

@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
 import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, OnlineCount, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
+import { AnnouncementButton } from '../ui/announcement.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
 import { LoadoutButton } from './loadout.js';
@@ -324,14 +325,17 @@ export function LobbyScreen() {
     <header class="topbar">
       <div class="topbar__left">
         <${Button} variant="ghost" size="sm" icon="chevronLeft" onClick=${backToTitle} title="返回标题">返回<//>
-        <${PingPill} ms=${conn.ping} online=${online} />
+        <div class="connection-status">
+          <${PingPill} ms=${conn.ping} online=${online} />
+          <${OnlineCount} online=${presence.online} />
+        </div>
       </div>
       <div class="topbar__center">
         <${MicroLabel} tone="mint">SIMULATION PROTOCOL SELECT<//>
         <h1 class="topbar__title">选择模拟协议</h1>
       </div>
       <div class="topbar__right">
-        <${OnlineCount} online=${presence.online} />
+        <${AnnouncementButton} />
         <${GuideButton} class="lobby-guide" variant="secondary" />
         <${LoadoutButton} from="lobby" size="sm" class="lobby-loadout" />
         <div class="me-chip">

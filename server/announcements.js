@@ -15,7 +15,8 @@ export class Announcements {
     this.pollMs = pollMs;
     this.rows = [];
     this.current = null;
-    this.key = 'null';
+    this.popupCurrent = null;
+    this.key = '[null,null]';
     this.raw = null;
     this.loaded = false;
     this.lastError = null;
@@ -85,8 +86,10 @@ export class Announcements {
     if (this.stopped) return;
     const now = this.now();
     const current = activeAnnouncement(this.rows, now);
-    const key = JSON.stringify(current);
+    const popupCurrent = activeAnnouncement(this.rows, now, 'popup');
+    const key = JSON.stringify([current, popupCurrent]);
     this.current = current;
+    this.popupCurrent = popupCurrent;
     if (key !== this.key) {
       this.key = key;
       try { this.broadcast(this.message()); } catch (err) { this.log.error('[announcements] broadcast failed', err); }
@@ -105,8 +108,9 @@ export class Announcements {
     }
   }
 
-  message() { return { t: 'site.announcement', serverNow: this.now(), announcement: this.current }; }
-  stats() { return { configured: !!this.file, loaded: this.loaded, entries: this.rows.length, activeId: this.current?.id || null, configError: this.lastError }; }
+  message() { return { t: 'site.announcement', serverNow: this.now(), announcement: this.current, popupAnnouncement: this.popupCurrent }; }
+  stats() { return { configured: !!this.file, loaded: this.loaded, entries: this.rows.length,
+    activeId: this.current?.id || null, popupActiveId: this.popupCurrent?.id || null, configError: this.lastError }; }
 
   async stop() {
     this.stopped = true;

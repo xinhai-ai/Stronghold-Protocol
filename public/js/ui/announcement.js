@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
-import { html, Icon, useTicker } from './components.js';
-import { useStore } from '../store.js';
-import { loadPref, savePref } from '../store.js';
+import { html, Icon, Button, Modal, useTicker } from './components.js';
+import { createStore, store, useStore, loadPref, savePref } from '../store.js';
 import { net } from '../net.js';
 import { announcementLive } from '../../../shared/announcements.js';
 
@@ -12,7 +11,75 @@ export function announcementScroll(viewport, textWidth) {
 }
 
 export function announcementDismissKey(notice) {
-  return notice ? `${notice.id}:${notice.startAt}:${notice.endAt}:${notice.text}` : '';
+  if (!notice) return '';
+  const key = `${notice.type === 'popup' ? 'popup:' : ''}${notice.id}:${notice.startAt}:${notice.endAt}:${notice.text}`;
+  return notice.title !== undefined || notice.url !== undefined || notice.autoPopup !== undefined
+    ? `${key}:${JSON.stringify([notice.title, notice.url, notice.autoPopup])}` : key;
+}
+
+export const announcementUi = createStore({ open: false, automatic: false, noticeKey: '' });
+export const closeAnnouncement = () => announcementUi.set({ open: false, automatic: false, noticeKey: '' });
+let popupMemory = [];
+
+function popupSeen() {
+  const saved = loadPref('announcementPopupsSeen', popupMemory);
+  return Array.isArray(saved) ? saved.filter((key) => typeof key === 'string').slice(-100) : [];
+}
+
+function rememberPopup(key) {
+  popupMemory = [...popupSeen().filter((seen) => seen !== key), key].slice(-100);
+  savePref('announcementPopupsSeen', popupMemory);
+}
+
+export function openAnnouncement() {
+  const notice = store.get().popupAnnouncement;
+  if (announcementLive(notice, net.serverNow())) rememberPopup(announcementDismissKey(notice));
+  announcementUi.set({ open: true, automatic: false, noticeKey: '' });
+}
+
+/** Closing or reconnecting never reopens the same version; expired automatic dialogs close themselves. */
+export function syncAnnouncementPopup(notice, now) {
+  if (notice?.type !== 'popup' || !announcementLive(notice, now)) {
+    if (announcementUi.get().automatic) closeAnnouncement();
+    return;
+  }
+  const key = announcementDismissKey(notice);
+  if (announcementUi.get().automatic && announcementUi.get().noticeKey !== key) closeAnnouncement();
+  if (notice.autoPopup === true && !popupSeen().includes(key)) {
+    rememberPopup(key);
+    announcementUi.set({ open: true, automatic: true, noticeKey: key });
+  }
+}
+
+export function AnnouncementButton({ class: cls, variant = 'secondary', size = 'sm', onClick } = {}) {
+  return html`<${Button} variant=${variant} size=${size} icon="info" class=${cls}
+    aria-haspopup="dialog" title="公告" onClick=${() => { onClick?.(); openAnnouncement(); }}>公告<//>`;
+}
+
+export function AnnouncementContent({ notice }) {
+  if (!notice) return html`<p class="modal__text">暂无公告</p>`;
+  return html`<div class="announcement-content">
+    <p class="modal__text">${notice.text}</p>
+    ${notice.url ? html`<a class="announcement-content__link" href=${notice.url} target="_blank" rel="noopener noreferrer">
+      <${Icon} name="link" />查看详情<span class="announcement-content__url">${notice.url}</span>
+    </a>` : null}
+  </div>`;
+}
+
+export function AnnouncementHost() {
+  const notice = useStore((s) => s.popupAnnouncement);
+  useStore((s) => s.clock.offset);
+  const { open } = useStore((s) => s, Object.is, announcementUi);
+  const now = net.serverNow();
+  useTicker(notice && now < notice.endAt ? 250 : 0);
+  const live = announcementLive(notice, now);
+  const key = announcementDismissKey(notice);
+  useEffect(() => { syncAnnouncementPopup(notice, net.serverNow()); }, [key, live]);
+  return html`<${Modal} open=${open} title=${live ? notice.title || '公告' : '公告'} micro="ANNOUNCEMENT"
+    class="announcement-modal" width="min(7.4rem, 94vw)" onClose=${closeAnnouncement}
+    actions=${html`<${Button} variant="primary" icon="close" data-autofocus onClick=${closeAnnouncement}>关闭<//>`}>
+    <${AnnouncementContent} notice=${live ? notice : null} />
+  <//>`;
 }
 
 export function AnnouncementBanner() {

@@ -30,7 +30,7 @@ import { render } from '../vendor/preact.module.js';
 import { useErrorBoundary } from '../vendor/hooks.module.js';
 import { html, UiHosts, Button, MicroLabel, closeAllDialogs } from './ui/components.js';
 import { ConnectionBanner } from './ui/connBanner.js';
-import { AnnouncementBanner } from './ui/announcement.js';
+import { AnnouncementBanner, AnnouncementHost } from './ui/announcement.js';
 import { announcementFromMessage } from '../../shared/announcements.js';
 import { ToastHost, toast, toastError, describeError } from './ui/toasts.js';
 import { net, identity, NetError } from './net.js';
@@ -209,7 +209,8 @@ function wireNet() {
     if (!Number.isInteger(msg.online) || msg.online < 0) return;
     store.set({ presence: { online: msg.online, serverNow: Number.isFinite(msg.serverNow) ? msg.serverNow : null } });
   });
-  net.on('site.announcement', (msg) => store.set({ announcement: announcementFromMessage(msg) }));
+  net.on('site.announcement', (msg) => store.set({ announcement: announcementFromMessage(msg),
+    popupAnnouncement: announcementFromMessage(msg, 'popup') }));
   net.on('helloError', (err) => toastError(err));
   net.on('replaced', () => toast('该身份已在其他页面登录，本页已断开', 'warn', { ttl: 6000 }));
   net.on('unhandledError', (err) => toastError(err));
@@ -290,6 +291,7 @@ function App() {
     ${error ? html`<${ScreenCrashed} error=${error} reset=${resetError} />` : html`<${Screen} key=${route} />`}
     <${ConnectionBanner} />
     <${AnnouncementBanner} />
+    <${AnnouncementHost} />
     <${ToastHost} />
     <${UiHosts} />
     <${GuideHost} />

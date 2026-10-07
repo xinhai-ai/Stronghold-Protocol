@@ -18,6 +18,7 @@ import {
 import { toast, toastError } from '../ui/toasts.js';
 import { copyText } from '../ui/clipboard.js';
 import { GuideButton } from '../ui/guide.js';
+import { AnnouncementButton } from '../ui/announcement.js';
 import { LoadoutButton } from './loadout.js';
 import { net } from '../net.js';
 import { store, useStore, shallowEqual, emptyMatch, isSpectating, serverNow } from '../store.js';
@@ -319,8 +320,11 @@ export function RoomScreen() {
           <${Button} variant="danger" size="lg" square=${true} icon="exit" loading=${busy === 'leave'} onClick=${leave} aria-label="离开同盟" />
         <//>
         <div class="room-ping">
-          <${PingPill} ms=${conn.ping} online=${online} />
-          <${MicroLabel}>当前延迟<//>
+          <div class="connection-status">
+            <${PingPill} ms=${conn.ping} online=${online} />
+            <${OnlineCount} online=${presence.online} />
+          </div>
+          <${MicroLabel}>连接状态<//>
         </div>
         <${GuideButton} class="room-guide" variant="secondary" />
       </div>
@@ -329,7 +333,7 @@ export function RoomScreen() {
         <h1 class="topbar__title">${coop ? '同盟模拟' : '独立模拟'}<span class="topbar__sep"></span><${DifficultyTag} difficulty=${room.difficulty} size="lg" /></h1>
       </div>
       <div class="topbar__right">
-        <${OnlineCount} online=${presence.online} />
+        <${AnnouncementButton} />
         ${coop ? html`<${InviteBox} code=${room.code} name=${me.name} difficulty=${room.difficulty} />` : html`<div class="solo-note"><${MicroLabel}>SINGLE OPERATOR<//><span>仅限 1 名博士</span></div>`}
       </div>
     </header>

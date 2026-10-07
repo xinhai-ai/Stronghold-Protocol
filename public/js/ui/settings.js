@@ -11,6 +11,7 @@ import { openGuide } from './guide.js';
 import { detectFeatures } from './device.js';
 import { ResourceRow } from './resourcePanel.js';
 import { FRAME_RATES } from '../frameRate.js';
+import { AnnouncementButton } from './announcement.js';
 
 /** Settings store: { bgm, sfx, voice, muted, damageNumbers, quality, fpsLimit, preload }. */
 export const settingsStore = createStore(sanitizeSettings(loadPref('settings', null)));
@@ -62,7 +63,8 @@ export function SettingsModal({ open, onClose }) {
   const [touchUi] = useState(() => detectFeatures().coarse && !detectFeatures().fine);
   const [shortcutOpen, setShortcutOpen] = useState(false);
   return html`<${Modal} open=${open} onClose=${onClose} title="设置" micro="SETTINGS" width="7.4rem"
-    actions=${html`<${Button} variant="secondary" icon="book" class="set-guide" onClick=${() => openGuide(0)}>玩法说明<//>
+    actions=${html`<${AnnouncementButton} onClick=${onClose} />
+      <${Button} variant="secondary" icon="book" class="set-guide" onClick=${() => openGuide(0)}>玩法说明<//>
       <${Button} variant="primary" icon="check" onClick=${onClose}>完成<//>`}>
     <div class="set-list">
       <${Slider} label="背景音乐" micro="BGM" icon="play" value=${s.bgm} onInput=${(v) => updateSettings({ bgm: v })} />

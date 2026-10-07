@@ -68,7 +68,7 @@
 
 ## 公告读取
 
-`GET /api/announcement`、`HEAD /api/announcement`。有当前有效公告时返回 200：
+滚动公告使用 `GET /api/announcement`、`HEAD /api/announcement`，保持原接口行为。弹窗公告使用独立的 `GET /api/popup-announcement`、`HEAD /api/popup-announcement`，读取 `type: "popup"` 条目。两类各自选择当前有效内容，互不竞争。两个接口都使用以下响应结构，有当前有效公告时返回 200：
 
 ```json
 {
@@ -82,9 +82,9 @@
 }
 ```
 
-`id` 是 `JSON.stringify({ title, text, expiresAt })` 的 SHA-256 前 24 位十六进制摘要。标题、正文或截止时间改变会改变 ID，与配置里用于排期的 `id` 独立。公告配置可选 `title`（去除首尾空白后 1～80 个 JS 字符单位），省略时为“维护公告”。
+`id` 是公开内容对象的 `JSON.stringify()` 结果的 SHA-256 前 24 位十六进制摘要。滚动公告对象字段仍为 `title`、`text`、`expiresAt`，摘要保持兼容；弹窗公告配置了 `url` 或 `autoPopup` 时再按此顺序附加对应字段。任一公开内容字段改变都会改变 ID，与配置里用于排期的 `id` 独立。公告配置可选 `title`（去除首尾空白后 1～80 个 JS 字符单位），省略时滚动接口为“维护公告”、弹窗接口为“公告”。`url` 和 `autoPopup` 只用于弹窗公告：前者为 HTTP(S) 详情链接，后者省略时等同于 false，游戏内仅在点击公告按钮时打开。
 
-**`expiresAt = Date.parse(startAt) + durationSeconds × 1000`**，复用已有公告排期的 `endAt`，请求和服务器重启不会延长公告。尚未开始、关闭、过期、文件缺失或无效时返回 `{"announcement":null,"serverTime":…}`。优先级和重叠选择与游戏内公告一致。
+**`expiresAt = Date.parse(startAt) + durationSeconds × 1000`**，复用已有公告排期的 `endAt`，请求和服务器重启不会延长公告。对应类型尚未开始、关闭、过期、文件缺失或无效时返回 `{"announcement":null,"serverTime":…}`。优先级和重叠选择与游戏内对应类型公告一致。
 
 复用本项目的 `SP_ANNOUNCEMENTS_FILE` / `config/announcements.json`（[配置说明](DEPLOY.md#36-全站临时公告)），HTTP 请求最多每秒触发一次重读，原有每 2 秒轮询继续生效。例如：
 

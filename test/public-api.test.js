@@ -209,7 +209,11 @@ test('announcement API projects the active schedule, computes absolute expiry an
   for (const change of [{ title: '计划维护' }, { text: '新正文' }, { durationSeconds: 301 }]) {
     await writeFile(file, JSON.stringify({ announcements: [{ ...row, ...change }] }));
     await srv.announcements.reload();
-    assert.notEqual((await read()).announcement.id, first.announcement.id);
+    const announcement = (await read()).announcement;
+    assert.notEqual(announcement.id, first.announcement.id);
+    for (const field of ['url', 'autoPopup']) {
+      if (Object.hasOwn(change, field)) assert.equal(announcement[field], change[field]);
+    }
   }
   at = start + 301000;
   assert.equal((await read()).announcement, null, 'the end boundary is exclusive');
@@ -231,4 +235,45 @@ test('announcement API projects the active schedule, computes absolute expiry an
     assert.equal(denied.headers.allow, 'GET, HEAD');
     assert.match(denied.headers['content-type'], /^text\/html/);
   }
+});
+
+test('popup announcement API is independent of the existing scrolling announcement API', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'stronghold-popup-api-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = join(dir, 'announcements.json');
+  const start = Date.now() - 1000;
+  const scroll = { id: 'scroll', text: '滚动通知', startAt: new Date(start).toISOString(), durationSeconds: 300, level: 'urgent' };
+  const popup = { ...scroll, id: 'popup', type: 'popup', title: '详细公告', text: '弹窗正文', level: 'info',
+    url: 'https://example.com/notice', autoPopup: false };
+  await writeFile(file, JSON.stringify({ announcements: [scroll, popup] }));
+  const srv = await boot(t, { announcementsFile: file });
+  const read = async (path) => JSON.parse((await request(srv, path)).body).announcement;
+  const legacy = await read('/api/announcement');
+  const current = await read('/api/popup-announcement');
+  assert.equal(legacy.text, scroll.text);
+  assert.deepEqual(Object.keys(legacy).sort(), ['expiresAt', 'id', 'text', 'title']);
+  assert.equal(current.text, popup.text);
+  assert.equal(current.title, popup.title);
+  assert.equal(current.url, popup.url);
+  assert.equal(current.autoPopup, false);
+  for (const change of [{ url: 'https://example.com/new' }, { autoPopup: true }]) {
+    await writeFile(file, JSON.stringify({ announcements: [scroll, { ...popup, ...change }] }));
+    await srv.announcements.reload();
+    assert.notEqual((await read('/api/popup-announcement')).id, current.id);
+    assert.deepEqual(await read('/api/announcement'), legacy);
+  }
+  await writeFile(file, JSON.stringify({ announcements: [popup] }));
+  await srv.announcements.reload();
+  assert.equal(await read('/api/announcement'), null);
+  assert.equal((await read('/api/popup-announcement')).text, popup.text);
+  const head = await request(srv, '/api/popup-announcement', { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(head.body, '');
+  for (const method of ['POST', 'PUT', 'DELETE', 'OPTIONS']) {
+    assert.equal((await request(srv, '/api/popup-announcement', { method })).status, 405);
+  }
+  await writeFile(file, JSON.stringify({ announcements: [scroll] }));
+  await srv.announcements.reload();
+  assert.equal(await read('/api/popup-announcement'), null);
+  assert.equal((await read('/api/announcement')).text, scroll.text);
 });

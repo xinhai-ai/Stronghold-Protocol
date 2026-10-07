@@ -11,6 +11,7 @@
 import { useMemo, useState } from '../../vendor/hooks.module.js';
 import { NAME_MAX_LEN, APP_VERSION } from '../../../shared/constants.js';
 import { html, Button, Icon, MicroLabel, TextField, PingPill, Modal } from '../ui/components.js';
+import { AnnouncementButton } from '../ui/announcement.js';
 import { GuideButton } from '../ui/guide.js';
 import { toast } from '../ui/toasts.js';
 import { net, identity } from '../net.js';
@@ -271,6 +272,7 @@ export function TitleScreen() {
         </div>
       </div>
       <div class="title-about-wrap">
+        <${AnnouncementButton} variant="ghost" />
         <${Button} variant="ghost" size="sm" class="title-about-button" aria-haspopup="dialog"
           onClick=${() => setAboutOpen(true)}>关于本服务器<//>
       </div>

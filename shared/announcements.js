@@ -4,6 +4,23 @@ export const ANNOUNCEMENT_MAX_TEXT = 500;
 export const ANNOUNCEMENT_MAX_COUNT = 100;
 
 const own = (obj, key) => Object.hasOwn(obj, key);
+export function validAnnouncementUrl(value) {
+  if (typeof value !== 'string' || !value || value.length > 2048 || /[\s\u0000-\u001f\u007f]/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password;
+  } catch { return false; }
+}
+
+function displayOptions(row) {
+  if (own(row, 'title') && (typeof row.title !== 'string' || !row.title.trim() || row.title.trim().length > 80
+      || /[\u0000-\u001f\u007f]/.test(row.title))) throw new Error(`${row.id}: title must contain 1..80 printable characters`);
+  if (own(row, 'url') && !validAnnouncementUrl(row.url)) throw new Error(`${row.id}: url must be an HTTP(S) URL without credentials`);
+  if (own(row, 'autoPopup') && typeof row.autoPopup !== 'boolean') throw new Error(`${row.id}: autoPopup must be boolean`);
+  return { ...(own(row, 'title') ? { title: row.title.trim() } : {}),
+    ...(own(row, 'url') ? { url: row.url } : {}), ...(own(row, 'autoPopup') ? { autoPopup: row.autoPopup } : {}) };
+}
+
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|[+-]\d{2}:\d{2})$/;
 function validTime(value) {
   if (typeof value !== 'string' || !TIME.test(value) || !Number.isFinite(Date.parse(value))) return false;
@@ -20,9 +37,11 @@ export function parseAnnouncements(doc) {
   const ids = new Set();
   return doc.announcements.map((row) => {
     if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('invalid announcement');
-    const { id, text, startAt, durationSeconds, level = 'info', enabled = true } = row;
-    if (own(row, 'title') && (typeof row.title !== 'string' || !row.title.trim() || row.title.trim().length > 80)) {
-      throw new Error(`${id}: title must contain 1..80 characters`);
+    const { id, text, startAt, durationSeconds, level = 'info', enabled = true, type = 'scroll' } = row;
+    if (type !== 'scroll' && type !== 'popup') throw new Error(`${id}: type must be scroll or popup`);
+    const options = displayOptions(row);
+    if (type === 'scroll' && (own(row, 'url') || own(row, 'autoPopup'))) {
+      throw new Error(`${id}: url and autoPopup are only supported for popup announcements`);
     }
     if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || ids.has(id)) throw new Error('announcement ids must be unique (1..64 letters, numbers, _ or -)');
     ids.add(id);
@@ -32,7 +51,7 @@ export function parseAnnouncements(doc) {
     if (!Number.isInteger(durationSeconds) || durationSeconds < 1 || durationSeconds > 86400) throw new Error(`${id}: durationSeconds must be 1..86400`);
     if (typeof level !== 'string' || !own(ANNOUNCEMENT_LEVELS, level) || typeof enabled !== 'boolean') throw new Error(`${id}: invalid level or enabled flag`);
     const at = Date.parse(startAt);
-    return { id, ...(own(row, 'title') ? { title: row.title.trim() } : {}),
+    return { id, ...(type === 'popup' ? { type } : {}), ...options,
       text: text.trim().replace(/\s+/g, ' '), startAt: at, endAt: at + durationSeconds * 1000, level, enabled };
   });
 }
@@ -43,10 +62,10 @@ export function announcementLive(notice, now) {
 }
 
 /** Higher severity first; earliest start first among equals. Original file order breaks exact ties. */
-export function activeAnnouncement(rows, now) {
+export function activeAnnouncement(rows, now, type = 'scroll') {
   let best = null;
   for (const row of rows) {
-    if (!row.enabled || !announcementLive(row, now)) continue;
+    if ((row.type || 'scroll') !== type || !row.enabled || !announcementLive(row, now)) continue;
     if (!best || ANNOUNCEMENT_LEVELS[row.level] > ANNOUNCEMENT_LEVELS[best.level]
         || (row.level === best.level && row.startAt < best.startAt)) best = row;
   }
@@ -56,10 +75,13 @@ export function activeAnnouncement(rows, now) {
 }
 
 /** Incoming public frame: accept only display fields; expiry is checked independently by the UI. */
-export function announcementFromMessage(msg) {
-  const n = msg?.announcement;
+export function announcementFromMessage(msg, type = 'scroll') {
+  const n = type === 'popup' ? msg?.popupAnnouncement : msg?.announcement;
   if (!n || typeof n.id !== 'string' || typeof n.text !== 'string' || !n.text || [...n.text].length > ANNOUNCEMENT_MAX_TEXT
       || typeof n.level !== 'string' || !own(ANNOUNCEMENT_LEVELS, n.level) || !Number.isFinite(n.startAt) || !Number.isFinite(n.endAt)
-      || n.endAt <= n.startAt) return null;
-  return { id: n.id, text: n.text, level: n.level, startAt: n.startAt, endAt: n.endAt };
+      || n.endAt <= n.startAt || (n.type || 'scroll') !== type) return null;
+  try {
+    if (type === 'scroll' && (own(n, 'url') || own(n, 'autoPopup'))) return null;
+    return { id: n.id, ...(type === 'popup' ? { type } : {}), ...displayOptions(n), text: n.text, level: n.level, startAt: n.startAt, endAt: n.endAt };
+  } catch { return null; }
 }

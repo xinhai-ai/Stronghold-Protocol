@@ -79,7 +79,7 @@ export function createPublicApi({ lobby, announcements, trustProxy, sendJson, se
       }
       return true;
     }
-    if (pathname === '/api/announcement') {
+    if (pathname === '/api/announcement' || pathname === '/api/popup-announcement') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         res.setHeader('Allow', 'GET, HEAD');
         sendError(req, res, 405, '不支持的请求方法 · Method not allowed');
@@ -92,10 +92,13 @@ export function createPublicApi({ lobby, announcements, trustProxy, sendJson, se
       } else if (announcements.pending) await announcements.pending;
       announcements.refresh();
       const serverTime = announcements.now();
-      const active = announcements.lastError ? null : announcements.current;
+      const popup = pathname === '/api/popup-announcement';
+      const active = announcements.lastError ? null : popup ? announcements.popupCurrent : announcements.current;
       let announcement = null;
       if (active) {
-        const content = { title: active.title || '维护公告', text: active.text, expiresAt: active.endAt };
+        const content = { title: active.title || (popup ? '公告' : '维护公告'), text: active.text, expiresAt: active.endAt,
+          ...(active.url ? { url: active.url } : {}),
+          ...(typeof active.autoPopup === 'boolean' ? { autoPopup: active.autoPopup } : {}) };
         const id = createHash('sha256').update(JSON.stringify(content)).digest('hex').slice(0, 24);
         announcement = { id, ...content };
       }

@@ -257,7 +257,7 @@
   color: var(--text-dim);
 }
 
-.title-about-wrap { display: flex; justify-content: center; margin-top: .1rem; }
+.title-about-wrap { display: flex; justify-content: center; gap: .1rem; margin-top: .1rem; }
 .title-about-button { flex: none; height: max(.4rem, 28px); font-size: max(.16rem, 12px); }
 .modal__box.title-about {
   max-height: min(88vh, calc(100vh - var(--sa-t, 0px) - var(--sa-b, 0px) - 24px));

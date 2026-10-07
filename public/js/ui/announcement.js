@@ -3,6 +3,7 @@ import { html, Icon, Button, Modal, useTicker } from './components.js';
 import { createStore, store, useStore, loadPref, savePref } from '../store.js';
 import { net } from '../net.js';
 import { announcementLive } from '../../../shared/announcements.js';
+import { PHASE } from '../../../shared/constants.js';
 
 /** Constant pixel speed for long and short notices; the animation travels across the measured viewport. */
 export function announcementScroll(viewport, textWidth) {
@@ -37,11 +38,18 @@ export function openAnnouncement() {
   announcementUi.set({ open: true, automatic: false, noticeKey: '' });
 }
 
-/** Closing or reconnecting never reopens the same version; expired automatic dialogs close themselves. */
-export function syncAnnouncementPopup(notice, now) {
+// Include match startup, preparation, spectators and the result screen; reconnecting must not pop over a restored match.
+const popupBlocked = (s) => !!s.room?.inMatch || !!(s.match?.public?.phase && s.match.public.phase !== PHASE.LOBBY);
+
+/** Unseen notices wait until outside a match. Closing or reconnecting never reopens the same viewed version. */
+export function syncAnnouncementPopup(notice, now, inMatch = popupBlocked(store.get())) {
   if (notice?.type !== 'popup' || !announcementLive(notice, now)) {
     if (announcementUi.get().automatic) closeAnnouncement();
     return;
+  }
+  if (inMatch) {
+    if (announcementUi.get().automatic) closeAnnouncement();
+    return; // Do not mark the notice viewed until it is actually shown (manual viewing still records it).
   }
   const key = announcementDismissKey(notice);
   if (announcementUi.get().automatic && announcementUi.get().noticeKey !== key) closeAnnouncement();
@@ -68,14 +76,15 @@ export function AnnouncementContent({ notice }) {
 
 export function AnnouncementHost() {
   const notice = useStore((s) => s.popupAnnouncement);
+  const inMatch = useStore(popupBlocked);
   useStore((s) => s.clock.offset);
-  const { open } = useStore((s) => s, Object.is, announcementUi);
+  const { open, automatic } = useStore((s) => s, Object.is, announcementUi);
   const now = net.serverNow();
   useTicker(notice && now < notice.endAt ? 250 : 0);
   const live = announcementLive(notice, now);
   const key = announcementDismissKey(notice);
-  useEffect(() => { syncAnnouncementPopup(notice, net.serverNow()); }, [key, live]);
-  return html`<${Modal} open=${open} title=${live ? notice.title || '公告' : '公告'} micro="ANNOUNCEMENT"
+  useEffect(() => { syncAnnouncementPopup(notice, net.serverNow(), inMatch); }, [key, live, inMatch]);
+  return html`<${Modal} open=${open && (!automatic || !inMatch)} title=${live ? notice.title || '公告' : '公告'} micro="ANNOUNCEMENT"
     class="announcement-modal" width="min(7.4rem, 94vw)" onClose=${closeAnnouncement}
     actions=${html`<${Button} variant="primary" icon="close" data-autofocus onClick=${closeAnnouncement}>关闭<//>`}>
     <${AnnouncementContent} notice=${live ? notice : null} />

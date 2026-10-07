@@ -10,7 +10,8 @@ import { startServer } from '../server/index.js';
 import { TestClient } from './helpers/wsClient.js';
 import { announcementScroll, announcementDismissKey, announcementUi, syncAnnouncementPopup,
   openAnnouncement, closeAnnouncement, AnnouncementButton, AnnouncementContent } from '../public/js/ui/announcement.js';
-import { store } from '../public/js/store.js';
+import { store, emptyMatch } from '../public/js/store.js';
+import { PHASE } from '../shared/constants.js';
 import { OnlineCount, PingPill } from '../public/js/ui/components.js';
 
 const BASE = Date.parse('2026-10-05T12:00:00+08:00');
@@ -301,6 +302,54 @@ test('popup lifecycle respects opt-in, persistent viewing, content edits, manual
   assert.equal(announcementUi.get().open, true, 'empty state can still be opened');
   const seen = JSON.parse(values.get('sp.pref.announcementPopupsSeen'));
   assert.ok(!seen.includes(announcementDismissKey({ ...current, type: 'scroll' })), 'manual button does not view scrolling announcements');
+});
+
+test('automatic popups wait through matches without marking viewed, and manual viewing remains available', (t) => {
+  const previousStorage = globalThis.localStorage;
+  const previous = store.get();
+  const values = new Map();
+  globalThis.localStorage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  t.after(() => { globalThis.localStorage = previousStorage; closeAnnouncement(); store.set(previous); });
+  const notice = activeAnnouncement(parseAnnouncements(doc(row({ id: 'deferred', type: 'popup', autoPopup: true }))), BASE, 'popup');
+  const sync = (n = notice, now = BASE) => syncAnnouncementPopup(n, now);
+  for (const snapshot of [
+    { room: { inMatch: true }, match: emptyMatch() },
+    ...[PHASE.INFO_CHECK, PHASE.BAND_DRAFT, PHASE.COMBAT, PHASE.RESULT].map((phase) => ({ room: null, match: { public: { phase } } })),
+  ]) {
+    store.set(snapshot);
+    sync();
+    assert.equal(announcementUi.get().open, false);
+    assert.equal(values.has('sp.pref.announcementPopupsSeen'), false, 'deferring does not mark viewed');
+  }
+  store.set({ room: null, match: emptyMatch() });
+  sync();
+  assert.equal(announcementUi.get().automatic, true, 'returning to lobby presents the still-active notice');
+  store.set({ room: { inMatch: true } });
+  sync();
+  assert.equal(announcementUi.get().open, false, 'an automatic dialog disappears when a match starts');
+  store.set({ room: null });
+  sync();
+  assert.equal(announcementUi.get().open, false, 'already shown version stays seen');
+
+  store.set({ room: { inMatch: true } });
+  sync({ ...notice, id: 'expired' });
+  store.set({ room: null });
+  sync({ ...notice, id: 'expired' }, notice.endAt);
+  sync(null);
+  assert.equal(announcementUi.get().open, false, 'expired and withdrawn notices are not replayed after the match');
+
+  const current = { ...notice, id: 'manual-in-match', startAt: Date.now() - 1000, endAt: Date.now() + 60000 };
+  store.set({ room: { inMatch: true }, popupAnnouncement: current });
+  sync(current, Date.now());
+  openAnnouncement();
+  assert.equal(announcementUi.get().open, true);
+  assert.equal(announcementUi.get().automatic, false);
+  sync(current, Date.now());
+  assert.equal(announcementUi.get().open, true, 'match deferral does not close a manually opened dialog');
+  closeAnnouncement();
+  store.set({ room: null });
+  sync(current, Date.now());
+  assert.equal(announcementUi.get().open, false, 'manual viewing in the match prevents a repeat afterwards');
 });
 
 test('announcement content remains plain text, links open safely, and online count shares latency styling', () => {

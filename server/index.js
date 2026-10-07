@@ -109,13 +109,22 @@ export async function startServer(opts = {}) {
       const doc = await store.load();
       if (doc) {
         const stats = restoreServer({ doc, registry, lobby, log, now: Date.now() });
-        await persister.seed(doc);
-        log.info(`[persist] state loaded (${stats.sessions} session(s), ${stats.rooms} room(s), ${stats.matches} match(es), ${stats.expired} expired${stats.droppedSeats ? `, ${stats.droppedSeats} seat(s) dropped` : ''})`);
+        if (stats.ok) {
+          await persister.seed(doc);
+          log.info(`[persist] state loaded (${stats.sessions} session(s), ${stats.rooms} room(s), ${stats.matches} match(es), ${stats.expired} expired${stats.droppedSeats ? `, ${stats.droppedSeats} seat(s) dropped` : ''}${stats.deferredMatches ? `, ${stats.deferredMatches} checkpoint(s) retained` : ''})`);
+        } else {
+          persister.deferLoad();
+          log.warn(`[persist] saved state could not be interpreted (${stats.reason}); writes deferred to preserve it`);
+        }
       } else {
-        log.info('[persist] no saved state in Redis — starting fresh');
+        if (['unavailable', 'invalid'].includes(store.loadState)) {
+          persister.deferLoad();
+          log.warn(`[persist] saved state ${store.loadState}; reads will be retried before any write`);
+        } else log.info('[persist] no saved state in Redis — starting fresh');
       }
     } catch (e) {
-      log.warn('[persist] could not load the saved state — starting fresh', e);
+      persister.deferLoad();
+      log.warn('[persist] could not load the saved state; writes deferred until recovery can be retried', e);
     }
   }
   const wsCompression = opts.wsCompression != null ? !!opts.wsCompression : parseWsCompression(process.env.SP_WS_COMPRESSION);
@@ -167,6 +176,8 @@ export async function startServer(opts = {}) {
   async function close() {
     if (closing) return closing;
     closing = (async () => {
+      network.beginShutdown();
+      lobby.stopMatchmaking();
       await announcements.stop();
       // the state (match checkpoints included) is written while the rooms still exist, then the rooms are disposed
       // (room.closed) and only then are the sockets closed (1001: clients should not auto-reconnect)

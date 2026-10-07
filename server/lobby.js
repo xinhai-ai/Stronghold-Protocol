@@ -98,7 +98,7 @@
 //     a player seat (the seat is kept and given back on resume).
 
 import { randomBytes, randomInt } from 'node:crypto';
-import { ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
+import { ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, DIFFICULTIES, modeIdFor } from '../shared/constants.js';
 import { checkLoadout, checkNotOwned, checkDiyPicks } from '../shared/protocol.js';
 import { encode, isDroppable, isErrCode, sendRaw, sendSession } from './net.js';
 import { getData as defaultGetData, lookup } from './data.js';
@@ -262,6 +262,10 @@ export class Lobby {
     this.queueByPlayer = new Map();
     /** @type {Set<object>} running matchmaking contexts, including standalone matches */
     this.activeQueueMatches = new Set();
+    /** Checkpoints that need another recovery attempt; persistence retains their original identities and state. */
+    this.recoveryDocs = new Map();
+    /** @type {Function | null} */
+    this.onMatchStarted = null;
     this.queueSeq = 0;
     this.matchQueueTimer = setInterval(() => this.processMatchQueues(), Math.max(100, Number(this.opts.matchmakingTickMs) || 1000));
     this.matchQueueTimer.unref?.();
@@ -351,6 +355,7 @@ export class Lobby {
       }
       return;
     }
+    const pendingResult = !room.match && !active ? session.pendingResult : null;
     session.notice = null;
     session.pendingResult = null;
     // a player seat, or a spectator seat (header): both carry `connected` / `name`
@@ -365,6 +370,9 @@ export class Lobby {
     if (changed) this.broadcastState(room);
     else this.sendState(room, session);
     this.resync(session, !resumed);
+    if (pendingResult && !this.replayFor(room, session.playerId)) {
+      for (const frame of pendingResult) if (frame) sendRaw(session.ws, frame);
+    }
   }
 
   /**
@@ -432,9 +440,8 @@ export class Lobby {
     if (queued) this.cancelMatchQueue(queued, 'expired');
     const active = this.activeMatchOf(session);
     const roomCode = session.roomCode;
-    if (active && !roomCode && !active.ended) {
-      this.callMatchContext(active, 'onLeave', session.playerId);
-      if (session.activeMatchCtx === active) session.activeMatchCtx = null;
+    if (active && !active.ended && (!roomCode || (active.queue && active.room?.code !== roomCode))) {
+      this.leaveQueuedMatchPlayer(active, session.playerId);
     }
     const code = session.roomCode;
     session.roomCode = null;
@@ -447,7 +454,7 @@ export class Lobby {
    * @param {string} [reason]
    */
   shutdown(reason = 'shutdown') {
-    if (this.matchQueueTimer) { clearInterval(this.matchQueueTimer); this.matchQueueTimer = null; }
+    this.stopMatchmaking();
     for (const entry of [...new Set(this.queueByPlayer.values())]) this.cancelMatchQueue(entry, reason);
     for (const room of [...this.rooms.values()]) this.disposeRoom(room, reason);
     for (const ctx of [...this.activeQueueMatches]) this.disposeMatchCtx(ctx);
@@ -455,6 +462,10 @@ export class Lobby {
     this.graceTimers.clear();
     for (const t of this.resyncTimers.values()) clearTimeout(t);
     this.resyncTimers.clear();
+  }
+
+  stopMatchmaking() {
+    if (this.matchQueueTimer) { clearInterval(this.matchQueueTimer); this.matchQueueTimer = null; }
   }
 
   // ---------------------------------------------------------------------------------------------------
@@ -501,7 +512,8 @@ export class Lobby {
         stats.seats++;
       }
       if (room.activeHumans().length === 0) { stats.droppedSeats += room.seats.filter(Boolean).length; continue; }
-      room.hostId = room.seatOf(d.hostId) ? d.hostId : null;
+      const host = room.seatOf(d.hostId);
+      room.hostId = host && !host.isBot && !host.left ? d.hostId : null;
       if (!room.hostId) this.migrateHost(room);
       this.rooms.set(room.code, room);
       stats.rooms++;
@@ -512,22 +524,67 @@ export class Lobby {
   }
 
   /**
-   * Rebuild a running match from a checkpoint (server/match/snapshot.js). Every seat of the checkpoint must still be in
-   * the room; otherwise nothing is restored and the room stays in the lobby (the players simply start a new match).
+   * Rebuild a running match. Public queue guests belong to its match context, rather than the owning room's seats.
+   * Missing or conflicting identities leave the restored match; remaining humans keep their checkpoint.
    * @param {Room} room @param {object} checkpoint
    * @returns {boolean} true when the match runs again
    */
-  restoreMatch(room, checkpoint) {
+  restoreMatch(room, checkpoint, { queue = false, departedPlayerIds = [], sessionMatchKeys = null } = {}) {
     if (!room || room.disposed || room.match || !checkpoint || typeof checkpoint !== 'object') return false;
-    const players = Array.isArray(checkpoint.players) ? checkpoint.players : [];
-    if (players.length === 0) return false;
-    for (const p of players) {
-      if (!p || typeof p.playerId !== 'string' || !Number.isInteger(p.seat)) return false;
-      // Queue-filled AI seats live only in the match checkpoint; human seats must still belong to the room.
-      if (!p.isBot && !room.seatOf(p.playerId)) return false;
+    const prepared = this.prepareRecovery(checkpoint, { room, departedPlayerIds, sessionMatchKeys });
+    if (!prepared) return false;
+    const { doc, departed } = prepared;
+    // Older documents have no queueMatch flag; a human outside the room can only be a matched public guest.
+    if (queue || doc.players.some((p) => !p.isBot && !departed.has(p.playerId) && !room.seatOf(p.playerId))) {
+      return this.restoreQueuedMatch(doc, { room, departedPlayerIds: [...departed], sessionMatchKeys });
     }
-    const res = this.startMatchWith(room, room.matchKey, checkpoint);
-    return !(res && res.error);
+    const res = this.startMatchWith(room, room.matchKey, doc, { departedPlayerIds: [...departed] });
+    if (res && res.error) return false;
+    return true;
+  }
+
+  /** Salvage independently valid seats without inventing a human identity or binding it to two games. */
+  prepareRecovery(checkpoint, { room = null, departedPlayerIds = [], sessionMatchKeys = null } = {}) {
+    const key = room?.code || `queue:${checkpoint.roomCode || '?'}`;
+    const warn = (reason) => this.log.warn(`[persist] ${key}: recovery ${reason}`);
+    const departed = new Set(departedPlayerIds);
+    const ids = new Set(), seats = new Set(), players = [];
+    let humans = 0;
+    for (const p of Array.isArray(checkpoint.players) ? checkpoint.players : []) {
+      if (!p || typeof p.playerId !== 'string' || !p.playerId || ids.has(p.playerId) || players.length >= MAX_SEATS) {
+        warn('skipped an invalid, duplicate or excess player record');
+        continue;
+      }
+      ids.add(p.playerId);
+      let seat = Number.isInteger(p.seat) && p.seat >= 0 && p.seat < MAX_SEATS && !seats.has(p.seat) ? p.seat : -1;
+      if (seat < 0) {
+        seat = Array.from({ length: MAX_SEATS }, (_, i) => i).find((i) => !seats.has(i));
+        warn(`reassigned invalid seat for ${p.playerId} to ${seat}`);
+      }
+      seats.add(seat);
+      const isBot = p.isBot === true || (p.isBot == null && p.playerId.startsWith('ai_'));
+      if (p.left || room?.seatOf(p.playerId)?.left) departed.add(p.playerId);
+      if (!isBot && !departed.has(p.playerId)) {
+        const session = this.registry.byId(p.playerId);
+        const owner = sessionMatchKeys?.get(p.playerId);
+        if (!session || (owner && owner !== key) || (!room && session.roomCode) || this.activeMatchOf(session)) {
+          departed.add(p.playerId);
+          warn(`${!session ? 'missing session' : 'conflicting ownership'} for human seat ${p.playerId}; continuing with remaining humans`);
+        } else humans++;
+      }
+      players.push({ ...p, seat, isBot });
+    }
+    if (!humans) { warn('deferred: no remaining human with a usable session'); return null; }
+    if (room) {
+      for (const id of departed) {
+        const seat = room.seatOf(id);
+        if (seat) { seat.left = true; seat.connected = false; }
+      }
+      if (room.seatOf(room.hostId)?.left) this.migrateHost(room);
+    }
+    const mode = checkpoint.mode === 'solo' ? 'solo' : 'coop';
+    const difficulty = DIFFICULTIES.includes(checkpoint.difficulty) ? checkpoint.difficulty : room?.difficulty || 'NORMAL';
+    return { doc: { ...checkpoint, mode, difficulty, modeId: modeIdFor(mode, difficulty), players }, departed };
   }
 
   /** Active matches exposed to the persistence layer. Queue matches without a room have no Room to enumerate. */
@@ -548,26 +605,24 @@ export class Lobby {
     return out;
   }
 
-  /** Rebuild a standalone matchmaking match from a persisted checkpoint. */
-  restoreQueuedMatch(checkpoint) {
+  /** Rebuild either kind of matchmaking context, excluding departed humans from session ownership. */
+  restoreQueuedMatch(checkpoint, { room = null, departedPlayerIds = [], sessionMatchKeys = null } = {}) {
     if (!checkpoint || typeof checkpoint !== 'object') return false;
-    const players = Array.isArray(checkpoint.players) ? checkpoint.players : [];
-    if (players.length === 0 || players.length > MAX_SEATS) return false;
-    const ids = new Set();
-    for (const p of players) {
-      if (!p || typeof p.playerId !== 'string' || ids.has(p.playerId) || p.isBot === undefined) return false;
-      ids.add(p.playerId);
-      if (!p.isBot && !this.registry.byId(p.playerId)) return false;
-    }
+    const prepared = this.prepareRecovery(checkpoint, { room, departedPlayerIds, sessionMatchKeys });
+    if (!prepared) return false;
+    const { doc, departed } = prepared;
+    checkpoint = doc;
+    const players = doc.players;
     const seats = players.map((p, i) => ({
       seat: Number.isInteger(p.seat) && p.seat >= 0 && p.seat < MAX_SEATS ? p.seat : i,
       playerId: p.playerId,
       name: typeof p.name === 'string' ? p.name : t('博士'),
       isBot: !!p.isBot,
+      left: !p.isBot && departed.has(p.playerId),
       connected: false,
       loadout: p.isBot ? null : (p.loadout || null), notOwned: p.isBot ? null : p.standIns || null, diy: p.isBot ? null : p.diy || null,
     }));
-    const ctx = { live: true, ended: false, disposed: false, queue: true, match: null, room: null,
+    const ctx = { live: false, ended: false, disposed: false, queue: true, match: null, room,
       members: seats, lastPublic: null, sharedResult: null, results: new Map() };
     const roomCode = typeof checkpoint.roomCode === 'string' && checkpoint.roomCode ? checkpoint.roomCode : `M${randomBytes(3).toString('hex').toUpperCase()}`;
     const mode = checkpoint.mode === 'solo' ? 'solo' : 'coop';
@@ -575,28 +630,55 @@ export class Lobby {
     try {
       const match = new this.MatchClass({
         roomCode, mode, difficulty, modeId: modeIdFor(mode, difficulty), seats,
-        consoleEnabled: false, seed: Number(checkpoint.seed) >>> 0, matchNo: 1,
+        consoleEnabled: false, seed: Number(checkpoint.seed) >>> 0, matchNo: room ? Math.max(1, room.matchCount) : 1,
         data: this.safeData(), workerPool: this.workerPool, log: this.log, now: this.now,
         send: (playerId, msg) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg) : false),
         broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
         onEnd: (summary) => this.onQueuedMatchEnd(ctx, summary),
       });
       ctx.match = match;
-      if (!applyMatchCheckpoint(match, checkpoint, { createRngFromState, log: this.log })) {
+      if (!applyMatchCheckpoint(match, checkpoint, { createRngFromState, log: this.log, bestEffort: true, departedPlayerIds: [...departed] })) {
         this.disposeMatchCtx(ctx);
         return false;
       }
+      ctx.live = true;
       this.activeQueueMatches.add(ctx);
-      for (const p of seats) if (!p.isBot) {
+      if (room) {
+        room.match = match;
+        room.matchCtx = ctx;
+        room.replay = null;
+      }
+      for (const p of seats) if (!p.isBot && !p.left) {
         const session = this.registry.byId(p.playerId);
         if (session) session.activeMatchCtx = ctx;
       }
+      if (this.completeRecoveredMatch(ctx, room)) return true;
+      match._lastPubJson = '';
+      match.flush?.(true);
+      if (room && !room.disposed) this.broadcastState(room);
       return true;
     } catch (e) {
       this.log.error(`[match] ${roomCode} matchmaking restore failed`, e);
+      if (room?.matchCtx === ctx) { room.match = null; room.matchCtx = null; }
       this.disposeMatchCtx(ctx);
       return false;
     }
+  }
+
+  /** If partial recovery legitimately finishes the game, preserve its settlement for reconnecting humans. */
+  completeRecoveredMatch(ctx, room) {
+    const match = ctx.match;
+    if (!match?.ended) return false;
+    ctx.lastPublic = encode(match.publicView());
+    for (const p of match.order) if (!p.isBot && !p.left) {
+      const session = this.registry.byId(p.playerId);
+      const result = match.lastResultMsg ? encode({ ...match.lastResultMsg, playerId: p.playerId }) : null;
+      if (result) ctx.results.set(p.playerId, result);
+      if (session) session.pendingResult = [ctx.lastPublic, result].filter(Boolean);
+    }
+    if (ctx.queue) this.onQueuedMatchEnd(ctx, match.lastResultMsg);
+    else this.onMatchEnd(room, ctx, match.lastResultMsg);
+    return true;
   }
 
   // ---------------------------------------------------------------------------------------------------
@@ -1134,7 +1216,7 @@ export class Lobby {
    * battle ids continue above the interrupted ones. On a restore failure the room simply stays in the lobby.
    * @param {Room} room @param {string | null} key @param {object | null} checkpoint
    */
-  startMatchWith(room, key, checkpoint) {
+  startMatchWith(room, key, checkpoint, { departedPlayerIds = [] } = {}) {
     const host = room.seatOf(room.hostId);
     if (host && !checkpoint) host.ready = true;
     const seats = checkpoint
@@ -1148,7 +1230,7 @@ export class Lobby {
         loadout: s.isBot ? null : s.loadout || null, notOwned: s.isBot ? null : s.notOwned || null, diy: s.isBot ? null : s.diy || null,
       }));
     // lastPublic / results: the latest m.public broadcast and the m.result frames (encoded), kept for the replay.
-    const ctx = { live: true, ended: false, disposed: false, match: null, lastPublic: null, sharedResult: null, results: new Map() };
+    const ctx = { live: !checkpoint, ended: false, disposed: false, match: null, lastPublic: null, sharedResult: null, results: new Map() };
     const matchNo = checkpoint ? Math.max(1, room.matchCount) : room.matchCount + 1;
     let seed = 0;
     try { seed = this.seedFn() >>> 0; } catch { seed = randomInt(2 ** 32); }
@@ -1176,7 +1258,7 @@ export class Lobby {
       });
       ctx.match = match;
       if (checkpoint) {
-        if (!applyMatchCheckpoint(match, checkpoint, { createRngFromState, log: this.log })) {
+        if (!applyMatchCheckpoint(match, checkpoint, { createRngFromState, log: this.log, bestEffort: true, departedPlayerIds })) {
           this.log.warn(`[lobby] ${room.code} match checkpoint refused — the room stays in the lobby`);
           this.disposeMatchCtx(ctx);
           this.broadcastState(room);
@@ -1186,6 +1268,10 @@ export class Lobby {
         room.matchCtx = ctx;
         room.matchKey = key;
         room.replay = null;
+        ctx.live = true;
+        if (this.completeRecoveredMatch(ctx, room)) return OK;
+        match._lastPubJson = '';
+        match.flush?.(true);
         this.log.info(`[lobby] ${room.code} match #${room.matchCount} restored (${room.mode}/${room.difficulty}, round ${match.round}, ${match.phase})`);
         this.broadcastState(room);
         return OK;
@@ -1198,6 +1284,7 @@ export class Lobby {
       this.log.info(`[lobby] ${room.code} match #${room.matchCount} starting (${room.mode}/${room.difficulty}, ${seats.length} seats, seed ${seed})`);
       this.broadcastState(room);
       match.start();
+      this.notifyMatchStarted(room.code, match);
     } catch (e) {
       this.log.error(`[lobby] ${room.code} match failed to start`, e);
       if (room.matchCtx === ctx) { room.match = null; room.matchCtx = null; room.matchKey = null; }
@@ -1258,6 +1345,7 @@ export class Lobby {
       for (const entry of selected) this.sendQueueState(entry, 'matched');
       this.log.info(`[match] ${matchCode} matchmaking start (${owner.mode}/${owner.difficulty}, ${seats.length} seats${room ? `, room ${room.code}` : ''})`);
       match.start();
+      this.notifyMatchStarted(room?.code || `queue:${match.roomCode}`, match);
     } catch (e) {
       this.log.error(`[match] ${matchCode} matchmaking start failed`, e);
       for (const id of allHumanIds) {
@@ -1269,6 +1357,11 @@ export class Lobby {
       return fail(ERR.INTERNAL, 'match failed to start');
     }
     return OK;
+  }
+
+  notifyMatchStarted(key, match) {
+    try { this.onMatchStarted?.({ key, match }); }
+    catch (e) { this.log.warn(`[persist] ${key}: initial checkpoint notification failed (${e.message})`); }
   }
 
   queueMatchSend(ctx, playerId, msg) {
@@ -1299,8 +1392,10 @@ export class Lobby {
     const room = ctx.room;
     for (const p of ctx.members) if (!p.isBot) {
       const session = this.registry.byId(p.playerId);
-      if (session?.activeMatchCtx === ctx) session.activeMatchCtx = null;
-      if (!room && session) session.roomCode = null;
+      if (session?.activeMatchCtx === ctx) {
+        session.activeMatchCtx = null;
+        if (!room) session.roomCode = null;
+      }
     }
     if (room) {
       // onMatchEnd owns the room replay/lobby transition and its exactly-once guard.
@@ -1414,7 +1509,7 @@ export class Lobby {
     if (!session.connected || this.registry.byId(session.playerId) !== session) return;
     const room = this.roomOf(session);
     const active = this.activeMatchOf(session);
-    if (!room && active?.match) {
+    if (active?.match && (!room || active.queue)) {
       this.callMatchContext(active, 'onReconnect', session.playerId);
       return;
     }
@@ -1457,8 +1552,8 @@ export class Lobby {
     const match = active?.match || room?.match;
     if (!match) return room ? fail(ERR.WRONG_PHASE, 'no running match') : fail(ERR.NOT_IN_ROOM);
     if (msg.t === 'g.leave') {
-      if (active?.queue && !room) this.leaveQueuedMatchPlayer(active, session.playerId);
-      else if (active?.queue && room) this.removeMember(room, session.playerId);
+      if (active?.queue && !active.room?.seatOf(session.playerId)) this.leaveQueuedMatchPlayer(active, session.playerId);
+      else if (active?.queue) this.removeMember(active.room, session.playerId);
       else this.removeMember(room, session.playerId);
       return OK;
     }
@@ -1504,6 +1599,8 @@ export class Lobby {
   }
 
   leaveQueuedMatchPlayer(ctx, playerId) {
+    const member = ctx.members?.find((p) => p.playerId === playerId);
+    if (member) { member.left = true; member.connected = false; }
     this.callMatchContext(ctx, 'onLeave', playerId);
     const session = this.registry.byId(playerId);
     if (session?.activeMatchCtx === ctx) session.activeMatchCtx = null;

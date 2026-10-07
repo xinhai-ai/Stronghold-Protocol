@@ -17,15 +17,17 @@
 //     remaining time the checkpoint recorded, with at least 20 s of prep (snapshot.MIN_RECOVER_PREP_SEC).
 //   * A session whose reconnect window elapsed while the server was down (10 min for a co-op room, 24 h for a solo run:
 //     lobby.soloReconnectWindowMs). Its room is dropped too when nobody is left in it; a running match whose human seat
-//     lost its session is not resumed — the room goes back to the lobby with the players that did survive.
+//     lost its session leaves the restored match; the other valid identities continue. A checkpoint with no usable
+//     human identity is retained for a later recovery attempt. Latest departures travel separately from checkpoints.
 //
 // The document is one JSON object under `<prefix>state`, rewritten every `saveMs` (default 10 s) and once on a graceful
 // shutdown. State older than the Redis TTL (25 h) is gone; a *stale* document (a Redis that kept state from an older
-// run of another version) is refused by its `v` field.
+// run of another version) is recovered only through compatible fields, with diagnostics and retained failed records.
 
 import { captureMatch, SNAPSHOT_VERSION } from './match/snapshot.js';
 import { PersistenceWorker } from './workers/persistenceClient.js';
 import { t } from '../shared/i18n.js';
+import { DIFFICULTIES, MAX_SEATS, ROOM_CODE_LEN } from '../shared/constants.js';
 
 /** Document layout version (bumped when the shape below changes). */
 export const PERSIST_VERSION = 1;
@@ -44,7 +46,7 @@ const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
  * @param {import('./net.js').Session} s
  * @param {number} now
  */
-export function sessionDoc(s, now) {
+export function sessionDoc(s, now, activeMatchKey = null) {
   return {
     playerId: s.playerId,
     token: s.token,
@@ -54,6 +56,9 @@ export function sessionDoc(s, now) {
     resumeWindowMs: typeof s.resumeWindowMs === 'number' && s.resumeWindowMs > 0 ? s.resumeWindowMs : null,
     connected: !!s.connected,
     disconnectedAt: s.connected || s.disconnectedAt == null ? now : s.disconnectedAt,
+    activeMatchKey,
+    notice: s.notice || null,
+    pendingResult: s.pendingResult || null,
   };
 }
 
@@ -76,6 +81,7 @@ export function roomDoc(room) {
     hostId: room.hostId || null,
     ownerKey: room.ownerKey || null,
     matchKey: room.matchKey || null,
+    queueMatch: !!room.matchCtx?.queue,
     matchCount: room.matchCount | 0,
     seats: room.seats.filter(Boolean).map(seatDoc),
   };
@@ -87,16 +93,37 @@ export function roomDoc(room) {
  */
 export function snapshotServer({ registry, lobby, matchDocs = null, now = Date.now() }) {
   const matches = {};
+  const matchDepartures = {};
+  const matchBattleSeq = {};
   if (matchDocs) {
     for (const [code, doc] of matchDocs) if (doc) matches[code] = doc;
+  }
+  // Membership may change during combat, while the last safe game checkpoint stays in PREP.
+  for (const { key, match } of lobby.persistenceMatches()) {
+    const previous = lobby.recoveryDocs?.get(key);
+    if (previous) {
+      const archiveKey = `superseded:${key}:${previous.checkpoint?.seed}:${previous.checkpoint?.savedAt}`;
+      lobby.recoveryDocs.set(archiveKey, { ...previous, key, superseded: true });
+      lobby.recoveryDocs.delete(key);
+    }
+    const departed = (match.order || []).filter((p) => !p.isBot && p.left).map((p) => p.playerId);
+    if (departed.length) matchDepartures[key] = departed;
+    if (Number.isInteger(match._battleSeq)) matchBattleSeq[key] = match._battleSeq;
   }
   return {
     v: PERSIST_VERSION,
     snapshot: SNAPSHOT_VERSION,
     savedAt: now,
-    sessions: [...registry.all()].map((s) => sessionDoc(s, now)),
+    sessions: [...registry.all()].map((s) => {
+      const ctx = lobby.activeMatchOf?.(s);
+      const key = ctx?.match && !ctx.ended && !ctx.disposed ? ctx.queue && !ctx.room ? `queue:${ctx.match.roomCode}` : ctx.room?.code || s.roomCode : null;
+      return sessionDoc(s, now, key);
+    }),
     rooms: [...lobby.rooms.values()].map((room) => ({ ...roomDoc(room), hasMatch: !!room.match })),
     matches,
+    matchDepartures,
+    matchBattleSeq,
+    recovery: Object.fromEntries(lobby.recoveryDocs || []),
   };
 }
 
@@ -114,45 +141,119 @@ export function snapshotServer({ registry, lobby, matchDocs = null, now = Date.n
  * @returns {{ ok: boolean, reason?: string, sessions: number, expired: number, rooms: number, matches: number, droppedSeats: number }}
  */
 export function restoreServer({ doc, registry, lobby, now = Date.now(), log = noopLog }) {
-  const stats = { ok: false, sessions: 0, expired: 0, rooms: 0, matches: 0, droppedSeats: 0 };
+  const stats = { ok: false, sessions: 0, expired: 0, rooms: 0, matches: 0, droppedSeats: 0, deferredMatches: 0 };
   if (!doc || typeof doc !== 'object') return { ...stats, reason: 'empty' };
-  if (doc.v !== PERSIST_VERSION) return { ...stats, reason: `version ${doc.v}` };
+  if (doc.v !== PERSIST_VERSION) {
+    if (!Array.isArray(doc.sessions) || (!Array.isArray(doc.rooms) && !doc.matches)
+      || (!doc.sessions.length && !doc.rooms?.length && !Object.keys(doc.matches || {}).length && !Object.keys(doc.recovery || {}).length)) {
+      return { ...stats, reason: `version ${doc.v}` };
+    }
+    log.warn?.(`[persist] document version ${doc.v}: attempting recovery of compatible records`);
+  }
 
-  for (const s of Array.isArray(doc.sessions) ? doc.sessions : []) {
-    if (!s || typeof s.playerId !== 'string' || typeof s.token !== 'string' || !s.token) continue;
+  const retained = doc.recovery && typeof doc.recovery === 'object' ? doc.recovery : {};
+  const matches = new Map(Object.entries(doc.matches && typeof doc.matches === 'object' ? doc.matches : {}));
+  for (const [key, entry] of Object.entries(retained)) {
+    if (entry?.superseded) { lobby.recoveryDocs?.set(key, entry); stats.deferredMatches++; }
+    else if (!matches.has(key) && entry?.checkpoint) matches.set(key, entry.checkpoint);
+  }
+  const sessionDocs = new Map();
+  for (const s of [...(Array.isArray(doc.sessions) ? doc.sessions : []),
+    ...Object.values(retained).flatMap((entry) => !entry?.superseded && Array.isArray(entry?.sessions) ? entry.sessions : [])]) {
+    if (s && typeof s.playerId === 'string' && s.playerId && typeof s.token === 'string' && s.token && !sessionDocs.has(s.playerId)) sessionDocs.set(s.playerId, s);
+  }
+  const activeIds = new Set([...matches.values()].flatMap((cp) => Array.isArray(cp?.players)
+    ? cp.players.filter((p) => p && !p.isBot && !p.left).map((p) => p.playerId) : []));
+  const sessionMatchKeys = new Map([...sessionDocs].filter(([, s]) => typeof s.activeMatchKey === 'string').map(([id, s]) => [id, s.activeMatchKey]));
+
+  for (const s of [...sessionDocs.values()].sort((a, b) => Number(activeIds.has(b.playerId)) - Number(activeIds.has(a.playerId)))) {
     // a session that was connected when the document was written was cut off by the restart itself: its window starts now
     const since = s.connected === false && Number.isFinite(s.disconnectedAt) ? Number(s.disconnectedAt) : now;
     const windowMs = Number.isFinite(s.resumeWindowMs) && s.resumeWindowMs > 0 ? Number(s.resumeWindowMs) : null;
     const window = windowMs != null && windowMs > registry.reconnectWindowMs ? windowMs : registry.reconnectWindowMs;
     if (now - since > window) { stats.expired++; continue; }
-    const session = registry.adopt({
-      playerId: s.playerId,
-      token: s.token,
-      name: typeof s.name === 'string' ? s.name : t('博士'),
-      disconnectedAt: since,
-      resumeWindowMs: windowMs,
-      roomCode: s.roomCode,
-      loadout: s.loadout, notOwned: s.notOwned, diy: s.diy, lang: s.lang,
-      addr: s.addr,
-    });
-    if (session) stats.sessions++;
+    try {
+      const session = registry.adopt({
+        playerId: s.playerId,
+        token: s.token,
+        name: typeof s.name === 'string' ? s.name : t('博士'),
+        disconnectedAt: since,
+        resumeWindowMs: windowMs,
+        roomCode: s.roomCode,
+        loadout: s.loadout, notOwned: s.notOwned, diy: s.diy, lang: s.lang,
+        addr: s.addr,
+        notice: s.notice, pendingResult: s.pendingResult,
+      }, { allowOverCapacity: activeIds.has(s.playerId) });
+      if (session) stats.sessions++;
+      else log.warn?.(`[persist] session ${s.playerId} could not be adopted; other sessions continue`);
+    } catch (e) { log.warn?.(`[persist] session ${s.playerId} restore failed (${e.message}); other sessions continue`); }
   }
 
-  const result = lobby.restoreRooms(Array.isArray(doc.rooms) ? doc.rooms : [], { now });
-  stats.rooms = result.rooms;
-  stats.droppedSeats = result.droppedSeats;
-
-  const matches = doc.matches && typeof doc.matches === 'object' ? doc.matches : {};
-  for (const room of lobby.rooms.values()) {
-    const checkpoint = matches[room.code];
-    if (!checkpoint) continue;
-    if (lobby.restoreMatch(room, checkpoint)) stats.matches++;
-    else log.warn?.(`[persist] ${room.code}: the running match could not be resumed — room kept in the lobby`);
+  const departures = (key) => Array.isArray(doc.matchDepartures?.[key]) ? doc.matchDepartures[key]
+    : Array.isArray(retained[key]?.departedPlayerIds) ? retained[key].departedPlayerIds : [];
+  const roomDocs = new Map();
+  for (const r of [...(Array.isArray(doc.rooms) ? doc.rooms : []), ...Object.values(retained).filter((entry) => !entry?.superseded).map((entry) => entry?.room)]) {
+    if (r && typeof r.code === 'string' && r.code.length === ROOM_CODE_LEN && !roomDocs.has(r.code)) roomDocs.set(r.code, r);
   }
-  for (const [key, checkpoint] of Object.entries(matches)) {
-    if (!key.startsWith('queue:') || !checkpoint) continue;
-    if (lobby.restoreQueuedMatch(checkpoint)) stats.matches++;
-    else log.warn?.(`[persist] ${key}: the standalone matchmaking match could not be resumed`);
+  for (const [key, cp] of matches) if (!key.startsWith('queue:') && key.length === ROOM_CODE_LEN && !roomDocs.has(key) && cp) {
+    roomDocs.set(key, { code: key, mode: cp.mode, difficulty: cp.difficulty, seats: [], queueMatch: true });
+    log.warn?.(`[persist] ${key}: rebuilding missing room from its checkpoint`);
+  }
+  for (const [key, original] of roomDocs) {
+    try {
+      const cp = matches.get(key);
+      const players = Array.isArray(cp?.players) ? cp.players.filter((p) => p && typeof p.playerId === 'string') : [];
+      const seats = Array.isArray(original.seats) ? original.seats.filter((s) => s && typeof s.playerId === 'string').map((s) => ({ ...s })) : [];
+      const hasHuman = seats.some((s) => !s.isBot && !s.left && registry.byId(s.playerId));
+      // An owning room can disappear while its public teammates and checkpoint survive.
+      if (!hasHuman && cp) for (const p of players) {
+        if (p.isBot || p.left || !registry.byId(p.playerId) || departures(key).includes(p.playerId)) continue;
+        const owner = sessionMatchKeys.get(p.playerId);
+        if (owner && owner !== key) continue;
+        if (!seats.some((s) => s.playerId === p.playerId)) seats.push({ ...p, left: false });
+        const session = registry.byId(p.playerId);
+        if (!session.roomCode || !roomDocs.has(session.roomCode)) session.roomCode = key;
+      }
+      const used = new Set(), ids = new Set();
+      const normalized = seats.filter((s) => {
+        if (ids.has(s.playerId) || ids.size >= MAX_SEATS) return false;
+        ids.add(s.playerId);
+        if (!Number.isInteger(s.seat) || s.seat < 0 || s.seat >= MAX_SEATS || used.has(s.seat)) {
+          s.seat = Array.from({ length: MAX_SEATS }, (_, i) => i).find((i) => !used.has(i));
+        }
+        used.add(s.seat);
+        if (cp && (!registry.byId(s.playerId) || departures(key).includes(s.playerId))) s.left = !s.isBot;
+        return true;
+      });
+      const record = { ...original, seats: normalized, mode: original.mode === 'solo' ? 'solo' : 'coop',
+        difficulty: DIFFICULTIES.includes(original.difficulty) ? original.difficulty : DIFFICULTIES.includes(cp?.difficulty) ? cp.difficulty : 'NORMAL' };
+      const result = lobby.restoreRooms([record], { now });
+      stats.rooms += result.rooms;
+      stats.droppedSeats += result.droppedSeats;
+    } catch (e) { log.warn?.(`[persist] ${key}: room restore failed (${e.message}); other rooms continue`); }
+  }
+  const ordered = [...matches].sort(([ak, a], [bk, b]) => Number(Object.hasOwn(retained, ak)) - Number(Object.hasOwn(retained, bk))
+    || (Number(b?.savedAt) || 0) - (Number(a?.savedAt) || 0));
+  for (const [key, raw] of ordered) {
+    if (!raw) continue;
+    let restored = false;
+    try {
+      const checkpoint = { ...raw, roomCode: key.startsWith('queue:') ? key.slice(6) : key,
+        _battleSeq: Math.max(Number(raw._battleSeq) || 0, Number(doc.matchBattleSeq?.[key]) || Number(retained[key]?.battleSeq) || 0) };
+      const opts = { departedPlayerIds: departures(key), sessionMatchKeys };
+      const room = lobby.getRoom(key);
+      restored = key.startsWith('queue:') ? lobby.restoreQueuedMatch(checkpoint, opts)
+        : !!room && lobby.restoreMatch(room, checkpoint, { ...opts, queue: roomDocs.get(key)?.queueMatch === true });
+    } catch (e) { log.warn?.(`[persist] ${key}: match restore failed (${e.message}); other matches continue`); }
+    if (restored) { stats.matches++; lobby.recoveryDocs?.delete(key); }
+    else {
+      stats.deferredMatches++;
+      const ids = new Set(Array.isArray(raw.players) ? raw.players.map((p) => p?.playerId) : []);
+      lobby.recoveryDocs?.set(key, { checkpoint: raw, room: roomDocs.get(key) || null,
+        sessions: [...sessionDocs.values()].filter((s) => ids.has(s.playerId)), departedPlayerIds: departures(key),
+        battleSeq: Number(doc.matchBattleSeq?.[key]) || Number(retained[key]?.battleSeq) || 0 });
+      log.warn?.(`[persist] ${key}: checkpoint retained for a later recovery attempt`);
+    }
   }
   stats.ok = true;
   return stats;
@@ -196,6 +297,19 @@ export class Persister {
     this.running = false;
     this._busy = false;
     this._flush = null;
+    this.pendingLoad = false;
+    this._startFlush = false;
+    this._startFlushTimer = null;
+    this.previousMatchStarted = lobby.onMatchStarted;
+    this.matchStarted = (item) => {
+      try { this.previousMatchStarted?.(item); }
+      catch (e) { this.log.warn?.(`[persist] ${item.key}: previous start hook failed (${e.message}); checkpoint capture continues`); }
+      // request() structured-clones the capture before the next client action can mutate the match.
+      this.checkpoint(item).then((captured) => {
+        if (captured && this.running) this.flush('match-start').catch(() => {});
+      }).catch((e) => this.log.warn?.(`[persist] ${item.key}: initial checkpoint failed (${e.message})`));
+    };
+    lobby.onMatchStarted = this.matchStarted;
   }
 
   entries() {
@@ -205,22 +319,71 @@ export class Persister {
     });
   }
 
+  /** A failed startup read must not let a later write replace a state document that was never recovered. */
+  deferLoad() {
+    this.pendingLoad = true;
+    this.registry.recoveryPending = true;
+  }
+
+  async retryLoad() {
+    const doc = await this.store.load({ attempts: 1 });
+    if (!doc && ['unavailable', 'invalid'].includes(this.store.loadState)) return false;
+    if (doc) {
+      const stats = restoreServer({ doc, registry: this.registry, lobby: this.lobby, now: this.now(), log: this.log });
+      if (!stats.ok) return false;
+      await this.seed(doc);
+      this.log.info?.(`[persist] deferred state loaded (${stats.matches} match(es), ${stats.deferredMatches} checkpoint(s) retained)`);
+    }
+    this.pendingLoad = false;
+    this.registry.recoveryPending = false;
+    return true;
+  }
+
   /** Keep loaded checkpoints even if the restored match enters combat before the first save. */
   async seed(doc) {
-    const entries = this.entries().map(({ key, generation }) => ({ key, generation }));
-    const { bytes } = await this.encoder.request('seed', { doc, entries });
-    this.encoder.remember(bytes, entries);
-    this.checkpointKeys = new Set(entries.filter(({ key }) => doc.matches?.[key]).map(({ key }) => key));
+    const live = this.entries();
+    const entries = live.map(({ key, generation }) => ({ key, generation }));
+    const matches = {};
+    for (const { key, match } of live) {
+      const cp = doc.matches?.[key] || doc.recovery?.[key]?.checkpoint;
+      if (!cp) continue;
+      if ((cp.seed != null && Number.isFinite(Number(cp.seed)) && Number(cp.seed) !== match.seed)
+        || (typeof cp.battlePrefix === 'string' && cp.battlePrefix && cp.battlePrefix !== match.battlePrefix)) continue;
+      matches[key] = cp;
+    }
+    const seedDoc = { ...doc, matches };
+    this.encoder.rememberDocument(seedDoc, entries);
+    this.checkpointKeys = new Set(entries.filter(({ key }) => matches[key]).map(({ key }) => key));
+    try {
+      const { bytes } = await this.encoder.request('seed', { doc: seedDoc, entries });
+      this.encoder.remember(bytes, entries);
+      return true;
+    } catch (e) {
+      this.failures++;
+      this.log.warn?.(`[persist] checkpoint Worker seed failed (${e.message}); loaded checkpoints retained for retry`);
+      return false;
+    }
   }
 
   /** Post each capture immediately, before yielding: mutations cannot interleave with a match's structured clone. */
   async checkpointMatches() {
     for (const item of this.lobby.persistenceMatches()) {
+      await this.checkpoint(item);
+    }
+  }
+
+  async checkpoint(item) {
+    try {
       const capture = captureMatch(item.match);
-      if (!capture) continue;
+      if (!capture) return false;
       if (!this.generations.has(item.match)) this.generations.set(item.match, ++this.generationSeq);
       await this.encoder.request('checkpoint', { key: item.key, generation: this.generations.get(item.match), capture });
       this.checkpointKeys.add(item.key);
+      return true;
+    } catch (e) {
+      this.failures++;
+      this.log.warn?.(`[persist] ${item.key}: checkpoint capture failed (${e.message}); retaining its last checkpoint and saving other matches`);
+      return false;
     }
   }
 
@@ -242,15 +405,35 @@ export class Persister {
 
   /** One save round (never throws). */
   async flush(reason = 'tick') {
-    if (!this.store || this._busy) return false;
+    if (!this.store) return false;
+    if (this._busy) {
+      if (reason === 'match-start') this._startFlush = true;
+      if (['tick', 'interval', 'match-start'].includes(reason)) return false;
+      await this._flush;
+      return this.flush(reason);
+    }
+    this._startFlush = false;
+    if (this._startFlushTimer) { clearImmediate(this._startFlushTimer); this._startFlushTimer = null; }
     this._busy = true;
     this._flush = this.write(reason);
     try { return await this._flush; }
-    finally { this._busy = false; this._flush = null; }
+    finally {
+      this._busy = false;
+      this._flush = null;
+      if (this._startFlush && this.running && !this._startFlushTimer) {
+        this._startFlush = false;
+        this._startFlushTimer = setImmediate(() => {
+          this._startFlushTimer = null;
+          if (this.running) this.flush('match-start').catch(() => {});
+        });
+        this._startFlushTimer.unref?.();
+      }
+    }
   }
 
   async write(reason) {
     try {
+      if (this.pendingLoad && !await this.retryLoad()) { this.skipped++; return false; }
       const { bytes, entries } = await this.serialized();
       const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       // Real Redis takes already encoded bytes. Legacy injected stores retain their object API (tests / diagnostics).
@@ -279,6 +462,8 @@ export class Persister {
   stop() {
     this.running = false;
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    if (this._startFlushTimer) { clearImmediate(this._startFlushTimer); this._startFlushTimer = null; }
+    this._startFlush = false;
   }
 
   /** Stop and write the final document. */
@@ -286,6 +471,9 @@ export class Persister {
     this.stop();
     if (this._flush) await this._flush;
     try { return await this.flush(reason); }
-    finally { await this.encoder.close(); }
+    finally {
+      if (this.lobby.onMatchStarted === this.matchStarted) this.lobby.onMatchStarted = this.previousMatchStarted;
+      await this.encoder.close();
+    }
   }
 }

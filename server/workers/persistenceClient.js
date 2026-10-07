@@ -14,6 +14,7 @@ export class PersistenceWorker {
   }
 
   remember(bytes, entries) { this.seed = { bytes, entries }; }
+  rememberDocument(doc, entries) { this.seed = { doc, entries }; }
 
   request(type, payload) {
     if (this.closed) return Promise.reject(new Error('persistence worker closed'));

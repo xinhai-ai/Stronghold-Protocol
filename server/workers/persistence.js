@@ -11,8 +11,8 @@ function seed(doc, entries) {
   }
 }
 if (workerData?.seed) {
-  const { bytes, entries } = workerData.seed;
-  seed(JSON.parse(new TextDecoder().decode(bytes)), entries);
+  const { doc, bytes, entries } = workerData.seed;
+  seed(doc || JSON.parse(new TextDecoder().decode(bytes)), entries);
 }
 
 parentPort.on('message', ({ id, type, payload }) => {

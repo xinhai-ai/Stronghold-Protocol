@@ -143,3 +143,22 @@ test('a restart through Redis keeps rooms and tokens', { skip: !available && `no
   await back.close();
   await other.close();
 });
+
+test('unreadable Redis JSON is preserved instead of overwritten by periodic or shutdown writes', { skip: !available && `no Redis at ${REDIS_URL}` }, async () => {
+  const probe = store('invalid-json');
+  let srv;
+  const raw = '{"broken":';
+  try {
+    assert.equal(await probe.saveSerialized(raw), true);
+    assert.equal(await probe.load(), null);
+    assert.equal(probe.loadState, 'invalid');
+    srv = await startServer({ port: 0, quiet: true, store: store('invalid-json'), MatchClass: StubMatch, log: quietLog });
+    assert.equal(await srv.persister.flush('test'), false);
+    await srv.close();
+    assert.equal(await probe.client.get(probe.key), raw);
+  } finally {
+    await srv?.close();
+    await probe.clear();
+    await probe.close();
+  }
+});

@@ -50,7 +50,7 @@ test('Worker keeps the last safe checkpoint and prunes ended or replaced matches
   assert.deepEqual(replaced.keys, [], 'new match in the same room cannot inherit an old checkpoint');
 });
 
-test('capture failures skip the write and never fall back to synchronous encoding', async (t) => {
+test('capture failures keep the last checkpoint and do not block other state writes or encode synchronously', async (t) => {
   const h = makeMatch({ humans: 1, fake: true });
   t.after(() => h.m.dispose());
   h.start();
@@ -62,12 +62,12 @@ test('capture failures skip the write and never fall back to synchronous encodin
   });
   t.after(() => persister.encoder.close());
   h.m.order[0].hand.push(() => {}); // not structured-cloneable
-  assert.equal(await persister.flush(), false);
-  assert.equal(writes, 0);
+  assert.equal(await persister.flush(), true);
+  assert.equal(writes, 1);
   assert.equal(persister.failures, 1);
   h.m.order[0].hand.pop();
   assert.equal(await persister.flush(), true);
-  assert.equal(writes, 1);
+  assert.equal(writes, 2);
 });
 
 test('restored checkpoints survive combat and a Worker restart before the first save', async (t) => {

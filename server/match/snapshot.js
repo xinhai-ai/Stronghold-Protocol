@@ -21,6 +21,7 @@
 // The module is engine-side only: server/persist.js owns the storage and the lobby owns the room wiring.
 
 import { PHASE } from '../../shared/constants.js';
+import { buildNormalWave } from './waves.js';
 
 /** Checkpoint layout version; a document of another version is refused. */
 export const SNAPSHOT_VERSION = 1;
@@ -293,26 +294,49 @@ export function encodeMatchCapture(capture) {
  * @param {{ createRngFromState: (state: number) => any, log?: object }} deps
  * @returns {boolean} false when the document does not fit this match (version/phase/player mismatch)
  */
-export function restoreMatch(m, doc, { createRngFromState, log = console } = {}) {
+export function restoreMatch(m, doc, { createRngFromState, log = console, bestEffort = false, departedPlayerIds = [] } = {}) {
   if (!m || !doc || typeof doc !== 'object') return false;
   if (!m.sched || typeof m.sched.now !== 'function' || !m.pool || !(m.pool.entries instanceof Map)) return false;
-  if (doc.v !== SNAPSHOT_VERSION) { log.warn?.(`[snapshot] ${m.roomCode}: unsupported checkpoint version ${doc.v}`); return false; }
-  if (!SNAPSHOT_PHASES.includes(doc.phase)) { log.warn?.(`[snapshot] ${m.roomCode}: unsupported phase ${doc.phase}`); return false; }
+  if (doc.v !== SNAPSHOT_VERSION) {
+    log.warn?.(`[snapshot] ${m.roomCode}: checkpoint version ${doc.v}${bestEffort ? '; recovering compatible fields' : ' unsupported'}`);
+    if (!bestEffort) return false;
+  }
+  if (!SNAPSHOT_PHASES.includes(doc.phase) && !bestEffort) { log.warn?.(`[snapshot] ${m.roomCode}: unsupported phase ${doc.phase}`); return false; }
+  if (bestEffort && !m.pool.entries.size) { log.warn?.(`[snapshot] ${m.roomCode}: game data unavailable; checkpoint deferred`); return false; }
   const players = Array.isArray(doc.players) ? doc.players : [];
   for (const p of players) if (!m.players.has(p.playerId)) { log.warn?.(`[snapshot] ${m.roomCode}: seat ${p.playerId} missing`); return false; }
   if (players.length !== m.players.size) { log.warn?.(`[snapshot] ${m.roomCode}: ${players.length} of ${m.players.size} seats in the checkpoint`); return false; }
   if (typeof createRngFromState !== 'function') throw new TypeError('restoreMatch: createRngFromState required');
 
   const now = m.sched.now();
-  for (const k of MATCH_FIELDS) if (k !== 'round') m[k] = decodeState(doc[k]);
+  const initialStage = m.stage;
+  const reset = (label, e) => log.warn?.(`[snapshot] ${m.roomCode}: ${label} reset to its compatible default (${e.message})`);
+  const field = (target, record, key, label) => {
+    if (!Object.hasOwn(record, key)) return;
+    if (!bestEffort) { target[key] = decodeState(record[key]); return; }
+    try { target[key] = recoverValue(decodeState(record[key]), target[key], label, reset); }
+    catch (e) { reset(label, e); }
+  };
+  for (const k of MATCH_FIELDS) if (k !== 'round') field(m, doc, k, k);
   m.round = Number(doc.round) || 0;
-  m.phase = doc.phase;
+  if (bestEffort && (!Number.isInteger(m.round) || m.round < 0
+    || (m.round === 0 && [PHASE.PREP, PHASE.ROUND_START, PHASE.SP_DRAFT].includes(doc.phase)))) {
+    m.round = Math.max(1, ...players.map((p) => Number.isInteger(p.prepsEnded) ? p.prepsEnded + 1 : 1));
+    log.warn?.(`[snapshot] ${m.roomCode}: invalid round inferred as ${m.round}`);
+  }
+  m.phase = SNAPSHOT_PHASES.includes(doc.phase) ? doc.phase : m.round > 0 ? PHASE.PREP : PHASE.INFO_CHECK;
+  if (m.phase !== doc.phase) log.warn?.(`[snapshot] ${m.roomCode}: phase ${doc.phase} recovered as ${m.phase}`);
   m.ended = false;
   m.disposed = false;
   m.paused = false;          // a solo pause does not survive a restart (the header)
   m._pausedAt = 0;
   m.overtimeAt = 0;
   m.stage = m.stageId ? m.gd.stage(m.stageId) : null;
+  if (bestEffort && !m.stage && initialStage) {
+    log.warn?.(`[snapshot] ${m.roomCode}: unavailable stage ${m.stageId}; using compatible stage ${initialStage.id}`);
+    m.stage = initialStage;
+    m.stageId = initialStage.id;
+  }
   m.startedAt = now - (Number(doc.startedAtAgoMs) || 0);
   // a re-fought round must never collide with the reports of the interrupted one
   m._battleSeq = (Number(m._battleSeq) || 0) + RESTORE_SEQ_GAP;
@@ -358,7 +382,7 @@ export function restoreMatch(m, doc, { createRngFromState, log = console } = {})
     const ps = m.players.get(p.playerId);
     for (const k of PLAYER_FIELDS) {
       if (k === 'playerId') continue;
-      if (Object.hasOwn(p, k)) ps[k] = decodeState(p[k]);
+      field(ps, p, k, `${p.playerId}.${k}`);
     }
     if (ps._tempDue === null || !(ps._tempDue instanceof Map)) ps._tempDue = new Map();
     if (ps.board === null || !(ps.board instanceof Map)) ps.board = new Map();
@@ -380,10 +404,129 @@ export function restoreMatch(m, doc, { createRngFromState, log = console } = {})
     ps._legalityStale = true;
     ps._botPrepToken = 0;
     ps._lastPriv = null;
+    if (bestEffort) repairPlayer(ps, log);
     ps.recompute();
   }
-  enterPhase(m, doc, now);
+  m.order = [...m.players.values()].sort((a, b) => a.seat - b.seat);
+  if (bestEffort) {
+    repairPhase(m, log);
+    // Departures must precede re-entry so missing humans cannot stall a draft or participate in a restored boss pair.
+    for (const ps of m.order) if (ps.left && ps.alive) {
+      ps.left = false;
+      m.onLeave(ps.playerId);
+    }
+    for (const id of departedPlayerIds) if (!m.players.get(id)?.left) m.onLeave(id);
+    for (const ps of m.order) {
+      for (const piece of [...ps.hand, ...ps.temp, ...ps.board.values()]) {
+        if (!piece) continue;
+        for (const entry of [piece, ...(Array.isArray(piece.items) ? piece.items : [])]) {
+          if (Number.isInteger(entry.uid)) m.uidSeq = Math.max(m.uidSeq, entry.uid);
+        }
+      }
+    }
+  }
+  if (m.ended) return true;
+  try { enterPhase(m, { ...doc, phase: m.phase }, now); }
+  catch (e) {
+    if (!bestEffort) throw e;
+    log.warn?.(`[snapshot] ${m.roomCode}: phase re-entry failed (${e.message}); recovering a playable phase`);
+    for (const timer of [...m._timers]) m.cancel(timer);
+    m._phaseTimer = m._turnTimer = m._pubTimer = null;
+    m._pubDirty = false;
+    m._prepEndQueued = false;
+    for (const ps of m.order) ps.ready = false;
+    m.phase = m.round > 0 ? PHASE.PREP : PHASE.INFO_CHECK;
+    m.sp = null;
+    enterPhase(m, { ...doc, phase: m.phase }, now);
+  }
   return true;
+}
+
+/** Preserve compatible state and constructor defaults for missing nested optional fields. */
+function recoverValue(value, fallback, label, reset) {
+  const invalid = () => { throw new TypeError(`invalid ${label}`); };
+  if (fallback == null) return value;
+  if (fallback instanceof Map) { if (!(value instanceof Map)) invalid(); return value; }
+  if (fallback instanceof Set) { if (!(value instanceof Set)) invalid(); return value; }
+  if (Array.isArray(fallback)) { if (!Array.isArray(value)) invalid(); return value; }
+  if (typeof value !== typeof fallback || value == null) invalid();
+  if (typeof fallback === 'number' && (Number.isNaN(value) || (Number.isFinite(fallback) && !Number.isFinite(value)))) invalid();
+  if (typeof fallback !== 'object') return value;
+  if (Array.isArray(value) || value instanceof Map || value instanceof Set) invalid();
+  const out = { ...value };
+  for (const [key, original] of Object.entries(fallback)) {
+    if (!Object.hasOwn(value, key)) out[key] = original;
+    else {
+      try { out[key] = recoverValue(value[key], original, `${label}.${key}`, reset); }
+      catch (e) { out[key] = original; reset(`${label}.${key}`, e); }
+    }
+  }
+  return out;
+}
+
+/** Discard only unusable inventory entries, keeping the player's economy and other valid pieces. */
+function repairPlayer(ps, log) {
+  const warn = (what) => log.warn?.(`[snapshot] ${ps.m.roomCode}: ${ps.playerId} repaired ${what}`);
+  const piece = (p) => {
+    if (!p) return null;
+    if (typeof p !== 'object' || !['chess', 'item', 'token'].includes(p.kind) || typeof p.id !== 'string') {
+      warn('an invalid piece');
+      return null;
+    }
+    if (p.items != null) {
+      if (!Array.isArray(p.items)) { warn('equipped item list'); p.items = []; }
+      else p.items = p.items.filter((item) => item && typeof item === 'object' && typeof item.id === 'string');
+    }
+    if (!p.meta || typeof p.meta !== 'object') p.meta = {};
+    return p;
+  };
+  ps.hand = ps.hand.map(piece);
+  ps.temp = ps.temp.map(piece);
+  for (const [key, value] of ps.board) {
+    const repaired = piece(value);
+    if (!repaired || !/^\d+,\d+$/.test(key)) { warn('an invalid board entry'); ps.board.delete(key); }
+    else ps.board.set(key, repaired);
+  }
+  for (const key of ['effects', 'bounties']) ps[key] = ps[key].filter((entry) => entry && typeof entry === 'object');
+  ps.shop.slots = ps.shop.slots.filter((entry) => !entry || typeof entry === 'object');
+}
+
+/** Repair only the phase plumbing; never repeat income, round-start effects, purchases or applied choices. */
+function repairPhase(m, log) {
+  const warn = (text) => log.warn?.(`[snapshot] ${m.roomCode}: ${text}`);
+  const ids = new Set(m.players.keys());
+  if (m.phase === PHASE.BAND_DRAFT) {
+    const d = m.draft;
+    if (!d || !Array.isArray(d.order) || !d.picks || typeof d.picks !== 'object') {
+      warn('rebuilt strategy draft from saved player selections');
+      m.draft = { order: m.order.map((p) => p.playerId), idx: 0,
+        picks: Object.fromEntries(m.order.filter((p) => p.bandId).map((p) => [p.playerId, p.bandId])),
+        skipsLeft: Object.fromEntries(m.order.map((p) => [p.playerId, m.isSolo ? 0 : m.gd.bandDraft.skipsPerPlayer])),
+        untimed: m.soloUntimed, turnDeadline: 0, focus: new Map() };
+    } else {
+      d.order = [...new Set(d.order.filter((id) => ids.has(id)))];
+      for (const id of ids) if (!d.order.includes(id)) d.order.push(id);
+      d.idx = Number.isInteger(d.idx) && d.idx >= 0 ? Math.min(d.idx, d.order.length) : 0;
+      if (!(d.focus instanceof Map)) d.focus = new Map();
+      if (!d.skipsLeft || typeof d.skipsLeft !== 'object') d.skipsLeft = {};
+    }
+  }
+  if (m.phase === PHASE.SP_DRAFT) {
+    const s = m.sp;
+    if (!s || !Array.isArray(s.cards) || !Array.isArray(s.order) || !s.picks || !s.taken) {
+      warn('unusable special draft skipped; saved choices and economy retained');
+      m.sp = null;
+      m.phase = PHASE.PREP;
+    } else {
+      s.order = [...new Set(s.order.filter((id) => ids.has(id)))];
+      s.idx = Number.isInteger(s.idx) && s.idx >= 0 ? Math.min(s.idx, s.order.length) : 0;
+    }
+  }
+  if (m.round > 0 && [PHASE.PREP, PHASE.ROUND_START, PHASE.SP_DRAFT].includes(m.phase) && !m.wave && !m.bossWaves) {
+    warn('rebuilt missing wave without repeating round-start effects');
+    if (m.round === m.gd.bossRound || m.round === m.gd.hiddenRound) m._planBossWaves();
+    else m.wave = buildNormalWave(m.gd, m.rngWaves, m.factions, m.round);
+  }
 }
 
 /** Re-enter the checkpointed phase (see the header for the clock rules). */

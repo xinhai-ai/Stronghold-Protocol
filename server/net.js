@@ -139,6 +139,7 @@ export class SessionRegistry {
     this.reconnectWindowMs = reconnectWindowMs;
     this.maxSessions = maxSessions;
     this.now = now;
+    this.recoveryPending = false;
     /** @type {Map<string, Session>} */ this.byPlayerId = new Map();
     /** @type {Map<string, Session>} */ this.byTokenMap = new Map();
   }
@@ -180,14 +181,15 @@ export class SessionRegistry {
    * that owns the token is recognized as the same player after a restart. Always disconnected — the socket is gone.
    * Returns null when the id or the token is already taken / malformed.
    * @param {{ playerId: string, token: string, name: string, disconnectedAt?: number, resumeWindowMs?: number|null,
-   *           roomCode?: string|null, loadout?: object|null, addr?: string }} doc
+   *           roomCode?: string|null, loadout?: object|null, addr?: string, notice?: string|null, pendingResult?: string[]|null }} doc
+   * @param {{ allowOverCapacity?: boolean }} [opts] preserve existing active identities while keeping normal admission bounded
    * @returns {Session | null}
    */
-  adopt(doc) {
+  adopt(doc, { allowOverCapacity = false } = {}) {
     if (!doc || typeof doc.playerId !== 'string' || typeof doc.token !== 'string') return null;
     if (!doc.playerId || !doc.token) return null;
     if (this.byPlayerId.has(doc.playerId) || this.byTokenMap.has(doc.token)) return null;
-    if (this.byPlayerId.size >= this.maxSessions) return null;
+    if (this.byPlayerId.size >= this.maxSessions && !allowOverCapacity) return null;
     const now = this.now();
     const s = new Session({ playerId: doc.playerId, token: doc.token, name: doc.name, now });
     s.connected = false;
@@ -200,6 +202,8 @@ export class SessionRegistry {
     s.notOwned = Array.isArray(doc.notOwned) ? doc.notOwned : null;
     s.diy = doc.diy && typeof doc.diy === 'object' ? doc.diy : null;
     s.lang = doc.lang || 'zh-CN';
+    s.notice = typeof doc.notice === 'string' ? doc.notice : null;
+    s.pendingResult = Array.isArray(doc.pendingResult) ? doc.pendingResult.filter((frame) => typeof frame === 'string') : null;
     s.addr = typeof doc.addr === 'string' ? doc.addr : '?';
     this.byPlayerId.set(s.playerId, s);
     this.byTokenMap.set(s.token, s);
@@ -239,10 +243,12 @@ export class SessionRegistry {
     return out;
   }
 
-  /** Evict the oldest disconnected session that is not in a room. @returns {boolean} */
+  /** Evict an idle disconnected session outside rooms and running matches. @returns {boolean} */
   evictOne() {
     for (const s of this.byPlayerId.values()) {
-      if (!s.connected && !s.roomCode) { this.remove(s); return true; }
+      const ctx = s.activeMatchCtx;
+      const active = ctx?.match && !ctx.ended && !ctx.disposed;
+      if (!s.connected && !s.roomCode && !active) { this.remove(s); return true; }
     }
     return false;
   }
@@ -554,6 +560,7 @@ export class Network {
     /** @type {Map<string, number>} open sockets per client network key */
     this.connsPerKey = new Map();
     this.closed = false;
+    this.draining = false;
     this.presenceTimer = setInterval(() => this.broadcastPresence(), PRESENCE_INTERVAL_MS);
     this.presenceTimer.unref?.();
     this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
@@ -619,7 +626,7 @@ export class Network {
    * @returns {null | 'shutdown' | 'full' | 'per-address'}
    */
   admission(req) {
-    if (this.closed) return 'shutdown';
+    if (this.closed || this.draining) return 'shutdown';
     if (this.conns.size >= this.opts.maxConnections) return 'full';
     const { key } = clientAddress(req, this.opts.trustProxy);
     const cap = this.opts.maxConnectionsPerAddr;
@@ -695,6 +702,7 @@ export class Network {
       this.reply(conn, pong);
       return;
     }
+    if (this.draining) { this.reply(conn, errorMsg(ERR.INTERNAL, rid, 'server shutting down')); return; }
     if (msg.t === 'hello') { this.onHelloMsg(conn, msg, now); return; }
     if (!conn.session) { this.reply(conn, errorMsg(ERR.BAD_MSG, rid, 'hello required')); return; }
     if (HEAVY_TYPES.has(msg.t) && !conn.heavy.take(now)) { this.reply(conn, errorMsg(ERR.RATE, rid, `${msg.t} too often`)); return; }
@@ -727,6 +735,10 @@ export class Network {
     }
     const name = sanitizeName(msg.name);
     if (!name) { this.reply(conn, errorMsg(ERR.BAD_MSG, rid, 'bad field name')); return; }
+    if (!conn.session && msg.token && this.registry.recoveryPending && !this.registry.byToken(msg.token)) {
+      conn.close(1013, 'saved session recovery pending');
+      return;
+    }
 
     let session = conn.session;
     let resumed = false;
@@ -827,6 +839,12 @@ export class Network {
    * Stop timers and close every socket (graceful: close frame, then terminate after 1 s).
    * @param {number} [code] @param {string} [reason]
    */
+  beginShutdown() {
+    this.draining = true;
+    clearInterval(this.heartbeatTimer);
+    clearInterval(this.sweepTimer);
+  }
+
   close(code = CLOSE.SHUTDOWN, reason = 'server shutdown') {
     if (this.closed) return;
     this.closed = true;

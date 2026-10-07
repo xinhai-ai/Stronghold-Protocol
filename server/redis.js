@@ -66,6 +66,7 @@ export class StateStore {
     this.failures = 0;
     this.saved = 0;
     this.loadedAt = 0;
+    this.loadState = 'unread';
     this.closed = false;
   }
 
@@ -150,6 +151,7 @@ export class StateStore {
    * @returns {Promise<object | null>} the parsed document (null when absent/unavailable/malformed)
    */
   async load({ attempts = LOAD_ATTEMPTS, retryMs = LOAD_RETRY_MS } = {}) {
+    this.loadState = 'unavailable';
     for (let i = 0; i < Math.max(1, attempts); i++) {
       const client = await this.connect();
       if (!client) {
@@ -158,11 +160,13 @@ export class StateStore {
       }
       try {
         const raw = await this.#command(client.get(this.key), 'read');
-        if (raw == null) return null;
+        if (raw == null) { this.loadState = 'empty'; return null; }
         const doc = JSON.parse(raw);
         this.loadedAt = Date.now();
-        return doc && typeof doc === 'object' ? doc : null;
+        this.loadState = doc && typeof doc === 'object' ? 'loaded' : 'invalid';
+        return this.loadState === 'loaded' ? doc : null;
       } catch (e) {
+        this.loadState = e instanceof SyntaxError ? 'invalid' : 'unavailable';
         this.#warn('read failed', e);
         return null;
       }

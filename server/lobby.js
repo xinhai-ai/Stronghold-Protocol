@@ -647,26 +647,18 @@ export class Lobby {
     }
     // A newly matched human party gives its teammates a fresh AI wait. Use the same packing as processing,
     // so another difficulty, a private ticket or a party that does not fit cannot extend their deadline.
-    let remaining = bucket.filter((queued) => !queued.removed);
-    while (remaining.length) {
-      const selected = this.selectMatchEntries(remaining);
-      if (selected.includes(entry)) {
-        if (selected.length > 1) for (const teammate of selected) {
-          teammate.deadlineAt = entry.deadlineAt;
-          if (teammate.room?.matching) {
-            teammate.room.matching.deadlineAt = teammate.deadlineAt;
-            this.broadcastState(teammate.room);
-          }
-        }
-        break;
+    const selected = this.groupMatchEntries(bucket).find((group) => group.includes(entry));
+    if (selected.length > 1) for (const teammate of selected) {
+      teammate.deadlineAt = entry.deadlineAt;
+      if (teammate.room?.matching) {
+        teammate.room.matching.deadlineAt = teammate.deadlineAt;
+        this.broadcastState(teammate.room);
       }
-      const group = new Set(selected);
-      remaining = remaining.filter((queued) => !group.has(queued));
     }
     this.broadcastQueueCounts(entry.mode, entry.difficulty);
   }
 
-  /** Oldest-first party packing, shared by AI deadline resets and match launch. */
+  /** Oldest-first party packing without splitting parties or combining private tickets. */
   selectMatchEntries(bucket) {
     const first = bucket[0];
     const selected = [first];
@@ -680,10 +672,26 @@ export class Lobby {
     return selected;
   }
 
-  /** Send the current number of waiting human players to every ticket in one mode/difficulty bucket. */
+  /** Use identical groups for counts, AI deadline resets and match launch. */
+  groupMatchEntries(bucket) {
+    let remaining = bucket.filter((entry) => entry && !entry.removed);
+    const groups = [];
+    while (remaining.length) {
+      const selected = this.selectMatchEntries(remaining);
+      groups.push(selected);
+      const group = new Set(selected);
+      remaining = remaining.filter((entry) => !group.has(entry));
+    }
+    return groups;
+  }
+
+  /** Send each ticket the waiting human count of its actual four-seat group. */
   broadcastQueueCounts(mode, difficulty) {
     const bucket = this.matchQueues.get(`${mode}:${difficulty}`) || [];
-    for (const entry of bucket) if (!entry.removed) this.sendQueueState(entry);
+    for (const group of this.groupMatchEntries(bucket)) {
+      const count = group.reduce((n, entry) => n + entry.players.filter((p) => !p.isBot).length, 0);
+      for (const entry of group) this.sendQueueState(entry, 'queued', null, count);
+    }
   }
 
   /** Process each bucket oldest-first. Full teams start immediately; otherwise AI fills seats after the latest
@@ -691,12 +699,13 @@ export class Lobby {
   processMatchQueues() {
     const now = this.now();
     for (const [key, bucket] of this.matchQueues) {
-      while (bucket.length) {
-        const first = bucket[0];
-        if (!first || first.removed) { bucket.shift(); continue; }
-        const selected = this.selectMatchEntries(bucket);
+      for (let i = bucket.length - 1; i >= 0; i--) {
+        if (!bucket[i] || bucket[i].removed) bucket.splice(i, 1);
+      }
+      for (const selected of this.groupMatchEntries(bucket)) {
+        const first = selected[0];
         const total = selected.reduce((n, entry) => n + entry.players.length, 0);
-        if (total < MAX_SEATS && now < first.deadlineAt) break;
+        if (total < MAX_SEATS && now < first.deadlineAt) continue;
         for (const entry of selected) {
           const idx = bucket.indexOf(entry);
           if (idx >= 0) bucket.splice(idx, 1);
@@ -741,12 +750,7 @@ export class Lobby {
     if (entry.room && !entry.room.disposed) this.broadcastState(entry.room);
   }
 
-  sendQueueState(entry, status = 'queued', reason = null) {
-    const count = status === 'queued'
-      ? (this.matchQueues.get(`${entry.mode}:${entry.difficulty}`) || [])
-        .filter((queued) => !queued.removed)
-        .reduce((n, queued) => n + queued.players.filter((p) => !p.isBot).length, 0)
-      : entry.players.filter((p) => !p.isBot).length;
+  sendQueueState(entry, status = 'queued', reason = null, count = entry.players.filter((p) => !p.isBot).length) {
     const msg = { t: 'match.queue', status, queueId: entry.queueId, mode: entry.mode, difficulty: entry.difficulty,
       count, capacity: MAX_SEATS, queuedAt: entry.queuedAt,
       deadlineAt: entry.deadlineAt, fillBots: entry.fillBots, ...(reason ? { reason } : {}) };

@@ -615,7 +615,7 @@
 .set-seg--fps { grid-column: 2; justify-self: end; }
 .set-seg--fps button:focus-visible { outline: 2px solid var(--mint-400); outline-offset: -2px; }
 @media (pointer: coarse), (any-pointer: coarse) {
-  .set-row--fps .set-seg--fps button { min-width: max(.8rem, 44px); height: max(.38rem, 44px); }
+  .set-row--fps .set-seg--fps button { min-width: max(.8rem, 44px); }
 }
 .set-hint { margin-top: .06rem; font-size: .14rem; color: var(--text-dim); line-height: 1.8; }
 /* 预载资源 (docs/ASSETS.md「Preload」): progress of the optional Cache Storage preload */

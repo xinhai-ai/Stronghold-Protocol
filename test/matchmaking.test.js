@@ -48,6 +48,30 @@ test('four alliance queue entries start one four-seat preparation match immediat
   assert.equal(srv.lobby.stats().rooms, 0);
 });
 
+test('public teammates start immediately behind a private room ticket over WebSocket', async () => {
+  const host = await player('Private head');
+  const cs = await Promise.all(['Public A', 'Public B', 'Public C', 'Public D'].map(player));
+  assert.equal((await host.request({ t: 'room.create', mode: 'coop', difficulty: 'NORMAL' })).t, 'ok');
+  await host.waitFor('room.state', (s) => s.code);
+  assert.equal((await host.request({ t: 'match.join', mode: 'coop', difficulty: 'NORMAL', fillBots: false })).t, 'ok');
+  const original = await host.waitFor('match.queue', (m) => m.status === 'queued');
+  for (const [i, c] of cs.entries()) {
+    assert.equal((await c.request({ t: 'match.join', mode: 'coop', difficulty: 'NORMAL', fillBots: true })).t, 'ok');
+    const queued = await c.waitFor('match.queue', (m) => m.status === 'queued');
+    assert.equal(queued.count, i + 1, 'private room is excluded from public group counts');
+  }
+  for (const c of cs) {
+    await c.waitFor('match.queue', (m) => m.status === 'matched');
+    const pub = await c.waitFor('m.public');
+    assert.deepEqual(pub.players.map((p) => p.playerId).sort(), cs.map((c) => c.id).sort());
+  }
+  assert.equal((await host.request({ t: 'match.leave' })).t, 'ok');
+  await host.waitFor('match.queue', (m) => m.status === 'cancelled');
+  const updates = host.log.filter((m) => m.t === 'match.queue' && m.status === 'queued');
+  assert.ok(updates.every((m) => m.count === 1 && m.deadlineAt === original.deadlineAt));
+  assert.ok(!host.log.some((m) => m.t === 'm.public'), 'private head keeps waiting while public match starts');
+});
+
 test('room matchmaking fills AI after the deadline and returns to that room after the result', async () => {
   const c = await player('Room host');
   const created = await c.request({ t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
@@ -71,7 +95,8 @@ test('room matchmaking fills AI after the deadline and returns to that room afte
 
 function manualQueue(t) {
   let now = 1000;
-  const lobby = new Lobby({ registry: { byId: () => null }, now: () => now,
+  const sessions = new Map();
+  const lobby = new Lobby({ registry: { byId: (id) => sessions.get(id) }, now: () => now,
     options: { matchmakingWaitMs: 60_000 } });
   clearInterval(lobby.matchQueueTimer);
   lobby.matchQueueTimer = null;
@@ -83,14 +108,92 @@ function manualQueue(t) {
   return {
     lobby, states, launched,
     at(time) { now = time; },
+    queueState(entry) { return sessions.get(entry.players[0].playerId).messages.at(-1); },
     join({ count = 1, difficulty = 'NORMAL', fillBots = true, room = null } = {}) {
       const entry = lobby.makeQueueEntry({ mode: 'coop', difficulty, fillBots, room,
-        players: Array.from({ length: count }, () => ({ playerId: `queue-test-${++seq}`, isBot: false })) });
+        players: Array.from({ length: count }, () => {
+          const playerId = `queue-test-${++seq}`;
+          const messages = [];
+          sessions.set(playerId, { playerId, connected: true, messages,
+            ws: { readyState: 1, bufferedAmount: 0, send: (data) => messages.push(JSON.parse(data)) } });
+          return { playerId, isBot: false };
+        }) });
       lobby.enqueueMatchEntry(entry);
       return entry;
     },
   };
 }
+
+for (const scenario of [
+  { name: 'eight humans behind a private ticket', sizes: [1, 1, 1, 1, 1, 1, 1, 1],
+    privateHead: true, counts: [1, 4, 4, 4, 4, 3, 3, 3], matches: 1, remaining: [0, 5, 6, 7] },
+  { name: 'thirteen humans in parties that cannot fit the head', sizes: [3, 2, 2, 2, 2, 2],
+    privateHead: false, counts: [3, 4, 4, 4, 4, 2], matches: 2, remaining: [0, 5] },
+]) {
+  test(`queue counts and immediate launches use actual groups: ${scenario.name}`, (t) => {
+    const q = manualQueue(t);
+    const entries = scenario.sizes.map((count, i) => q.join({ count, fillBots: i !== 0 || !scenario.privateHead }));
+    const deadlines = entries.map((entry) => entry.deadlineAt);
+    assert.deepEqual(entries.map((entry) => q.queueState(entry).count), scenario.counts);
+    assert.ok(entries.every((entry) => q.queueState(entry).capacity === 4));
+    const otherDifficulty = q.join({ difficulty: 'HARD' });
+    assert.equal(q.queueState(otherDifficulty).count, 1);
+
+    q.lobby.processMatchQueues();
+    assert.equal(q.launched.length, scenario.matches, 'later full groups start before the head deadline');
+    assert.ok(q.launched.every((players) => players.length === 4 && players.every((p) => !p.isBot)));
+    const remaining = scenario.remaining.map((i) => entries[i]);
+    assert.deepEqual(q.lobby.matchQueues.get('coop:NORMAL'), remaining);
+    assert.deepEqual(entries.map((entry) => entry.deadlineAt), deadlines, 'launches do not reset waits');
+    for (const entry of remaining) {
+      assert.equal(q.queueState(entry).count, scenario.counts[entries.indexOf(entry)]);
+      for (const p of entry.players) assert.equal(q.lobby.queueByPlayer.get(p.playerId), entry);
+    }
+    const launchedIds = q.launched.flat().map((p) => p.playerId);
+    assert.equal(new Set(launchedIds).size, launchedIds.length, 'each human launches once');
+    for (const id of launchedIds) assert.equal(q.lobby.queueByPlayer.has(id), false);
+    q.lobby.processMatchQueues();
+    assert.equal(q.launched.length, scenario.matches, 'scheduler ticks do not relaunch full groups');
+  });
+}
+
+test('a later expired group fills AI while an earlier group waits for a new teammate', (t) => {
+  const q = manualQueue(t);
+  const first = q.join({ count: 2 });
+  q.at(20_000);
+  const later = q.join({ count: 3 });
+  q.at(50_000);
+  const teammate = q.join();
+  assert.equal(first.deadlineAt, 110_000);
+  assert.equal(teammate.deadlineAt, first.deadlineAt);
+  assert.equal(later.deadlineAt, 80_000);
+  q.at(80_000);
+  q.lobby.processMatchQueues();
+  assert.equal(q.launched.length, 1);
+  assert.deepEqual(q.launched[0].filter((p) => !p.isBot).map((p) => p.playerId), later.players.map((p) => p.playerId));
+  assert.equal(q.launched[0].filter((p) => p.isBot).length, 1);
+  assert.deepEqual(q.lobby.matchQueues.get('coop:NORMAL'), [first, teammate]);
+  assert.equal(q.queueState(first).count, 3);
+  assert.equal(first.deadlineAt, 110_000);
+});
+
+test('cancelling a party updates only its remaining group count without resetting deadlines', (t) => {
+  const q = manualQueue(t);
+  const first = q.join({ count: 3 });
+  q.at(20_000);
+  const second = q.join({ count: 2 });
+  q.at(30_000);
+  const third = q.join({ count: 2 });
+  assert.equal(q.queueState(first).count, 3);
+  assert.equal(q.queueState(second).count, 4);
+  const deadline = second.deadlineAt;
+  q.lobby.cancelMatchQueue(third);
+  assert.equal(q.queueState(third).status, 'cancelled');
+  assert.equal(q.queueState(second).count, 2);
+  assert.equal(q.queueState(first).count, 3);
+  assert.equal(second.deadlineAt, deadline);
+  assert.equal(first.deadlineAt, 61_000);
+});
 
 test('a new teammate resets the whole compatible team’s AI deadline, broadcasts it to the room and waits the full interval', (t) => {
   const q = manualQueue(t);

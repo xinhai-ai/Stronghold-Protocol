@@ -144,11 +144,11 @@ export class MatchIntents {
       grantedAmount = added;
       granted = true;
     } else if (kind === 'chess') {
-      const rec = this.gd.chess(id);
-      // Hidden / DIY records are internal data, not player-facing operators. Golden variants are allowed when their
-      // base operator is visible, which still makes every normal playable operator available.
-      const base = rec && this.gd.chess(this.gd.baseIdOf(id));
-      if (!rec || rec.isDiy || rec.isHidden || !(rec.visible || rec.isGolden) || !base || base.isDiy || base.isHidden || !base.visible) {
+      const rec = ps.gd.chess(id);
+      // A filled DIY slot resolves through this player's view; empty slots have no body to grant.
+      const base = rec && ps.gd.chess(ps.gd.baseIdOf(id));
+      if (!rec || rec.isHidden || !base || base.isHidden
+        || (rec.isDiy ? !rec.diyFor || !base.diyFor : !(rec.visible || rec.isGolden) || base.isDiy || !base.visible)) {
         return fail(ERR.BAD_TARGET, 'unknown operator');
       }
       grantedName = rec.name || id;

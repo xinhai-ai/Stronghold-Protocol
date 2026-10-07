@@ -7,6 +7,7 @@ import { actions } from './gameActions.js';
 import { data } from '../data.js';
 import { CONSOLE_ROUND_LIMIT, CONSOLE_TOTAL_LIMIT } from '../../../shared/constants.js';
 import { t } from '../../../shared/i18n.js';
+import { ownDiyRecord } from './gameLogic/diy.js';
 
 const idOf = (r, fallback = null) => r?.id || r?.chessId || r?.itemId || fallback;
 
@@ -35,6 +36,24 @@ function dataRecords(name) {
   return out;
 }
 
+/** Only the current match's filled DIY slots have an operator to grant. */
+export function consoleEntries(kind, query = '', priv = null) {
+  const q = query.trim().toLowerCase();
+  const diyData = { chess: data.get('chess'), backups: data.get('backups') };
+  return dataRecords(kind === 'chess' ? 'chess' : kind === 'item' ? 'items' : 'bonds').flatMap((r) => {
+    const id = idOf(r);
+    if (!id || r.isHidden) return [];
+    let record = r;
+    if (kind === 'chess' && r.isDiy) {
+      record = ownDiyRecord(r, priv, diyData);
+      if (!record) return [];
+      record = { ...record, id };
+    } else if (r.isDiy || (kind === 'chess' && !r.visible && !r.isGolden)) return [];
+    const text = `${id} ${record.name || ''} ${record.charId || ''}`.toLowerCase();
+    return q && !text.includes(q) ? [] : [record];
+  }).sort((a, b) => (Number(a.tier) || 99) - (Number(b.tier) || 99) || String(a.name || idOf(a)).localeCompare(String(b.name || idOf(b))));
+}
+
 export function ConsoleModal({ open, priv, onClose }) {
   const gd = useGameData();
   const [kind, setKind] = useState('chess');
@@ -45,15 +64,8 @@ export function ConsoleModal({ open, priv, onClose }) {
   const q = query.trim().toLowerCase();
   const entries = useMemo(() => {
     if (!gd.ready) return [];
-    const source = dataRecords(kind === 'chess' ? 'chess' : kind === 'item' ? 'items' : 'bonds');
-    return source.filter((r) => {
-      const id = idOf(r);
-      if (!id || r.isDiy || r.isHidden) return false;
-      if (kind === 'chess' && (!r.visible && !r.isGolden || r.isDiy || r.isHidden)) return false;
-      const text = `${id} ${r.name || ''}`.toLowerCase();
-      return !q || text.includes(q);
-    }).sort((a, b) => (Number(a.tier) || 99) - (Number(b.tier) || 99) || String(a.name || idOf(a)).localeCompare(String(b.name || idOf(b))));
-  }, [gd.ready, kind, q]);
+    return consoleEntries(kind, q, priv);
+  }, [gd.ready, kind, q, priv?.diy, gd.backups]);
   const roundUses = Number(priv?.console?.roundUses) || 0;
   const totalUses = Number(priv?.console?.totalUses) || 0;
   const roundLimit = Number(priv?.console?.roundLimit) || CONSOLE_ROUND_LIMIT;
@@ -92,7 +104,7 @@ export function ConsoleModal({ open, priv, onClose }) {
           const id = idOf(r);
           return html`<button key=${id} type="button" class="console-ui__entry" disabled=${!!busy || roundUses >= roundLimit || totalUses >= totalLimit}
             onClick=${() => kind === 'bond' ? openBond({ ...r, id }) : grant(kind, id)}>
-            ${kind === 'bond' ? html`<span class="console-ui__bond-icon"><${Icon} name="users" /></span>` : html`<${UnitThumb} kind=${kind} id=${id} tier=${r.tier} golden=${!!r.isGolden} size="sm" />`}
+            ${kind === 'bond' ? html`<span class="console-ui__bond-icon"><${Icon} name="users" /></span>` : html`<${UnitThumb} kind=${kind} id=${id} tier=${r.tier} golden=${!!r.isGolden} rec=${r.isDiy ? r : null} size="sm" />`}
             <span class="console-ui__entry-text"><b>${r.name || id}</b><${MicroLabel}>${id}<//></span>
             ${busy === id ? html`<span class="console-ui__entry-busy">${t('发放中…')}</span>` : html`<${Icon} name="plus" />`}
           </button>`;

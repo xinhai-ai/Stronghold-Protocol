@@ -26,6 +26,7 @@ const { installDiySync, SYNC_DEBOUNCE_MS } = await import('../../public/js/ui/lo
 const { createStore } = await import('../../public/js/store.js');
 const G = await import('../../public/js/ui/gameLogic.js');
 const { ChessCard } = await import('../../public/js/ui/shopBar.js');
+const { consoleEntries } = await import('../../public/js/ui/console.js');
 const { ChessDetail, resolveDetail } = await import('../../public/js/ui/detailPanel.js');
 const { BondPopup } = await import('../../public/js/ui/bondStrip.js');
 const { ownerBoard } = await import('../../public/js/ui/watchBonds.js');
@@ -36,6 +37,16 @@ const { DATA } = await import('../match/harness.js');
 const { KITTED_CHARS } = await import('../../server/sim/content/kits/index.js');
 
 await data.loadAll('chess', 'bonds', 'assets', 'garrisons', 'items', 'backups');
+
+test('console candidates include only own filled DIY slots, both forms with actual names and char-id search', () => {
+  const picks = { chess_char_5_diy1_a: { charId: 'char_112_siege', skillIndex: 2, uniEquipId: 'uniequip_002_siege' } };
+  const own = consoleEntries('chess', '', { diy: picks }).filter((r) => r.isDiy);
+  assert.deepEqual(own.map((r) => r.id).sort(), ['chess_char_5_diy1_a', 'chess_char_5_diy1_b']);
+  assert.ok(own.every((r) => r.charId === 'char_112_siege' && r.name.includes('\u63a8\u8fdb\u4e4b\u738b')));
+  assert.deepEqual(consoleEntries('chess', 'CHAR_112_SIEGE', { diy: picks }).filter((r) => r.isDiy).map((r) => r.id).sort(), own.map((r) => r.id).sort());
+  assert.ok(consoleEntries('chess', '\u63a8\u8fdb\u4e4b\u738b', { diy: picks }).some((r) => r.isDiy));
+  assert.equal(consoleEntries('chess', '', { diy: {} }).some((r) => r.isDiy), false);
+});
 
 const D = { chess: DATA.chess, backups: DATA.backups };
 const getChess = (id) => (Object.hasOwn(DATA.chess, id) ? DATA.chess[id] : null);

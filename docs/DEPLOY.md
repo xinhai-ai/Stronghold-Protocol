@@ -336,6 +336,16 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 
 CDN 的 `/data/` 回源可使用 Nginx 的 `alias` 指向复制的数据目录，也可代理到 Node 的本地数据响应；Node 不再进行数据 CDN 跳转。静态域名要允许跨域 JSON，发布时与游戏服务器同步数据版本。游戏域名的 `/data/local-assets.json`、`/data/resource-manifest.json` 和 `/js/asset-cdn.js` 应继续代理到 Node；预载清单动态生成，不能通过复制 `data/` 得到。
 
+界面和游戏文本的语言 JSON 也使用 `SP_ASSETS_CDN`，无需放到数据 CDN。保留原路径分别同步：
+
+| 本机目录 | 素材 CDN 路径 |
+|---|---|
+| `public/i18n/` | `<SP_ASSETS_CDN>/i18n/` |
+| `data/i18n/` | `<SP_ASSETS_CDN>/data/i18n/` |
+| 目录式语言包 `packs/<id>/` 的声明文件 | `<SP_ASSETS_CDN>/packs/<id>/` |
+
+`/packs/index.json` 继续由游戏源站动态生成，不复制到 CDN；语言 JSON 保持 `Cache-Control: no-cache`、ETag 和允许跨域读取。发布时同步语言文件并刷新 CDN 缓存。未设置素材 CDN 时照常同源读取，显式外部 URL 和自定义加载器 `base` 优先。首次升级此加载逻辑需要重新构建并重启服务。
+
 ### 3.3 资源预载（可选，客户端开关）
 
 玩家在游戏里「首页右下角」或「设置 ▸ 预载资源」打开后，客户端会把对局素材存进浏览器缓存（Service Worker + Cache Storage，见 [docs/ASSETS.md](docs/ASSETS.md)「Preload」），之后进战斗不再等待下载：素材由 Service Worker 直接从本机缓存读取。默认关闭，服务端无需任何配置（清单 `GET /data/resource-manifest.json` 由服务端从 `data/assets.json` 自动生成）。部署上只需注意两件事：

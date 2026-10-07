@@ -21,6 +21,8 @@ import {
 import { canonicalLang, computeChain, scriptOf } from '../../../shared/i18nPacks.js';
 import { PACKS_URL, PACK_INDEX_FILE, readPackIndex, langMetaOf } from '../../../shared/packs.js';
 import { DEV_BUILD } from '../../../shared/constants.js';
+import { i18nUrl } from '../../../shared/cdn.js';
+import { ASSETS_CDN } from '../asset-cdn.js';
 import { loadPref, savePref } from '../store.js';
 import { data } from '../data.js';
 import { html } from './components.js';
@@ -71,12 +73,13 @@ export function loadLangIndex(doFetch = defaultFetch) {
  * /i18n/<code>.json (whose `_meta` then registers it).
  * @param {string} lang
  * @param {typeof fetch} [doFetch]
+ * @param {string} [assetsCdn] runtime assets CDN, injectable for tests
  * @returns {Promise<boolean>} false when unavailable (the interface stays as it is)
  */
-export function loadUiMessages(lang, doFetch = defaultFetch) {
+export function loadUiMessages(lang, doFetch = defaultFetch, assetsCdn = ASSETS_CDN) {
   if (lang === DEFAULT_LANG) return Promise.resolve(true);
   if (uiLoads.has(lang)) return uiLoads.get(lang);
-  const url = langInfo(lang)?.ui || `/i18n/${lang}.json`;
+  const url = i18nUrl(langInfo(lang)?.ui || `/i18n/${lang}.json`, assetsCdn);
   const p = (async () => {
     try {
       const res = await doFetch(url, { cache: 'no-cache' });

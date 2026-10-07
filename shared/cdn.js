@@ -15,3 +15,10 @@ export function dataUrl(url, base) {
   if (!match || ['local-assets.json', 'resource-manifest.json'].includes(match[1].toLowerCase())) return url;
   return base.replace(/\/+$/, '') + url;
 }
+
+/** Language JSON uses the assets CDN; the dynamic pack index and explicit external URLs stay unchanged. */
+export function i18nUrl(url, base) {
+  if (!base || typeof url !== 'string') return url;
+  if (!/^\/(?:i18n\/[^/?#]+|data\/i18n\/[^/?#]+|packs\/[^/?#]+\/[^?#]+)\.json(?:[?#]|$)/.test(url)) return url;
+  return base.replace(/\/+$/, '') + url;
+}

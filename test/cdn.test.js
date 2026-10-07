@@ -12,7 +12,7 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import { createStaticHandler, parseAssetCdn, rewriteAssetPaths, startServer } from '../server/index.js';
-import { dataUrl } from '../shared/cdn.js';
+import { dataUrl, i18nUrl } from '../shared/cdn.js';
 import { createDataStore } from '../public/js/data.js';
 import { createAssets } from '../public/js/assets.js';
 
@@ -237,6 +237,68 @@ test('direct data URLs preserve origin-only manifests, query strings, and explic
     assert.deepEqual(calls, ['/custom/chess.json', '/custom/assets.json']);
   }
   assert.equal(dataUrl('/data/chess.json', ''), '/data/chess.json');
+});
+
+test('language JSON uses the assets CDN and leaves the live index and custom URLs unchanged', () => {
+  for (const base of ['https://art.example.com/sp/', '/cdn/']) {
+    const prefix = base.replace(/\/+$/, '');
+    for (const url of ['/i18n/en.json', '/i18n/zh-TW.json?v=2', '/data/i18n/ja.json', '/packs/qaa/texts/game.json']) {
+      assert.equal(i18nUrl(url, base), prefix + url);
+    }
+    for (const url of ['/packs/index.json', '/data/chess.json', '/custom/en.json', '/i18n/font.woff2',
+      'https://custom.example.com/i18n/en.json', '//custom.example.com/i18n/en.json', 'i18n/en.json']) {
+      assert.equal(i18nUrl(url, base), url);
+    }
+  }
+  assert.equal(i18nUrl('/i18n/en.json', ''), '/i18n/en.json');
+});
+
+test('UI language loader routes file and folder packs to the assets CDN, while its index remains on the origin', async () => {
+  const lang = await import('../public/js/ui/lang.js');
+  const { registerLangs } = await import('../shared/i18n.js');
+  const calls = [];
+  const fetchFn = async (url, options) => {
+    calls.push([url, options.cache]);
+    return { ok: true, json: async () => url === '/packs/index.json'
+      ? { version: 1, packs: [] } : { 开始: 'Start' } };
+  };
+  assert.equal(await lang.loadLangIndex(fetchFn), true);
+  registerLangs([{ code: 'qcd', ui: '/packs/qcd/texts/ui.json' }, { code: 'qce', ui: 'https://custom.example.com/en.json' }]);
+  assert.equal(await lang.loadUiMessages('qcc', fetchFn, 'https://art.example.com/sp/'), true);
+  assert.equal(await lang.loadUiMessages('qcd', fetchFn, 'https://art.example.com/sp/'), true);
+  assert.equal(await lang.loadUiMessages('qce', fetchFn, 'https://art.example.com/sp/'), true);
+  assert.equal(await lang.loadUiMessages('qcf', fetchFn, ''), true);
+  assert.deepEqual(calls, [
+    ['/packs/index.json', 'no-cache'],
+    ['https://art.example.com/sp/i18n/qcc.json', 'no-cache'],
+    ['https://art.example.com/sp/packs/qcd/texts/ui.json', 'no-cache'],
+    ['https://custom.example.com/en.json', 'no-cache'],
+    ['/i18n/qcf.json', 'no-cache'],
+  ]);
+});
+
+test('game-text language overlays use the assets CDN independently of DATA_CDN and preserve explicit bases', async () => {
+  const calls = [];
+  const fetchFn = async (url) => {
+    calls.push(url);
+    return { ok: true, json: async () => ({ version: 1, lang: 'en', files: {}, names: { 阿米娅: 'Amiya' } }) };
+  };
+  const make = (opts = {}) => createDataStore({ fetch: fetchFn, assetsCdn: 'https://art.example.com/sp/',
+    dataCdn: 'https://data.example.com/sp', ...opts });
+  const d = make();
+  assert.equal(await d.setLocale('en'), 'en');
+  assert.equal(d.localeName('阿米娅'), 'Amiya');
+  assert.equal(await d.setLocale('qcd', [{ code: 'qcd', url: '/packs/qcd/texts/game.json' }]), 'qcd');
+  assert.equal(await d.setLocale('qce', [{ code: 'qce', url: 'https://custom.example.com/text.json' }]), 'qce');
+  await make({ base: '/custom/' }).setLocale('en');
+  await make({ assetsCdn: '' }).setLocale('en');
+  assert.deepEqual(calls, [
+    'https://art.example.com/sp/data/i18n/en.json',
+    'https://art.example.com/sp/packs/qcd/texts/game.json',
+    'https://custom.example.com/text.json',
+    '/custom/i18n/en.json',
+    '/data/i18n/en.json',
+  ]);
 });
 
 test('changing only the data CDN changes the runtime config validator; disk fallback exports empty bases', async () => {

@@ -29,7 +29,7 @@
 
 import { useEffect, useReducer } from '../vendor/hooks.module.js';
 import { ASSETS_CDN, DATA_CDN } from './asset-cdn.js';
-import { rewriteAssetPaths, dataUrl } from '../../shared/cdn.js';
+import { rewriteAssetPaths, dataUrl, i18nUrl } from '../../shared/cdn.js';
 import { applyFileOverlay } from '../../shared/i18nData.js';
 import { canonicalLang } from '../../shared/i18nPacks.js';
 
@@ -291,6 +291,7 @@ export function createDataStore(opts = {}) {
    * folder's data/i18n/<lang>.json; resolves to it, or null when unavailable.
    */
   function loadOverlay(lang, url = `${base}i18n/${lang}.json`) {
+    if (opts.base == null) url = i18nUrl(url, assetsCdn);
     if (overlayLoads.has(lang)) return overlayLoads.get(lang);
     const p = (async () => {
       for (let attempt = 0; ; attempt++) {

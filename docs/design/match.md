@@ -22,6 +22,8 @@ LOBBY(room) → INFO_CHECK (co-op 25 s; solo and any single-human match untimed 
                     most units on the field > an active bond > most standing units > seat; the pair ordered by units > active bond >
                     Σ active layers > standing > seat, the first one on the right-hand field) fight the union of leaks; no layer gains — with
                     the layers their own combat reached (the round's pending gains, PRTS "以其阵地当前的状态" [ASSUMED]);
+                    the round's terrain and blocking devices remain, with each helper's own device overrides (#282);
+                    escape templates supply re-entry waves/routes, not a flat replacement battlefield;
                     a helper's operator knocked out at the end of its own combat enters down — carryState { down: true },
                     PRTS "上一阶段为退场状态的干员强制退场", its full redeploy timer — confirmed by the user (§19.3))
      SETTLE        (LP −min(leaks,10) per player (unite survivors to their source); eliminations; layer gains applied; coins; broadcast;

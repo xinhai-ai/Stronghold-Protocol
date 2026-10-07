@@ -19,6 +19,11 @@ through.
 变化保留模式名单只限制干员池的策略，并修正该策略暴露的泡泡与“余音”互相反伤递归；受击脉冲标记为反伤，直接攻击脉冲保持原行为。
 “碎铳之簧”的无来源反伤补齐 sourceless 标记；两处均有 `test/sim/feedback5-counters-any-damage.test.js` 回归用例，更新后全部场景无模拟错误。
 
+2026-10-07 修复 #282：联防保留本回合地形和设备，逃脱模板只提供漏怪重入批次与路线。更新前完整比对确认只有 7 个 matches 改变：
+`coop2-NORMAL-3`、`coop2-HARD-4`、`coop3-ABYSS-5`、`coop4-FUNNY-6`、`coop4-ABYSS-7`、`coop2-NORMAL-8-serverrun`、`coop2-NORMAL-14-standins`。
+差异来自联防中保留围栏、箱子和平台后敌人的路径、伤害与漏怪变化，继而影响生命值及后续回合；其余 276 场景不变。
+仅更新上述 7 个基线。回归覆盖一人/两人联防、援助者独立拆箱、所有当前地图路径可达性以及客户端/服务器模拟一致性。
+
 ## The corpus
 
 | family | what runs |

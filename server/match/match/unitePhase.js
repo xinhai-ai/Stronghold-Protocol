@@ -40,9 +40,8 @@ export class MatchUnite {
   }
 
   /**
-   * Battle options of the 联防 field (helpers' carried end state, the leakers' enemies) on its own map — the escaped
-   * template's (unite.js uniteStageId; GitHub #41), the round's stage only when the data lacks it. The field meta and the
-   * client-run spec carry that stageId, so every viewer draws the 联防 map.
+   * The helpers keep their battlefield's terrain and devices. Escape templates still supply the re-entry wave and
+   * routes; field metadata and client specs use the same round stage as the server simulation (#282).
    */
   _uniteOpts(plan, limit) {
     const { wave, players } = uniteBattleOpts(this, plan, limit);
@@ -51,7 +50,7 @@ export class MatchUnite {
       kind: 'unite',
       modeId: this.modeId,
       round: this.round,
-      stageId: uniteStageId(this.gd, plan.helpers.length) ?? this.stageId,
+      stageId: uniteStageId(this.gd, plan.helpers.length, this.stageId) ?? this.stageId,
       rect: { ...GEO.UNITE_RECT },
       timeLimit: limit,
       players,

@@ -38,6 +38,7 @@
 - 模式名单不再禁止盟约激活或效果触发；保留下来的干员及装备赋予的盟约照常计数、激活并进入战斗输入。界面将模式名单和随机 ban 都解释为阵容不完整，不标注“该盟约不会激活”；AI 不按模式名单排除盟约，机变候选继续按实际干员池判断。
 - 最终攻势及隐秘核心的 Boss 共享血量池：单人 `bloodPoint × 1`，多人 `bloodPoint × 4 × min(存活人数, 4) / 4`，存活人数取每个 Boss 回合开始时的值。模式及全局配置均启用 `aliveScaling`，保留模式优先、人数上限和未传人数按满队计算的行为；普通敌人倍率不变。
 - 重新生成数据时维护 `tools/build-data.mjs` 中同样的血量配置，不恢复上游的单人 0.25／多人 1 或模式盟约激活限制。
+- 联防保留本回合战场的地形、围栏、阻隔工事及平台，并继续应用每位援助者自己的设备改造效果。`escaped_single` / `escaped_multi` 用于漏怪重入批次与路线，不替换成平坦地图；仅在当前战场数据缺失时使用模板地图回退。援助者左右顺序、携带状态、联防归责与禁用战斗叠层规则不变。客户端 BattleSpec、服务器模拟和观战元数据须使用同一 stageId，保留 `test/match/feedback5-unite-map.test.js` 对 #282 的阻挡物和双方模拟回归。
 
 ## 本分支界面与素材取舍
 
@@ -56,6 +57,7 @@
 ## 运行时 CDN 配置
 
 - 页面素材与数据 CDN 地址来自服务器动态生成的 `/js/asset-cdn.js`，分别导出 `ASSETS_CDN` 和 `DATA_CDN`，并非 `/healthz` 或 `/metrics`。磁盘上的 `public/js/asset-cdn.js` 是两者均为空的配置回退。任一 CDN 设置变化都必须改变运行时模块的 ETag。
+- i18n 语言 JSON 使用 `ASSETS_CDN`：`public/i18n/` 对应 CDN 的 `/i18n/`，`data/i18n/` 对应 `/data/i18n/`，目录式语言包使用 `/packs/<id>/…`。动态 `/packs/index.json` 保留同源，以源站实际安装的语言包为准。未配置素材 CDN 时保留同源路径，显式外部 URL 和自定义数据加载器 `base` 不改写；游戏文本语言包不使用 `DATA_CDN`。部署时同步相应语言目录并设置 JSON 跨域响应头，不将语言 JSON 混入素材 ZIP 或 SW 的代码/数据缓存。
 - Vite 必须将此模块保留为外部的同源绝对 URL。保留 `makeAbsoluteExternalsRelative: false`，避免把 `/js/asset-cdn.js` 当成文件系统路径改写。
 - 同一份构建可以通过启动时的 `SP_ASSETS_CDN` 和 `SP_DATA_CDN` 使用不同 CDN。不要在构建时固化环境配置，也不要把磁盘上的空 CDN 配置直接内联。
 - 页面数据加载器、浏览器模拟和独立素材加载器直接读取数据 CDN 的静态 JSON；`shared/cdn.js` 的 `dataUrl()` 保留 `/data/local-assets.json` 与 `/data/resource-manifest.json` 的同源例外。显式传入的加载器 `base` / `url` / `dataBase` 仍优先，不能被运行时 CDN 覆盖。Node 的 `/data/` 始终提供本地数据，已移除数据 CDN 的 307 跳转，不要在合并时恢复；保留素材清单 URL 改写，合并后运行 CDN 测试。

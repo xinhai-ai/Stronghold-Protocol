@@ -12,7 +12,7 @@
 // browser needs (~250 MiB of art). Everything is injected (`caches`, `fetcher`) so this module is unit-testable.
 
 import {
-  CACHE_NAME, CACHE_PREFIX, CONTENT_HASH_RE, MAX_FILE_BYTES, TIER_ESSENTIAL, TIER_REST, absoluteUrl, indexUrl, checkAbort, isQuotaError,
+  CACHE_NAME, CACHE_PREFIX, CONTENT_HASH_RE, MAX_FILE_BYTES, TIER_ESSENTIAL, TIER_REST, RESOURCE_GROUPS, resourceGroup, absoluteUrl, indexUrl, checkAbort, isQuotaError,
 } from './common.js';
 
 /** Files above this are downloaded one at a time (a 20 MiB Spine texture should not race three others). */
@@ -63,6 +63,45 @@ export class ResourceStore {
   /** Cache key (absolute URL) of a manifest entry. */
   keyOf(url) {
     return absoluteUrl(url, this.origin) || String(url);
+  }
+
+  /** Import only bytes verified against this server's current content hashes. Callers own the download lock. */
+  async importFiles(files, { read, signal, onProgress } = {}) {
+    checkAbort(signal);
+    if (this.running) throw new Error('请先暂停资源下载');
+    const cache = await this.caches.open(this.cacheName);
+    const index = await this.#readIndex(cache);
+    const before = await this.status();
+    const allowed = new Set(this.files);
+    let imported = 0;
+    let processed = 0;
+    // Build category counters only when the controller actually publishes a UI update.
+    const getStatus = () => this.#tally(before.present);
+    try {
+      for (const file of files) {
+        checkAbort(signal);
+        const key = this.keyOf(file.url);
+        if (!allowed.has(file) || !this.eligible(file) || !CONTENT_HASH_RE.test(file.hash || '')) {
+          throw new Error('资源缺少可校验的当前指纹');
+        }
+        const existing = before.present.has(key) ? await cache.match(key) : null;
+        if (!existing || await digestOf(existing) !== file.hash) {
+          const response = await read(file);
+          if (await digestOf(response) !== file.hash) throw new Error(`资源校验失败：${file.url}`);
+          checkAbort(signal);
+          await cache.put(key, this.storable(response));
+          index.files[key] = file.hash;
+          before.present.add(key);
+          imported++;
+          if (imported % INDEX_FLUSH_EVERY === 0) await this.#writeIndex(cache, index.files, this.manifest.version);
+        }
+        onProgress?.({ imported, processed: ++processed, file, getStatus });
+      }
+    } finally {
+      // A cancelled import or a quota error keeps completed, verified files reusable on the next run.
+      await this.#writeIndex(cache, index.files, this.manifest.version);
+    }
+    return { ...await this.status(), imported };
   }
 
   /**
@@ -183,10 +222,22 @@ export class ResourceStore {
     let tier1Present = 0;
     let tier2 = 0;
     let tier2Present = 0;
+    let tier1Wanted = 0;
+    let tier2Wanted = 0;
+    const groups = Object.fromEntries(Object.entries(RESOURCE_GROUPS).map(([id, group]) => [id,
+      { id, ...group, total: 0, wanted: 0, present: 0, bytes: 0, totalBytes: 0, unknownSize: 0 }]));
     for (const f of this.files) {
       const hit = present.has(this.keyOf(f.url));
-      if (f.tier === TIER_ESSENTIAL) { tier1++; if (hit) tier1Present++; } else { tier2++; if (hit) tier2Present++; }
+      const group = groups[resourceGroup(f)];
+      group.total++;
+      if (f.tier === TIER_ESSENTIAL) tier1++; else tier2++;
       if (!this.eligible(f)) { skipped++; continue; }
+      if (hit) { if (f.tier === TIER_ESSENTIAL) tier1Present++; else tier2Present++; }
+      group.wanted++;
+      if (Number.isSafeInteger(f.size)) group.totalBytes += f.size;
+      else group.unknownSize++;
+      if (hit) { group.present++; if (Number.isSafeInteger(f.size)) group.bytes += f.size; }
+      if (f.tier === TIER_ESSENTIAL) tier1Wanted++; else tier2Wanted++;
       if (hit) {
         count++;
         if (Number.isSafeInteger(f.size)) { bytes += f.size; sized++; }
@@ -208,6 +259,9 @@ export class ResourceStore {
       tier1Present,
       tier2,
       tier2Present,
+      tier1Wanted,
+      tier2Wanted,
+      groups: Object.values(groups).filter((g) => g.total > 0),
       complete: wanted > 0 && count >= wanted,
     };
   }
@@ -249,6 +303,8 @@ export class ResourceStore {
       phase: 'download', count: done, total: start.total, wanted: start.wanted, skipped: start.skipped,
       bytes, totalBytes: start.totalBytes, sized, sizedTotal: start.sizedTotal,
       tier1: start.tier1, tier1Present: tier1Done, tier2: start.tier2, tier2Present: tier2Done,
+      tier1Wanted: start.tier1Wanted, tier2Wanted: start.tier2Wanted,
+      groups: this.#tally(start.present).groups,
       complete: false, failed, failures: failures.slice(), current, adopted, downloaded,
     });
     const emit = (current = null, force = false) => {
@@ -293,6 +349,7 @@ export class ResourceStore {
             if (++pendingFlush >= INDEX_FLUSH_EVERY) { pendingFlush = 0; await this.#writeIndex(cache, index.files, this.manifest.version); }
           }
           done++;
+          start.present.add(key);
           if (file.tier === TIER_ESSENTIAL) tier1Done++; else tier2Done++;
           if (Number.isSafeInteger(file.size)) { bytes += file.size; sized++; }
         } catch (err) {

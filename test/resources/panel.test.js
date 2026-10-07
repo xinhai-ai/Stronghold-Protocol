@@ -66,29 +66,18 @@ describe('where the preload is reachable', () => {
     assert.match(css, /\.res-pill \{/, 'the pill has its own styling');
   });
 
-  test('the launcher starts the preload in one click and can always undo it', () => {
+  test('both entry points open the shared manager with resource tiers and ZIP actions', () => {
     const panel = read('public/js/ui/resourcePanel.js');
-    assert.match(panel, /export function ResourceLauncher/);
-    assert.match(panel, /onClick=\$\{\(\) => \{ if \(!enabled\) onChange\(true\); \}\}/, 'the header starts it');
-    assert.match(panel, /onClose=\$\{\(\) => onChange\(false\)\}/, '关闭预载 turns the setting back off');
-    assert.match(panel, /if \(!enabled && !st\.supported\) return null;/, 'no clutter on a plain-HTTP LAN');
-    assert.match(panel, /disabled=\$\{!enabled && !st\.supported \? 'disabled' : null\}/, 'a browser that cannot cache can still turn it back off');
-    assert.match(panel, /onChange\(false\)\}>关闭预载<\/button>/, 'and the pill can always be closed');
-    // a failed registration must always be visible: the download still works without the worker, so a hidden warning
-    // would look exactly like "the Service Worker never intercepts anything" (see the pill's worker line)
-    assert.equal(panel.match(/\$\{st\.worker \? html/g).length, 2, 'both faces show it');
-    assert.equal((panel.match(/\$\{st\.worker && st\.message/g) || []).length, 0, 'never hidden behind a message');
-    // the copy never promises offline play: the preload only means "served from the local cache"
-    const index = read('public/js/resources/index.js');
-    for (const [name, src] of [['resourcePanel.js', panel], ['resources/index.js', index]]) {
-      assert.equal(/离线/.test(src), false, `${name}: no 离线 wording`);
-      assert.equal(/可离线进入对局|断网[^。]*可用/.test(src), false, `${name}: no offline-play promise`);
-    }
-    assert.match(panel, /startResources\(\)/, 'continue');
-    assert.match(panel, /pauseResources\(\)/, 'pause');
-    assert.match(panel, /clearResources\(\)/, 'clear');
-    // both faces render the shared progress bar and the same actions, so they can never drift apart
-    assert.equal(panel.match(/\$\{ResourceActions\}/g).length, 2);
-    assert.equal(panel.match(/\$\{ProgressBar\}/g).length, 2);
+    assert.equal((panel.match(/onClick=\$\{openResources\}/g) || []).length, 2);
+    const main = read('public/js/main.js');
+    assert.match(main, /<\$\{ResourceManagerHost\} \/>/);
+    assert.match(panel, /title="预载资源管理"/);
+    assert.match(panel, /tier=\$\{1\}/);
+    assert.match(panel, /tier=\$\{2\}/);
+    assert.match(panel, /导入 ZIP/);
+    assert.match(panel, /导出 ZIP/);
+    assert.match(panel, /st\.worker/);
+    assert.match(panel, /onChange\(false\)/);
+    assert.equal(/可离线进入对局|断网[^。]*可用/.test(panel), false);
   });
 });

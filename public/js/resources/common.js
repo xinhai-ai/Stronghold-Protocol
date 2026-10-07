@@ -17,12 +17,37 @@ export const CONTENT_HASH_RE = /^[0-9a-f]{12}$/;
 export const RESOURCES_FORMAT = 1;
 /** Never store a single file bigger than this (mirrors server/resources.js). */
 export const MAX_FILE_BYTES = 24 * 1024 * 1024;
-/** Essential: fonts, UI, icons, avatars, audio — what a screen needs in its first second. */
+/** Required visuals: maps, portraits, Spine, fonts, UI and icons. */
 export const TIER_ESSENTIAL = 1;
-/** The rest: portraits, Spine models, local-client board art — big, fetched in the background. */
+/** Optional: voices, sound effects, music and tutorial illustrations. */
 export const TIER_REST = 2;
 export const MANIFEST_URL = '/data/resource-manifest.json';
 export const SW_URL = '/resource-sw.js';
+
+export const RESOURCE_GROUPS = Object.freeze({
+  map: { name: '地图与棋盘', tier: TIER_ESSENTIAL },
+  character: { name: '干员与敌人图片', tier: TIER_ESSENTIAL },
+  spine: { name: 'Spine 模型与特效', tier: TIER_ESSENTIAL },
+  ui: { name: '界面、图标与字体', tier: TIER_ESSENTIAL },
+  voice: { name: '角色语音', tier: TIER_REST },
+  sfx: { name: '音效', tier: TIER_REST },
+  music: { name: '背景音乐', tier: TIER_REST },
+  other: { name: '玩法说明与其他资源', tier: TIER_REST },
+});
+
+export function resourceGroup(file) {
+  const path = new URL(file.url, 'https://resources.invalid').pathname;
+  if (file.tier === TIER_REST) {
+    if (/\/voice\//.test(path)) return 'voice';
+    if (/\/sfx\//.test(path)) return 'sfx';
+    if (/\/bgm\//.test(path)) return 'music';
+    return 'other';
+  }
+  if (/\/spine\/|\.(?:skel|atlas)$/.test(path)) return 'spine';
+  if (/\/(?:map|maps|mesh|board)\/|\.obj$/.test(path)) return 'map';
+  if (/\/(?:char|chars|enemy|enemies|token|tokens)\//.test(path)) return 'character';
+  return 'ui';
+}
 
 /** The extension-less audio route the game asks audio through (`shared/media.js`; a test keeps the two lists identical).
  * The manifest keeps the real `/assets/audio/….mp3` URLs — a plain static host (the CDN) cannot resolve `/media/…` — and

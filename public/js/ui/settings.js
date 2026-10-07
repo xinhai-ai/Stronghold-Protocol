@@ -13,7 +13,7 @@ import { ResourceRow } from './resourcePanel.js';
 import { FRAME_RATES } from '../frameRate.js';
 import { AnnouncementButton } from './announcement.js';
 
-/** Settings store: { bgm, sfx, voice, muted, damageNumbers, quality, fpsLimit, preload }. */
+/** Settings store: { bgm, sfx, voice, muted, damageNumbers, quality, fpsLimit, preload, preloadOptional }. */
 export const settingsStore = createStore(sanitizeSettings(loadPref('settings', null)));
 export const shortcutsStore = createStore(sanitizeShortcuts(loadPref('shortcuts', DEFAULT_SHORTCUTS)));
 

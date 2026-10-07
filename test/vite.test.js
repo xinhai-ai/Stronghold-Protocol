@@ -88,7 +88,8 @@ test('rendering, simulation and Three.js remain outside the initial static impor
   }
   visit('index.html');
   const initial = [...seen].map((key) => manifest[key].name);
-  for (const name of ['simulation', 'app', 'three']) assert.ok(!initial.includes(name), `${name} loads lazily`);
+  for (const name of ['simulation', 'app', 'three', 'archive']) assert.ok(!initial.includes(name), `${name} loads lazily`);
+  assert.ok(Object.values(manifest).some((entry) => entry.name === 'archive' && entry.isDynamicEntry), 'ZIP library is available on demand');
 });
 
 test('built simulation retains operator kits and domain mechanics: same deterministic battle results as Node', async () => {

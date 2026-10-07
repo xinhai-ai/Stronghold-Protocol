@@ -54,18 +54,20 @@ or restarting the server keeps the validator; a changed manifest returns fresh J
 A player can have the client download the art ahead of time into the browser's Cache Storage, so entering a battle never
 waits on a download: the files are served from the browser cache instead of being fetched again. It is **off by default** and
 there is a way in without leaving the home screen: the title screen shows a compact 「预载资源」 pill in its bottom-right
-corner (one click starts the preload, then it shows progress with 暂停 / 清理缓存 / 关闭预载), and the same switch is in the
-in-match 设置 modal (`ui/resourcePanel.js` renders both faces from the same state). Nothing is downloaded until one of them
-is used.
+corner, and 设置 ▸ 预载资源 provides the same entry. Both open a large resource manager (`ui/resourcePanel.js`) with
+required/optional groups, file counts, sizes, progress and ZIP import/export. Opening it only checks the manifest/cache;
+asset downloads start when the player clicks 开始预载 or successfully imports a package. Closing the modal leaves downloads
+running; 暂停下载 stops them and 关闭预载 disables automatic downloading while retaining the cache.
 
 - The list comes from the server: `GET /data/resource-manifest.json` is generated from the two manifests below and
   rewritten the same way, so a CDN install preloads *from the CDN* (`server/resources.js`). Every entry carries a
   `hash` — the first 12 hex of the SHA-1 of the file's bytes, written by `tools/asset-hashes.mjs` (fetched assets) and
   `tools/local-extract/extract.py` (local-client art) — plus a `tier`:
-  **tier 1 (`essential`)** — fonts, UI sprites (the 36 battle emotes included), profession / bond / band / item / skill
-  icons, enemy icons, operator and token avatars, audio: what a screen needs in its first second; **tier 2** — portraits,
-  every Spine model (skel/atlas/textures), the 19 玩法说明 pages and the local-client art that is not the board (the bulk
-  of the ~330 MiB). Sizes are included
+  **tier 1 (`essential`, 必备)** — maps and board meshes, operator/enemy/token pictures (including portraits), every
+  Spine model (skel/atlas/textures), local visual effects, fonts, UI and icons; **tier 2 (`optional`, 可选)** — character
+  voices, sound effects, background music and tutorial illustrations. Required files are preloaded by default; the
+  同时预载 checkbox opts into optional files, persisted as `settings.preloadOptional` (default false, including old
+  settings). Unselected optional files still load normally on demand. Sizes are included
   for the files this install has on disk; a CDN-only install omits them and the client reports progress in files
   instead of bytes. A file without a recorded hash falls back to a synthetic one derived from its source manifest, so
   such a manifest keeps the old "any rebuild invalidates the set" rule.
@@ -77,12 +79,33 @@ is used.
   drops the ones that are not, and only then fetches what is missing — the panel says 「正在整理已保存的资源（无需重新下载）」
   while that runs. The worker prefers the current cache when a URL exists in both, so a stale copy can never shadow a
   fresh file.
-- The client (`public/js/resources/*`) downloads tier 1 first, then tier 2 in the background: four lanes for small files
+- The client (`public/js/resources/*`) downloads tier 1 first, then tier 2 only when selected: four lanes for small files
   and one for files above 4 MiB, skipping whatever is already cached. Two tabs of the same browser never download the
   same file twice: a Web Lock (`stronghold-resources-preload`, `ifAvailable`) makes one tab do the work while the others
   report what is already cached and re-check when the player returns to them. A single failure is collected and retried next
   time, a quota failure stops the run and says so, and a file above 24 MiB is skipped instead of cached. Downloads run
   in the page (plain `fetch` + `cache.put`, `cache: 'no-store'` so nothing is stored twice).
+- **ZIP import/export.** 导出 ZIP packs currently cached files (partial preloads are supported) and
+  `stronghold-resources.json`, which records stable resource paths, sizes, SHA-256 and SHA-1 fingerprints. Import accepts
+  packages exported by this feature, including older resource versions. It checks ZIP structure/CRC, file counts,
+  paths, actual decompressed sizes and both digests for every file before modifying the live cache. Only files matching
+  the current server manifest's content fingerprint are imported; changed/removed files and files with only synthetic
+  server hashes are skipped. The selected tiers are then completed using incremental downloads. Site/CDN prefix
+  changes do not prevent reuse: validated bytes are stored under the current manifest's URLs. Code, data and package
+  cache-index records are never imported. ZIP processing shares the download Web Lock, can be cancelled, and is loaded
+  lazily via vendored zip.js (no extra CDN/worker dependency). Import checks one file at a time in two passes, avoiding a
+  second staging cache. Limits: 24 MiB per resource, 50,000 resource files, 32 MiB manifest, 2 GiB compressed/decompressed
+  package. ZIP export uses stored entries because most assets are already compressed; imports also accept deflated
+  entries. Cancelled imports or quota errors retain completed, verified files. Preloading assets does not provide
+  offline multiplayer gameplay.
+  ZIP progress is displayed as a percentage and updates at most every 500 ms within each phase. During import, the
+  category counts, sizes and progress bars refresh together, with the current category highlighted. Phase changes,
+  completion, cancellation and errors update immediately; integrity checks and cache writes continue independently.
+  If a same-version package imports far fewer files than it exported, check the server hash table: run
+  `node tools/asset-hashes.mjs` after downloading/updating local assets, then reload the receiving browser to fetch the
+  refreshed manifest. An absent/incomplete `data/asset-hashes.json` leaves files with synthetic hashes, which cannot
+  authorize ZIP imports. Existing ZIP packages already record actual content digests and need no re-export when their
+  bytes still match. Ship the updated hash table with the deployment's data files.
 - `public/resource-sw.js` (a module Service Worker, registered with `updateViaCache: 'none'`) answers `/assets/**`,
   `/fonts/**` and the extension-less `/media/**` audio route from that cache — byte ranges included, so audio can seek —
   and passes everything else (code, `/data/`, API, WebSocket) straight to the network. A `/media/bgm/act1` request is

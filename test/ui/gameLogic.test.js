@@ -502,13 +502,16 @@ describe('keyboard & settings', () => {
   test('sanitizeSettings', () => {
     assert.deepEqual(sanitizeSettings(null), { ...DEFAULT_SETTINGS });
     assert.deepEqual(sanitizeSettings({ bgm: 3, sfx: -1, voice: 2, muted: 'yes', damageNumbers: false, quality: 'ultra' }),
-      { bgm: 1, sfx: 0, voice: 1, muted: false, damageNumbers: false, quality: 'high', fpsLimit: 0, preload: false });
+      { bgm: 1, sfx: 0, voice: 1, muted: false, damageNumbers: false, quality: 'high', fpsLimit: 0, preload: false, preloadOptional: false });
     assert.equal(sanitizeSettings({ bgm: 0.5 }).voice, DEFAULT_SETTINGS.voice, 'a saved profile without `voice` gets the default');
     assert.equal(sanitizeSettings({ bgm: 0.333 }).bgm, 0.33);
     assert.equal(sanitizeSettings({ quality: 'low' }).quality, 'low');
     assert.equal(sanitizeSettings(null).preload, false, 'the offline-resource preload is off unless the player turned it on');
     assert.equal(sanitizeSettings({ preload: true }).preload, true);
     assert.equal(sanitizeSettings({ preload: 'yes' }).preload, false);
+    assert.equal(sanitizeSettings({ preload: true }).preloadOptional, false);
+    assert.equal(sanitizeSettings({ preloadOptional: true }).preloadOptional, true);
+    assert.equal(sanitizeSettings({ preloadOptional: 'yes' }).preloadOptional, false);
     assert.equal(sanitizeSettings({ quality: 'low' }).fpsLimit, 0, 'older saved settings remain uncapped');
     for (const limit of [0, 30, 60, 120]) assert.equal(sanitizeSettings({ fpsLimit: limit }).fpsLimit, limit);
     for (const limit of [-30, 1, 45, 240, Infinity, NaN, '30', null]) assert.equal(sanitizeSettings({ fpsLimit: limit }).fpsLimit, 0);

@@ -1710,14 +1710,14 @@ export const shortcutLabel = (shortcuts, action) => {
 
 // ---- settings ------------------------------------------------------------------------------------------------------
 
-export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, muted: false, damageNumbers: true, quality: 'high', fpsLimit: 0, preload: false });
+export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, muted: false, damageNumbers: true, quality: 'high', fpsLimit: 0, preload: false, preloadOptional: false });
 const QUALITIES = ['high', 'medium', 'low'];
 
 /**
  * Sanitize persisted settings.
  * @param {any} raw
  * @returns {{ bgm: number, sfx: number, voice: number, muted: boolean, damageNumbers: boolean, quality: 'high'|'medium'|'low',
- *             fpsLimit: 0|30|60|120, preload: boolean }}
+ *             fpsLimit: 0|30|60|120, preload: boolean, preloadOptional: boolean }}
  */
 export function sanitizeSettings(raw) {
   const r = isObj(raw) ? raw : {};
@@ -1732,6 +1732,7 @@ export function sanitizeSettings(raw) {
     fpsLimit: normalizeFrameRate(r.fpsLimit),
     // optional asset preload (docs/ASSETS.md「Preload」): off unless the player turned it on
     preload: typeof r.preload === 'boolean' ? r.preload : DEFAULT_SETTINGS.preload,
+    preloadOptional: typeof r.preloadOptional === 'boolean' ? r.preloadOptional : DEFAULT_SETTINGS.preloadOptional,
   };
 }
 

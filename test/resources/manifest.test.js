@@ -112,17 +112,24 @@ describe('resource manifest building', () => {
     assert.equal(localPathFor('/data/x.json', '/srv/public'), path.join(path.resolve('/srv/public'), 'data/x.json'), 'only the URL shape is refused here');
   });
 
-  test('tiers: avatars/icons/audio/fonts/UI are essential, portraits and Spine models are background', () => {
+  test('tiers: images, Spine and maps are required; audio and guides are optional', () => {
     assert.equal(tierForPath('fonts.faces.bender.woff2'), TIER_ESSENTIAL);
     assert.equal(tierForPath('ui.battle/sprite_shadow'), TIER_ESSENTIAL);
-    assert.equal(tierForPath('audio.sfx.units.char_002_amiya.skills.2'), TIER_ESSENTIAL);
+    assert.equal(tierForPath('audio.sfx.units.char_002_amiya.skills.2'), TIER_REST);
     assert.equal(tierForPath('chars.char_002_amiya.avatar'), TIER_ESSENTIAL);
     assert.equal(tierForPath('enemies.enemy_1007_slime.icon'), TIER_ESSENTIAL);
-    assert.equal(tierForPath('chars.char_002_amiya.portrait'), TIER_REST);
-    assert.equal(tierForPath('chars.char_002_amiya.spine.front.skel'), TIER_REST);
-    assert.equal(tierForPath('tokens.token_a.spine.skel'), TIER_REST);
+    assert.equal(tierForPath('chars.char_002_amiya.portrait'), TIER_ESSENTIAL);
+    assert.equal(tierForPath('chars.char_002_amiya.spine.front.skel'), TIER_ESSENTIAL);
+    assert.equal(tierForPath('tokens.token_a.spine.skel'), TIER_ESSENTIAL);
     assert.equal(tierForPath('local.groups.map.TX_autochessi_D.path'), TIER_ESSENTIAL);
-    assert.equal(tierForPath('local.groups.emoticon.e1.path'), TIER_REST);
+    for (const group of ['map/autochess', 'mesh/map_autochess_bkg', 'spine/enemy/x', 'projectiles']) {
+      assert.equal(tierForPath(`local.groups.${group}.x.path`), TIER_ESSENTIAL);
+    }
+    assert.equal(tierForPath('chars.c.voice.attack'), TIER_REST);
+    assert.equal(tierForPath('audio.voice.c.1'), TIER_REST);
+    const nested = collectResourceFiles({ chars: { c: { sound: '/assets/audio/unknown.mp3' } } }, null);
+    assert.equal(nested[0].tier, TIER_REST);
+    assert.equal(tierForPath('local.groups.emoticon.e1.path'), TIER_ESSENTIAL);
     // 0.1.2 moved the battle emotes and the 19 玩法说明 pages into the mirror download: the emotes are match UI, the
     // tutorial pages are full screenshots behind their own screen and wait for the background pass.
     assert.equal(tierForPath('ui.emoticon/basic/pic_happy_battle'), TIER_ESSENTIAL);
@@ -145,7 +152,7 @@ describe('resource manifest building', () => {
     }
     assert.equal(files.find((f) => f.url === '/assets/char/avatar/char_002_amiya.png').tier, TIER_ESSENTIAL);
     assert.equal(files.find((f) => f.url === '/fonts/bender-regular.otf').tier, TIER_ESSENTIAL);
-    assert.equal(files.find((f) => f.url === '/assets/char/portrait/char_002_amiya_1.png').tier, TIER_REST);
+    assert.equal(files.find((f) => f.url === '/assets/char/portrait/char_002_amiya_1.png').tier, TIER_ESSENTIAL);
     assert.equal(collectResourceFiles(null, null).length, 0);
   });
 
@@ -189,7 +196,7 @@ describe('the served resource manifest', () => {
     assert.ok(m.tier1 > 0 && m.tier1 < m.count);
     const byUrl = new Map(m.files.map((f) => [f.url, f]));
     assert.equal(byUrl.get('/assets/char/avatar/char_002_amiya.png').size, 'assets/char/avatar/char_002_amiya.png'.length);
-    assert.equal(byUrl.get('/assets/spine/op/char_002_amiya/front/char_002_amiya.skel').tier, TIER_REST);
+    assert.equal(byUrl.get('/assets/spine/op/char_002_amiya/front/char_002_amiya.skel').tier, TIER_ESSENTIAL);
     assert.equal(byUrl.has('/assets/char/avatar/char_002_amiya.png') && 'size' in byUrl.get('/assets/spine/enemy/enemy_1007_slime/enemy_1007_slime.skel'), false, 'a file this install does not have carries no size');
     assert.equal(m.sized < m.count, true);
     assert.ok(m.totalBytes > 0);

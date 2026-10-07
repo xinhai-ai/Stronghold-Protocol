@@ -51,9 +51,9 @@ const NODE_URL = 'https://nodejs.org/zh-cn/download';
 export const DATA_FILES = ['config', 'chess', 'bonds', 'garrisons', 'items', 'bands', 'effects', 'choices',
   'enemies', 'factions', 'waves', 'stages', 'bosses', 'tokens', 'assets', 'emotes'];
 /** Runtime packages that must be installed (package.json dependencies). */
-export const RUNTIME_PACKAGES = ['ws', 'pixi.js', 'pixi-spine', 'preact', 'htm'];
+export const RUNTIME_PACKAGES = ['ws', 'pixi.js', 'pixi-spine', 'preact', 'htm', '@zip.js/zip.js'];
 /** Vendor files the client cannot run without (tools/vendor.mjs; three.js is optional there). */
-export const VENDOR_REQUIRED = ['pixi.min.js', 'pixi-spine.js', 'preact.module.js', 'hooks.module.js', 'htm.module.js'];
+export const VENDOR_REQUIRED = ['pixi.min.js', 'pixi-spine.js', 'preact.module.js', 'hooks.module.js', 'htm.module.js', 'zip.module.js'];
 export const VENDOR_OPTIONAL = ['three.core.js', 'three.module.js'];
 
 const STATE_FILE = path.join(ROOT, '.cache', 'setup-state.json');

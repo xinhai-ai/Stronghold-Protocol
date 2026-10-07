@@ -38,6 +38,7 @@ export const VENDOR_FILES = Object.freeze([
   ['node_modules/preact/dist/preact.module.js', 'preact.module.js'],
   ['node_modules/preact/hooks/dist/hooks.module.js', 'hooks.module.js'],
   ['node_modules/htm/dist/htm.module.js', 'htm.module.js'],
+  ['node_modules/@zip.js/zip.js/index.min.js', 'zip.module.js'],
   ['node_modules/three/build/three.core.js', 'three.core.js', true],
   ['node_modules/three/build/three.module.js', 'three.module.js', true],
 ]);

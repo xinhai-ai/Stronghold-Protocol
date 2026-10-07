@@ -42,7 +42,8 @@ import { LobbyScreen, rememberRoom, parseRoomParam } from './screens/lobby.js';
 import { RoomScreen } from './screens/room.js';
 import { GameScreen } from './screens/game.js';
 import { installAudio } from './audio.js';
-import { settingsStore } from './ui/settings.js';
+import { settingsStore, useSettings, updateSettings } from './ui/settings.js';
+import { ResourceHost } from './ui/resourcePanel.js';
 import { GuideHost } from './ui/guide.js';
 import { installDeviceSupport } from './ui/device.js';
 import { LoadoutHost } from './screens/loadout.js';
@@ -282,6 +283,12 @@ function ScreenCrashed({ error, reset }) {
   </div>`;
 }
 
+function ResourceManagerHost() {
+  const settings = useSettings();
+  return html`<${ResourceHost} enabled=${settings.preload} optional=${settings.preloadOptional}
+    onChange=${(preload) => updateSettings({ preload })} onOptional=${(preloadOptional) => updateSettings({ preloadOptional })} />`;
+}
+
 function App() {
   const route = useStore(selectRoute);
   const [error, resetError] = useErrorBoundary((err) => console.error('[ui] screen crashed', err));
@@ -296,6 +303,7 @@ function App() {
     <${UiHosts} />
     <${GuideHost} />
     <${LoadoutHost} />
+    <${ResourceManagerHost} />
   </div>`;
 }
 
@@ -395,7 +403,7 @@ async function boot() {
 function installResourcePreload() {
   import('./resources/index.js')
     .then((r) => {
-      const apply = (s) => { r.syncResources(!!s.preload).catch((err) => console.warn('[resources] sync failed', err)); };
+      const apply = (s) => { r.syncResources(!!s.preload, !!s.preloadOptional).catch((err) => console.warn('[resources] sync failed', err)); };
       apply(settingsStore.get());
       settingsStore.subscribe(apply);
     })

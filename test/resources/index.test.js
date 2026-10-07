@@ -7,6 +7,9 @@ import assert from 'node:assert/strict';
 
 import { CACHE_NAME, CACHE_PREFIX, MANIFEST_URL, SW_URL, cacheName } from '../../public/js/resources/common.js';
 import { DOWNLOAD_LOCK } from '../../public/js/resources/index.js';
+import { createHash } from 'node:crypto';
+import { ResourceStore } from '../../public/js/resources/store.js';
+import { exportResourceZip } from '../../public/js/resources/archive.js';
 
 class MemoryCache {
   constructor() { this.entries = new Map(); }
@@ -31,6 +34,119 @@ const FILES = [
   { url: '/assets/spine/op/x/front/x.skel', tier: 2, size: 7 },
 ];
 const MANIFEST = { format: 1, version: 'testversion', count: FILES.length, tier1: 2, sized: FILES.length, totalBytes: 22, files: FILES };
+
+test('required-only preload stops after visuals; opting in later downloads only missing optional files', async (t) => {
+  const env = stubEnv();
+  t.after(env.restore);
+  const mod = await import('../../public/js/resources/index.js?optional-selection');
+  await mod.inspectResources();
+  assert.deepEqual(env.calls.fetch, [MANIFEST_URL]);
+  assert.equal(env.calls.registered.length, 0, 'opening the manager does not enable preloading');
+  await mod.syncResources(true, false);
+  assert.deepEqual(env.calls.fetch.slice(1), FILES.filter((f) => f.tier === 1).map((f) => ORIGIN + f.url));
+  assert.equal(mod.resourceState().selectionComplete, true);
+  assert.equal(mod.resourceState().complete, false);
+  assert.match(mod.resourceState().message, /必备资源已预载完成/);
+  const count = env.calls.fetch.length;
+  await mod.startResources();
+  assert.equal(env.calls.fetch.length, count, 'resuming a completed required tier does not fetch optional files');
+  await mod.syncResources(true, true);
+  assert.deepEqual(env.calls.fetch.slice(count), FILES.filter((f) => f.tier === 2).map((f) => ORIGIN + f.url));
+  assert.equal(mod.resourceState().complete, true);
+  await mod.syncResources(false);
+});
+
+test('controller ZIP import/export uses shared lock, imports while off, then fills only the selected missing tier', async (t) => {
+  const files = FILES.map((f) => ({ ...f, hash: createHash('sha1').update('b'.repeat(f.size)).digest('hex').slice(0, 12) }));
+  const env = stubEnv({ manifest: { ...MANIFEST, files } });
+  t.after(env.restore);
+  const locks = [];
+  Object.defineProperty(globalThis.navigator, 'locks', { configurable: true, value: {
+    request: async (name, options, job) => { locks.push(name); return job({ name }); },
+  } });
+  const mod = await import('../../public/js/resources/index.js?controller-zip');
+  await mod.syncResources(true, false);
+  const exported = await mod.exportResources();
+  assert.equal(exported.count, 2);
+  assert.equal(exported.blob.type, 'application/zip');
+  await mod.syncResources(false);
+  await mod.clearResources();
+  const previous = env.calls.fetch.length;
+  const result = await mod.importResources(exported.blob);
+  assert.equal(result.imported, 2);
+  assert.equal(mod.resourceState().enabled, false);
+  assert.equal(mod.resourceState().archive, '');
+  assert.equal(env.calls.fetch.length, previous);
+  await mod.syncResources(true, true);
+  assert.deepEqual(env.calls.fetch.slice(previous), FILES.filter((f) => f.tier === 2).map((f) => ORIGIN + f.url));
+  assert.ok(locks.length >= 4 && locks.every((name) => name === DOWNLOAD_LOCK));
+  Object.defineProperty(globalThis.navigator, 'locks', { configurable: true, value: { request: async (_, options, job) => job(null) } });
+  const cached = mod.resourceState().done;
+  await assert.rejects(mod.exportResources(), /另一个标签页/);
+  await assert.rejects(mod.importResources(exported.blob), /另一个标签页/);
+  await mod.clearResources();
+  assert.equal(mod.resourceState().done, cached, 'busy lock prevents deleting another tab\'s cache');
+  await mod.syncResources(false);
+});
+
+test('changing download scope and disabling preload while checking does not restart an obsolete request', async (t) => {
+  const env = stubEnv();
+  t.after(env.restore);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const fetcher = globalThis.fetch;
+  globalThis.fetch = async (url, options) => { if (url === MANIFEST_URL) await gate; return fetcher(url, options); };
+  const mod = await import('../../public/js/resources/index.js?selection-race');
+  const original = mod.syncResources(true, false);
+  const changed = mod.syncResources(true, true);
+  await mod.syncResources(false, false);
+  release();
+  await Promise.all([original, changed]);
+  assert.equal(mod.resourceState().enabled, false);
+  assert.deepEqual(env.calls.fetch, [MANIFEST_URL], 'a superseded settings update cannot enable resource downloads');
+  await mod.syncResources(true, false);
+  assert.deepEqual(env.calls.fetch.slice(1), FILES.filter((f) => f.tier === 1).map((f) => ORIGIN + f.url));
+  await mod.syncResources(false);
+});
+
+test('ZIP percentages and category counters update together every 500 ms, with immediate phase completion', async (t) => {
+  const files = Array.from({ length: 6 }, (_, i) => ({ url: `/assets/map/${i}.png`, tier: 1, size: 1,
+    hash: createHash('sha1').update('b').digest('hex').slice(0, 12) }));
+  const manifest = { ...MANIFEST, files, count: 6, tier1: 6, sized: 6, totalBytes: 6 };
+  const source = new ResourceStore(manifest, { caches: new MemoryCaches(), origin: ORIGIN, fetcher: async () => new Response('b') });
+  await source.download();
+  const { blob } = await exportResourceZip(source);
+  const env = stubEnv({ manifest });
+  t.after(env.restore);
+  let time = 0;
+  t.mock.method(performance, 'now', () => time);
+  const cache = await env.caches.open(CACHE_NAME);
+  const put = cache.put.bind(cache);
+  const times = [50, 500, 600, 999, 1000, 1050];
+  let written = 0;
+  cache.put = async (url, response) => {
+    await put(url, response);
+    if (url.includes('/assets/map/')) time = times[written++];
+  };
+  const mod = await import('../../public/js/resources/index.js?zip-progress-throttle');
+  const progress = [];
+  t.after(mod.subscribeResources((s) => {
+    if (s.archivePhase === 'import') progress.push({ time, percent: s.archivePercent, done: s.done,
+      group: s.archiveGroup, count: s.groups.find((g) => g.id === 'map')?.present, message: s.message });
+  }));
+  await mod.importResources(blob);
+  const updates = progress.filter((p) => p.message.startsWith('正在导入资源包：'));
+  assert.deepEqual(updates.map((p) => [p.time, p.percent, p.done, p.count]),
+    [[0, 0, 0, 0], [500, 33, 2, 2], [1000, 83, 5, 5], [1050, 100, 6, 6]]);
+  assert.deepEqual(updates.slice(1).map((p) => p.group), ['map', 'map', 'map']);
+  assert.ok(updates.every((p) => /\d+%$/.test(p.message)));
+  assert.equal(mod.resourceState().done, 6);
+  assert.equal(mod.resourceState().archiveGroup, '', 'completion clears the active category');
+
+  // Existing valid entries still advance the percentage to 100%, although no files need writing a second time.
+  assert.equal((await mod.importResources(blob)).imported, 0);
+  assert.equal(mod.resourceState().archivePercent, 100);
+});
 
 /** Install stubs and return the recorder of what the module did. */
 function stubEnv({ manifest = MANIFEST, fail = false, secure = true } = {}) {
@@ -92,7 +208,7 @@ test('the preload controller: off by default, downloads in two passes, serves of
   assert.equal(env.calls.registered.length, 0);
 
   // turning it on: manifest, worker, essential tier first, then the rest
-  await mod.syncResources(true);
+  await mod.syncResources(true, true);
   const st = mod.resourceState();
   assert.equal(env.calls.registered.length, 1);
   assert.deepEqual(env.calls.registered[0], [SW_URL, { type: 'module', scope: '/', updateViaCache: 'none' }]);
@@ -121,7 +237,7 @@ test('the preload controller: off by default, downloads in two passes, serves of
 
   // a second sync with the same value is a no-op (the settings store fires for volume changes too)
   const fetches = env.calls.fetch.length;
-  await mod.syncResources(true);
+  await mod.syncResources(true, true);
   assert.equal(env.calls.fetch.length, fetches, 'no second download');
 
   // pausing, continuing and clearing
@@ -145,7 +261,7 @@ test('a second tab does not download the same files twice (Web Locks)', async (t
     configurable: true, writable: true,
   });
   const mod = await import('../../public/js/resources/index.js?other-tab');
-  await mod.syncResources(true);
+  await mod.syncResources(true, true);
   const st = mod.resourceState();
   assert.deepEqual(lockCalls, [[DOWNLOAD_LOCK, { ifAvailable: true }]]);
   assert.equal(st.phase, 'foreign');
@@ -198,7 +314,7 @@ test('a browser without Cache Storage is reported instead of downloading', async
   t.after(env.restore);
   // a separate module instance (the controller keeps a session-wide manifest/worker state, as in the browser)
   const mod = await import('../../public/js/resources/index.js?insecure-context');
-  await mod.syncResources(true);
+  await mod.syncResources(true, true);
   const st = mod.resourceState();
   assert.equal(st.enabled, true, 'the switch stays where the player put it');
   assert.equal(st.supported, false);

@@ -56,7 +56,7 @@ English summary: [below](#english).
 - **断线重连**：同盟模拟断线后 10 分钟内重新打开页面即可回到原座位，掉线期间按原阵容自动作战，也可以「暂离」交给 AI 托管；独立模拟 24 小时内可以回来继续（同一个浏览器）。
 - **交互细节**：漏怪时顶栏的目标生命值实时减少（结算时确定）；点选、拖放和配发装备都按地上的方格；购买、升级和机变选卡都需要点两次确认；只有一名玩家时除作战外不计时。
 - **画面与声音**：真实 Spine 小人、官方 BGM 与音效、表情（6 套 × 6 个）、作战特效；可选的官方 3D 棋盘（需要从本机客户端提取贴图）。
-- **资源预载（可选，默认关闭）**：首页右下角（或对局内「设置 ▸ 预载资源」）打开后，客户端把对局素材（字体、界面、立绘、小人、音效）存进浏览器缓存并缓步补齐，进入战斗不再等待下载，素材直接从本机缓存读取（Service Worker + Cache Storage，需要 HTTPS；见 [docs/ASSETS.md](docs/ASSETS.md)「Preload」）。
+- **资源预载（默认关闭）**：首页右下角或「设置 ▸ 预载资源」打开资源管理模态框，按分类查看进度和大小。默认只预载地图、干员图片、Spine、界面及字体等必备资源；角色语音、音效、音乐等可选资源可勾选一起下载。支持导出已缓存资源为 ZIP，导入旧版 ZIP 时校验完整性及当前资源指纹，再增量补齐缺失或变化的文件（Service Worker + Cache Storage，需要 HTTPS；见 [docs/ASSETS.md](docs/ASSETS.md)「Preload」）。
 - **手机与电脑**：触摸拖拽、长按查看详情，推荐横屏；设置里可以调低画质。
 
 ## 快速开始
@@ -239,7 +239,7 @@ GOLDEN_FULL=1 node --test test/golden.test.js           # 黄金结果：固定�
 - 素材来源：[yuanyan3060/ArknightsGameResource](https://github.com/yuanyan3060/ArknightsGameResource)、[fexli/ArknightsResource](https://github.com/fexli/ArknightsResource)、[isHarryh/Ark-Models](https://github.com/isHarryh/Ark-Models)、[ArknightsAssets/ArknightsAssets2](https://github.com/ArknightsAssets/ArknightsAssets2)；字体来自 [TimWangZi/The-font-of-Arknights](https://github.com/TimWangZi/The-font-of-Arknights) 与 Google Fonts（Noto Sans SC）。详见 [docs/ASSETS.md](docs/ASSETS.md)。
 - 规则核对参考：[PRTS 明日方舟中文 Wiki](https://prts.wiki/)。
 - LZ4AK 解包：`tools/local-extract/aklz4.py` 的算法来自 [isHarryh/Ark-Unpacker](https://github.com/isHarryh/Ark-Unpacker)（BSD-3-Clause，经 MooncellWiki/UnityPy）；解析 Unity 资源使用 [UnityPy](https://github.com/K0lb3/UnityPy)（MIT）。
-- 库：[PixiJS](https://pixijs.com/)（MIT）、[pixi-spine](https://github.com/pixijs/spine)（MIT；其中包含的 Spine Runtime 另受 [Spine Runtimes License](https://esotericsoftware.com/spine-runtimes-license) 约束）、[three.js](https://threejs.org/)（MIT）、[Preact](https://preactjs.com/) + [htm](https://github.com/developit/htm)（MIT）、[ws](https://github.com/websockets/ws)（MIT）。
+- 库：[PixiJS](https://pixijs.com/)（MIT）、[pixi-spine](https://github.com/pixijs/spine)（MIT；其中包含的 Spine Runtime 另受 [Spine Runtimes License](https://esotericsoftware.com/spine-runtimes-license) 约束）、[three.js](https://threejs.org/)（MIT）、[Preact](https://preactjs.com/) + [htm](https://github.com/developit/htm)（MIT）、[ws](https://github.com/websockets/ws)（MIT）、[zip.js](https://github.com/gildas-lormeau/zip.js)（BSD-3-Clause）。
 
 感谢以上项目的作者与维护者，以及鹰角网络带来的这款游戏。
 

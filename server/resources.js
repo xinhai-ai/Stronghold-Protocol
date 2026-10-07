@@ -34,9 +34,9 @@ export function shortHash(text) {
 }
 /** A single cached file may never exceed this (a broken manifest cannot make a browser store something huge). */
 export const MAX_FILE_BYTES = 24 * 1024 * 1024;
-/** Essential: fonts, UI, icons, avatars, audio — what a screen needs in its first second. */
+/** Required visuals: maps/meshes, portraits, Spine, fonts, UI and icons. */
 export const TIER_ESSENTIAL = 1;
-/** The rest: portraits, Spine models, local-client board art — big, fetched in the background. */
+/** Optional: voices, sound effects, music and tutorial illustrations. */
 export const TIER_REST = 2;
 
 /** Extension → MIME type. Mirrored by the client (public/js/resources/common.js) for URL validation. */
@@ -91,23 +91,19 @@ export function validateResourceUrl(url) {
   return isResourcePath(pathname) && !!resourceType(pathname);
 }
 
-const TIER_ESSENTIAL_SECTIONS = new Set(['ui', 'prof', 'bonds', 'items', 'bands', 'skills', 'audio', 'fonts']);
+const TIER_ESSENTIAL_SECTIONS = new Set(['ui', 'prof', 'bonds', 'items', 'bands', 'skills', 'fonts', 'chars', 'tokens', 'enemies', 'maps', 'spine']);
 
 /**
  * Preload tier of a manifest entry, from its key path (`chars.char_002_amiya.spine.front.skel`). Operators, tokens and
- * enemies are split by role — their avatars/icons are essential, portraits and Spine models are the bulk; local-client
- * art is essential only for the board (`map`), and the 玩法说明 pages are background whatever screen they hang off.
- * Everything else in an unknown section defaults to the background tier: the fast path must stay fast even if the
- * manifest grows a new section.
+ * images, Spine and map geometry are all required. Audio and tutorial illustrations are optional. Local groups use
+ * slash-containing names (map/autochess, spine/enemy/…), so classification must handle both '/' and '.'.
  */
 export function tierForPath(keyPath) {
   const p = String(keyPath || '');
-  const head = p.split('.')[0];
-  if (head === 'chars' || head === 'tokens' || head === 'enemies') return /(^|\.)(?:spine|portrait)/.test(p) ? TIER_REST : TIER_ESSENTIAL;
-  if (head === 'local') return /(^|\.)map(\.|$)/.test(p) ? TIER_ESSENTIAL : TIER_REST;
-  // The 19 玩法说明 pages (ui.guide/…) are full screenshots behind their own screen: the fast path is what a battle needs
-  // in its first second. The battle emotes (ui.emoticon/…) are part of the match UI and stay essential with the rest of ui.
-  if (/^ui\.guide(?:\/|\.|$)/.test(p)) return TIER_REST;
+  const segments = p.split(/[./]/);
+  const head = segments[0];
+  if (segments.some((s) => ['audio', 'voice', 'voices', 'sfx', 'bgm', 'guide'].includes(s))) return TIER_REST;
+  if (head === 'local') return TIER_ESSENTIAL;
   return TIER_ESSENTIAL_SECTIONS.has(head) ? TIER_ESSENTIAL : TIER_REST;
 }
 
@@ -125,7 +121,8 @@ export function collectResourceFiles(assets, local) {
   const walk = (node, keyPath, source) => {
     if (typeof node === 'string') {
       if (!validateResourceUrl(node)) return;
-      const tier = tierForPath(keyPath);
+      // Audio is optional even when a new manifest nests it inside an otherwise required character/map section.
+      const tier = resourceType(node)?.startsWith('audio/') ? TIER_REST : tierForPath(keyPath);
       const prev = byUrl.get(node);
       if (prev == null || tier < prev.tier) byUrl.set(node, { tier, source });
       return;
@@ -304,7 +301,7 @@ export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite 
     const fileHashes = resolveHashes(files, real, stamps, cdnBase);
     // The version is informational now (the client keys its cache per file), but it must still change whenever the set
     // or any hash does — the settings panel and the /healthz-style diagnostics read it.
-    const version = shortHash([cdnBase, ...files.map((f) => `${f.url}|${fileHashes.get(f.url)}`)].join('\n'));
+    const version = shortHash([cdnBase, ...files.map((f) => `${f.url}|${fileHashes.get(f.url)}|${f.tier}`)].join('\n'));
     const manifest = buildResourceManifest({ files, sizes: await measure(files), version, hashes: fileHashes });
     const body = Buffer.from(JSON.stringify(manifest));
     // Hash the complete response (including tiers and sizes), so unchanged rebuilds/restarts keep their validator.

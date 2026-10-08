@@ -9,6 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { listResourceFiles, collectHashes } from '../../tools/asset-hashes.mjs';
 
 import { createStaticHandler, rewriteAssetPaths } from '../../server/index.js';
 import {
@@ -161,6 +163,25 @@ describe('resource manifest building', () => {
     const shared = collectResourceFiles(assets, null).filter((f) => f.url === '/assets/shared.png');
     assert.equal(shared.length, 1, 'listed once');
     assert.equal(shared[0].tier, TIER_ESSENTIAL);
+  });
+
+  test('board metadata and bracket textures are required, with canonical URL deduplication and a tile companion', () => {
+    const localDoc = { groups: { 'map/fx': { materials: { path: '/assets/local/map/fx/materials.json' },
+      prefab: { path: '/assets/local/map/fx/prefab.json' }, texture: { path: '/assets/local/map/fx/[opt]merged_textures.png' } },
+    'map/water': { normal: { path: '/assets/local/map/water/[ucp]TX_water_normal.png' } },
+    'map/autochess': { atlas: { path: '/assets/local/map/autochess/TX_autochessi_D.png' }, materials: { path: '/assets/local/map/autochess/materials.json' } } } };
+    const files = collectResourceFiles({ ui: { alias: '/assets/local/map/fx/%5Bopt%5Dmerged_textures.png' } }, localDoc);
+    for (const url of ['/assets/local/map/fx/materials.json', '/assets/local/map/fx/prefab.json',
+      '/assets/local/map/fx/%5Bopt%5Dmerged_textures.png', '/assets/local/map/water/%5Bucp%5DTX_water_normal.png',
+      '/assets/local/map/autochess/materials.json', '/assets/local/map/autochess/tiles.json']) {
+      assert.equal(files.filter((f) => f.url === url).length, 1, url);
+      assert.equal(files.find((f) => f.url === url).tier, TIER_ESSENTIAL);
+    }
+    assert.equal(localPathFor('/assets/local/map/fx/%5Bopt%5Dmerged_textures.png', '/srv/public'),
+      path.join(path.resolve('/srv/public'), 'assets/local/map/fx/[opt]merged_textures.png'));
+    for (const url of ['/assets/%2e%2e/%2e%2e/outside.png', '/assets/%5c..%5coutside.png', '/assets/%00.png', '/assets/%ZZ.png']) {
+      assert.equal(localPathFor(url, '/srv/public'), null, url);
+    }
   });
 
   test('build: sizes are optional per file, counters add up', () => {
@@ -347,6 +368,54 @@ describe('the served resource manifest', () => {
 });
 
 describe('the resource index cache', () => {
+  test('installed board sidecars have real hashes and sizes, tile changes invalidate the manifest, and CDN paths agree', async (t) => {
+    const atlas = '/assets/local/map/autochess/TX_autochessi_D.png';
+    const texture = '/assets/local/map/fx/[opt]merged_textures.png';
+    const materials = '/assets/local/map/fx/materials.json';
+    const prefab = '/assets/local/map/fx/prefab.json';
+    const tiles = '/assets/local/map/autochess/tiles.json';
+    const localDoc = { groups: { 'map/autochess': { atlas: { path: atlas, hash: 'aaaabbbbcccc' } },
+      'map/fx': { texture: { path: texture, hash: 'ddddaaaabbbb' }, materials: { path: materials, hash: 'bbbbccccdddd' },
+        prefab: { path: prefab, hash: 'ccccddddeeee' } } } };
+    const inst = install({ localDoc, files: [atlas, texture, materials, prefab, tiles].map((s) => s.slice(1)) });
+    t.after(inst.cleanup);
+    const index = createResourceIndex({ ...inst, cdnBase: 'https://cdn.example/game',
+      rewrite: (doc) => rewriteAssetPaths(doc, 'https://cdn.example/game') });
+    const a = await index.get();
+    assert.equal(a.manifest.files.find((f) => f.url === 'https://cdn.example/game' + encodeURI(texture)).size, texture.length - 1);
+    const tilePath = path.join(inst.publicDir, tiles);
+    const tileBody = fs.readFileSync(tilePath);
+    const expected = createHash('sha1').update(tileBody).digest('hex').slice(0, 12);
+    assert.equal(a.manifest.files.find((f) => f.url.endsWith('/tiles.json')).hash, expected);
+    fs.writeFileSync(tilePath, '{"version":2,"board3d":{}}');
+    const b = await index.get();
+    assert.notEqual(b.etag, a.etag);
+    assert.notEqual(b.manifest.version, a.manifest.version);
+    fs.unlinkSync(tilePath);
+    const c = await index.get();
+    assert.equal(c.manifest.files.some((f) => f.url.endsWith('/tiles.json')), false, 'no endless download when optional local crops are absent');
+  });
+
+  test('hash tooling includes only board JSON metadata and encodes bracket filenames', async (t) => {
+    const names = ['assets/local/map/fx/materials.json', 'assets/local/map/fx/prefab.json',
+      'assets/local/map/autochess/tiles.json', 'assets/local/map/autochess/materials.json',
+      'assets/local/map/fx/[opt]merged_textures.png', 'assets/local/map/fx/other.json', 'assets/game-data.json'];
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-res-hashes-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    for (const name of names) {
+      const file = path.join(root, 'public', name);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, name);
+    }
+    const listed = await listResourceFiles('public/assets', { root });
+    assert.ok(listed.includes('/assets/local/map/fx/%5Bopt%5Dmerged_textures.png'));
+    assert.equal(listed.filter((f) => f.endsWith('.json')).length, 4);
+    const hashes = await collectHashes({ root, trees: ['public/assets'] });
+    assert.equal(hashes.count, 5);
+    assert.deepEqual(hashes.missing, []);
+    for (const name of names.slice(0, 5)) assert.equal(hashes.files[encodeURI('/' + name)],
+      createHash('sha1').update(name).digest('hex').slice(0, 12));
+  });
   test('the version follows the hashes, not the file times', async () => {
     const localDoc = { version: 1, groups: { map: { TX: { path: '/assets/local/map/autochess/TX_D.png', hash: 'aaaaaaaaaaaa' } } } };
     const inst = install({ localDoc });

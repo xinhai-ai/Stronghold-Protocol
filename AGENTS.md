@@ -76,6 +76,7 @@
 - ZIP 文件读取默认缓存两个按 16 MiB 对齐的文件块，总上限 32 MiB，LRU 淘汰；不超过 16 MiB 的元数据及未压缩正文共用文件块，跨块读取按顺序拼接，更大读取直接读取目标范围。同块并发请求共用读任务，分块物理读取串行化。返回独立的字节数组，不让条目保留或修改缓存块；读取缓存与小文件 pipeline 的 1 MiB 原始字节预算、大文件独占缓冲分别计量。记录 fileReadCalls、fileReadBytes、fileReadMs、maxReadAheadBytes 和 readCacheLimitBytes。成功导入后自动启用预载，通过界面的设置回调持久化开关，再按原有必备/可选选择增量补齐；失败、取消不启用原本关闭的预载。导入显示单一的逐文件处理进度，不恢复全量文件头校验阶段。
 - 未压缩 ZIP 条目先由 zip.js 验证本地文件头、描述符、边界及重叠，再直接读取正文并复用 vendor 的 zip.js Crc32 实现校验，不走 Blob.stream 和通用流式复制链；Deflate 条目仍走原有有界解压路径。单个条目的 CRC、实际大小及摘要均通过才允许写入；不能只验证摘要而省略 CRC。诊断中的 metadataMs、bodyReadMs、crcMs 已包含在 readMs 内，storedFiles 记录直接读取成功的资源数。CRC 模块随 ZIP 按需加载，不进入首屏依赖。
 - 已启用预载的页面启动检查只获取服务器资源清单、缓存键和本地索引，不重读或哈希资源正文。缓存键和索引并行读取，同时发生的状态检查共享正在进行的扫描并返回独立快照；只合并进行中的请求，不长期缓存结果，以便后续发现浏览器清理或资源版本变化。活动检查/下载/ZIP 期间打开资源窗口不额外扫描。启动耗时日志区分 manifestMs、cacheKeysMs、indexReadMs 和总时间。
+- 棋盘资源 JSON 仅放行 `/assets/local/map/fx/materials.json`、`prefab.json` 及 `/assets/local/map/autochess/materials.json`、`tiles.json`（兼容素材 CDN 前缀），作为必备地图资源参与预载、指纹和 ZIP 导入导出，不泛化放行游戏数据或语言 JSON。`tiles.json` 从已列出的 `TX_autochessi_D.png` 同目录推导，存在本地文件或服务器哈希表记录时纳入；本地裁切表内容用于生成真实指纹，其大小/mtime 参与清单失效。带方括号的资源 URL 统一 `%5B`/`%5D`，服务器清单、磁盘路径、缓存键及 ZIP 身份一致，兼容旧 ZIP 原始方括号路径和旧缓存读取。`tools/asset-hashes.mjs` 同步此 JSON 白名单和路径规则。新增 shared/resourcePaths.js 属于 SW 依赖，生产 build 标识须覆盖，部署后更新 SW。
 
 - HTML 保持 `no-cache`；`/build/assets/` 下带内容哈希的 JS/CSS 使用 `public, max-age=31536000, immutable`。运行时配置和非指纹代码不能套用此长期缓存。
 - 保留 gzip、ETag/304、HEAD 和原有素材 Range 行为。

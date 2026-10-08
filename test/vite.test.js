@@ -165,4 +165,7 @@ test('build detection follows built files and separately served worker modules',
   await fs.mkdir(path.join(temp, 'shared'), { recursive: true });
   await fs.writeFile(path.join(temp, 'shared/i18n.js'), '// resource categories used by the worker');
   assert.notEqual(computeBuildTag(temp), workerUpdated);
+  const sharedUpdated = computeBuildTag(temp);
+  await fs.writeFile(path.join(temp, 'shared/resourcePaths.js'), '// resource path rules used by the worker');
+  assert.notEqual(computeBuildTag(temp), sharedUpdated);
 });

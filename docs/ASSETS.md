@@ -91,6 +91,14 @@ running; 暂停下载 stops them and 关闭预载 disables automatic downloading
   report what is already cached and re-check when the player returns to them. A single failure is collected and retried next
   time, a quota failure stops the run and says so, and a file above 24 MiB is skipped instead of cached. Downloads run
   in the page (plain `fetch` + `cache.put`, `cache: 'no-store'` so nothing is stored twice).
+  Local board metadata is also required: `map/fx/materials.json`, `map/fx/prefab.json`,
+  `map/autochess/materials.json` and `map/autochess/tiles.json` under `/assets/local/` are the only JSON sidecars
+  accepted by preload and ZIP validation. The crop table is discovered beside a listed `TX_autochessi_D.png` atlas;
+  it is included when installed locally or recorded in the server hash table. Its local contents are hashed on manifest
+  rebuild and its size/mtime invalidate the manifest cache. `tools/asset-hashes.mjs` includes these board descriptions
+  while excluding game-data/language JSON. Brackets in resource paths use `%5B`/`%5D` consistently for manifest URLs,
+  cache keys and ZIP identities, matching renderer requests. Legacy ZIP paths and cached raw-bracket requests remain
+  readable. After updating these Service Worker dependencies, update the browser's worker registration.
 - **ZIP import/export.** 导出 ZIP packs currently cached files (partial preloads are supported) and
   `stronghold-resources.json` version 2, which records stable resource paths, sizes, full 40-hex `sha1` digests and their
   12-hex `hash` prefixes for the server fingerprint. Export computes SHA-1 once per resource and does not compute SHA-256.

@@ -48,7 +48,7 @@ function buildEntries(abs, rel, out) {
 export function computeBuildTag(root = ROOT, { clientBuild = true } = {}) {
   const out = [];
   const inputs = clientBuild && fs.existsSync(path.join(root, 'public/build/index.html'))
-    ? ['public/build', 'public/resource-sw.js', 'public/js/resources', 'shared/media.js', 'shared/i18n.js', 'shared/i18nPacks.js'] : BUILD_INPUTS;
+    ? ['public/build', 'public/resource-sw.js', 'public/js/resources', 'shared/media.js', 'shared/i18n.js', 'shared/i18nPacks.js', 'shared/resourcePaths.js'] : BUILD_INPUTS;
   for (const rel of inputs) buildEntries(path.join(root, rel), rel, out);
   if (!out.length) return null;
   out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));

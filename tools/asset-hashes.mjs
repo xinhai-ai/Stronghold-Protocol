@@ -26,12 +26,13 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { canonicalResourceUrl, isBoardResourceJson } from '../shared/resourcePaths.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const HASHES_VERSION = 1;
 /** The trees the preload may cache (server/resources.js isResourcePath) — the same ones this tool hashes. */
 export const TREES = ['public/assets', 'public/fonts'];
-/** Suffixes worth hashing as resources; mirrors the server's RESOURCE_MIME keys (a `.json` sidecar is never preloaded). */
+/** Resource suffixes; board JSON sidecars use a separate explicit allowlist. */
 const EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'mp3', 'ogg', 'wav', 'm4a', 'mp4', 'woff', 'woff2', 'ttf', 'otf', 'css', 'atlas', 'obj', 'skel', 'bin']);
 
 /** Recursively list the resource files under `dir`, as site paths (`/assets/ui/x.png`). */
@@ -45,8 +46,9 @@ export async function listResourceFiles(dir, { root = ROOT } = {}) {
       if (e.isDirectory()) { await walk(child); continue; }
       if (!e.isFile()) continue;
       const ext = path.extname(e.name).slice(1).toLowerCase();
-      if (!EXTENSIONS.has(ext)) continue;
-      out.push('/' + path.relative(path.join(root, 'public'), child).split(path.sep).join('/'));
+      const url = '/' + path.relative(path.join(root, 'public'), child).split(path.sep).join('/');
+      if (!EXTENSIONS.has(ext) && !isBoardResourceJson(url)) continue;
+      out.push(canonicalResourceUrl(url));
     }
   };
   await walk(path.resolve(root, dir));
@@ -82,7 +84,7 @@ export async function collectHashes({ root = ROOT, trees = TREES, concurrency = 
   await Promise.all(Array.from({ length: lanes }, async () => {
     for (let i = next++; i < urls.length; i = next++) {
       const url = urls[i];
-      const abs = path.join(root, 'public', url.slice(1));
+      const abs = path.join(root, 'public', decodeURIComponent(url.slice(1)));
       try {
         const { hash, bytes: n } = await hashFile(abs);
         files[url] = hash;

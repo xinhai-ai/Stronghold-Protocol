@@ -5,6 +5,7 @@ import { Crc32 } from '../../vendor/zip-crc32.module.js';
 import { CONTENT_HASH_RE, MAX_FILE_BYTES, checkAbort, isResourceUrl } from './common.js';
 import { resourceDigests, verifyResourceBytes } from './integrity.js';
 import { ResourceZipReader } from './zipReader.js';
+import { canonicalResourceUrl } from '../../../shared/resourcePaths.js';
 
 export const ARCHIVE_MANIFEST = 'stronghold-resources.json';
 export const MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -24,7 +25,7 @@ export function resourcePath(url) {
   if (/[\\\u0000-\u001f?#]/.test(decoded) || decoded.split('/').some((s) => s === '.' || s === '..')) {
     throw new Error('资源路径无效');
   }
-  return canonical;
+  return canonicalResourceUrl(canonical);
 }
 
 /** Enforce the limit on actual decompressed bytes as well as untrusted central-directory sizes. */
@@ -170,17 +171,17 @@ export async function importResourceZip(store, blob, { signal, onProgress, onDia
     const urls = new Set();
     for (const row of doc.files) {
       if (!row || typeof row.path !== 'string' || !/^resources\/\d{1,5}$/.test(row.path) || paths.has(row.path)
-        || typeof row.url !== 'string' || resourcePath(row.url) !== row.url || urls.has(row.url)
+        || typeof row.url !== 'string' || resourcePath(row.url) !== canonicalResourceUrl(row.url) || urls.has(resourcePath(row.url))
         || typeof row.hash !== 'string' || !CONTENT_HASH_RE.test(row.hash)
         || (doc.version === 1 ? typeof row.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(row.sha256)
           : typeof row.sha1 !== 'string' || !/^[0-9a-f]{40}$/.test(row.sha1) || row.sha1.slice(0, 12) !== row.hash)
         || !Number.isSafeInteger(row.size) || row.size < 0 || row.size > MAX_FILE_BYTES
         || entries.get(row.path)?.uncompressedSize !== row.size) throw new Error('资源包清单条目无效或缺少文件');
       paths.add(row.path);
-      urls.add(row.url);
+      urls.add(resourcePath(row.url));
     }
 
-    const available = new Map(doc.files.map((row) => [`${row.url}|${row.hash}`, row]));
+    const available = new Map(doc.files.map((row) => [`${resourcePath(row.url)}|${row.hash}`, row]));
     const compatible = store.files.filter((f) => store.eligible(f) && CONTENT_HASH_RE.test(f.hash || '')
       && available.has(`${resourcePath(f.url)}|${f.hash}`)
       && (f.size == null || f.size === available.get(`${resourcePath(f.url)}|${f.hash}`).size));

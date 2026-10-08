@@ -86,6 +86,40 @@ test('export/import round trip includes only cached files and serves imported by
   assert.equal((await importResourceZip(target.store, exported.blob)).imported, 1, 'a damaged cached copy is replaced by verified package bytes');
 });
 
+test('board JSON metadata and bracket textures preload, round-trip through ZIP and match encoded CDN requests', async () => {
+  const paths = ['/assets/local/map/fx/materials.json', '/assets/local/map/fx/prefab.json', '/assets/local/map/autochess/tiles.json',
+    '/assets/local/map/fx/[opt]merged_textures.png', '/assets/local/map/water/[ucp]TX_water_normal.png'];
+  const files = paths.map((url) => file(url, url.endsWith('.json') ? '{"board":true}' : 'texture'));
+  const source = store(files);
+  assert.equal((await source.store.download({ tiers: [1] })).count, 5);
+  const exported = await exportResourceZip(source.store);
+  assert.equal(exported.count, 5);
+  const targetFiles = files.map((f) => ({ ...f, url: 'https://cdn.example/game' + encodeURI(f.url) }));
+  const target = store(targetFiles);
+  assert.equal((await importResourceZip(target.store, exported.blob)).imported, 5);
+  for (const f of targetFiles) {
+    const response = await handleResourceRequest(new Request(f.url), { caches: target.caches });
+    assert.equal(await response.text(), f.body);
+    if (f.url.endsWith('.json')) assert.match(response.headers.get('content-type'), /application\/json/);
+  }
+  assert.equal((await target.store.status()).tier1Present, 5);
+});
+
+test('legacy ZIP raw bracket paths match new encoded paths; encoded duplicates and unrelated JSON are refused', async () => {
+  const raw = file('/assets/local/map/fx/[opt]merged_textures.png', 'texture');
+  const target = store([{ ...raw, url: 'https://cdn.example/game' + encodeURI(raw.url) }]);
+  assert.equal((await importResourceZip(target.store, await packageZip([raw]))).imported, 1);
+  const legacy = store([raw]);
+  const cache = await legacy.caches.open(CACHE_NAME);
+  await cache.put('https://game.example' + raw.url, new Response(raw.body));
+  assert.equal(await (await handleResourceRequest(new Request('https://game.example' + encodeURI(raw.url)), { caches: legacy.caches })).text(), raw.body);
+  const duplicate = await packageZip([raw, { ...raw, url: encodeURI(raw.url) }]);
+  await assert.rejects(importResourceZip(target.store, duplicate), /清单条目无效/);
+  for (const url of ['/assets/local/map/fx/other.json', '/assets/game.json', '/data/assets.json', '/i18n/en.json']) {
+    await assert.rejects(importResourceZip(target.store, await packageZip([file(url, '{}')])));
+  }
+});
+
 test('old ZIP reuses unchanged files across CDN prefixes, skips stale/removed/unverifiable files, downloads only the remainder', async () => {
   const old = [file('/assets/map/a.png', 'same'), file('/assets/char/b.png', 'old'), file('/assets/gone.png', 'gone'), file('/fonts/x.woff2', 'font')];
   const source = store(old);

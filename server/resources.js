@@ -20,6 +20,7 @@ import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { canonicalResourceUrl, isBoardResourceJson } from '../shared/resourcePaths.js';
 
 export const RESOURCE_MANIFEST_FILE = 'resource-manifest.json';
 /** Per-file content hashes of the fetched assets, written by tools/asset-hashes.mjs (optional). */
@@ -65,6 +66,7 @@ export const RESOURCE_MIME = Object.freeze({
 
 /** MIME type of a resource URL, or null when the extension is not a resource type. */
 export function resourceType(url) {
+  if (isBoardResourceJson(url)) return 'application/json; charset=utf-8';
   const m = /\.([A-Za-z0-9]+)$/.exec(String(url || ''));
   return m ? RESOURCE_MIME[m[1].toLowerCase()] || null : null;
 }
@@ -123,8 +125,13 @@ export function collectResourceFiles(assets, local) {
       if (!validateResourceUrl(node)) return;
       // Audio is optional even when a new manifest nests it inside an otherwise required character/map section.
       const tier = resourceType(node)?.startsWith('audio/') ? TIER_REST : tierForPath(keyPath);
-      const prev = byUrl.get(node);
-      if (prev == null || tier < prev.tier) byUrl.set(node, { tier, source });
+      const url = canonicalResourceUrl(node);
+      const prev = byUrl.get(url);
+      if (prev == null || tier < prev.tier) byUrl.set(url, { tier, source });
+      // The crop tool writes this companion beside the board atlas, outside local-assets.json.
+      if (source === 'local' && /\/assets\/local\/map\/autochess\/TX_autochessi_D\.png$/.test(url)) {
+        byUrl.set(url.replace(/[^/]+$/, 'tiles.json'), { tier: TIER_ESSENTIAL, source });
+      }
       return;
     }
     if (Array.isArray(node)) {
@@ -145,7 +152,7 @@ export function collectResourceFiles(assets, local) {
 
 /** Path part of a URL — the key real hashes are matched by (a CDN install rewrites the URLs, not the hash file). */
 export function pathKey(url) {
-  const s = String(url || '');
+  const s = canonicalResourceUrl(url || '');
   if (s.startsWith('/') && !s.startsWith('//')) return s;
   try { return new URL(s).pathname; } catch { return s; }
 }
@@ -236,6 +243,8 @@ export function localPathFor(url, publicDir, cdnBase = '') {
   let p = String(url || '');
   if (cdnBase && p.startsWith(cdnBase)) p = p.slice(cdnBase.length) || '/';
   if (!p.startsWith('/')) return null;
+  try { p = decodeURIComponent(p); } catch { return null; }
+  if (/[\\\u0000-\u001f]/.test(p)) return null;
   const root = path.resolve(publicDir);
   const segments = p.slice(1).split('/');
   if (segments.some((s) => s === '' || s === '.' || s === '..')) return null;
@@ -286,14 +295,25 @@ export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite 
     const assets = await readJson('assets.json');
     const local = await readJson('local-assets.json');
     const hashesDoc = await readJson(ASSET_HASHES_FILE);
-    const key = [assets ? `${assets.mtimeMs}:${assets.size}` : '-', local ? `${local.mtimeMs}:${local.size}` : '-',
-      hashesDoc ? `${hashesDoc.mtimeMs}:${hashesDoc.size}` : '-', cdnBase].join('|');
-    if (cache && cache.key === key) return cache;
-    const t0 = Date.now();
     const assetsDoc = assets ? rewrite(assets.doc) : null;
     const localDoc = local ? rewrite(local.doc) : null;
-    const files = collectResourceFiles(assetsDoc, localDoc);
+    const collected = collectResourceFiles(assetsDoc, localDoc);
+    const tileFiles = collected.filter((f) => /\/assets\/local\/map\/autochess\/tiles\.json$/.test(f.url));
+    const tiles = await Promise.all(tileFiles.map(async (file) => {
+      const abs = localPathFor(file.url, publicDir, cdnBase);
+      try {
+        const stat = abs && await statFile(abs);
+        return stat?.isFile() ? { url: file.url, abs, stamp: `${stat.mtimeMs}:${stat.size}` } : null;
+      } catch { return null; }
+    }));
+    const key = [assets ? `${assets.mtimeMs}:${assets.size}` : '-', local ? `${local.mtimeMs}:${local.size}` : '-',
+      hashesDoc ? `${hashesDoc.mtimeMs}:${hashesDoc.size}` : '-', cdnBase, ...tiles.map((f) => f?.stamp || '-')].join('|');
+    if (cache && cache.key === key) return cache;
+    const t0 = Date.now();
     const real = collectRealHashes(localDoc, hashesDoc ? hashesDoc.doc : null);
+    for (const tile of tiles) if (tile) real.set(pathKey(tile.url), crypto.createHash('sha1').update(await fsp.readFile(tile.abs)).digest('hex').slice(0, 12));
+    const files = collected.filter((f) => !tileFiles.includes(f) || real.has(pathKey(f.url))
+      || (cdnBase && real.has(pathKey(f.url.slice(cdnBase.length)))));
     const stamps = {
       web: assetsDoc && assetsDoc.hash ? assetsDoc.hash : assets ? `m${Math.floor(assets.mtimeMs)}` : 'none',
       local: localDoc && localDoc.hash ? localDoc.hash : local ? `l${Math.floor(local.mtimeMs)}` : 'none',

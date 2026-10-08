@@ -73,6 +73,7 @@ describe('resource manifest validation', () => {
     assert.equal(resourceType('/assets/x.png'), 'image/png');
     assert.equal(resourceType('https://cdn/x.SKEL'), 'application/octet-stream');
     assert.equal(resourceType('/assets/x.json'), null);
+    assert.equal(resourceType('/assets/local/map/fx/materials.json'), 'application/json; charset=utf-8');
     assert.equal(cacheName('deadbeef'), `${CACHE_PREFIX}deadbeef`);
     assert.equal(cacheName(undefined), `${CACHE_PREFIX}none`);
     assert.equal(CACHE_NAME.startsWith(CACHE_PREFIX), true, 'the store uses one cache of this app');
@@ -84,6 +85,21 @@ describe('resource manifest validation', () => {
     assert.equal(absoluteUrl('https://cdn.example/assets/x.png', 'https://site.example'), 'https://cdn.example/assets/x.png');
     assert.equal(absoluteUrl('::::', 'https://site.example'), 'https://site.example/::::', 'a relative string resolves');
     assert.equal(absoluteUrl('/assets/x.png', 'not a url'), null);
+  });
+
+  test('only static board JSON sidecars are authorized, including CDN prefixes; bracket paths have one cache key', () => {
+    for (const path of ['/assets/local/map/fx/materials.json', '/assets/local/map/fx/prefab.json',
+      '/assets/local/map/autochess/materials.json', '/assets/local/map/autochess/tiles.json']) {
+      for (const url of [path, `https://cdn.example/prefix${path}`]) {
+        assert.equal(isResourceUrl(url), true);
+        assert.equal(resourceType(url), 'application/json; charset=utf-8');
+      }
+    }
+    for (const url of ['/assets/local/map/fx/other.json', '/assets/local/ui/materials.json', '/assets/data.json',
+      '/data/local-assets.json', '/i18n/zh.json', '/build/assets/local/map/fx/materials.json']) assert.equal(isResourceUrl(url), false, url);
+    const raw = '/assets/local/map/fx/[opt]merged_textures.png';
+    assert.equal(absoluteUrl(raw, 'https://game.example'), absoluteUrl(encodeURI(raw), 'https://game.example'));
+    assert.equal(absoluteUrl('http://[::1]:3000' + raw), 'http://[::1]:3000/assets/local/map/fx/%5Bopt%5Dmerged_textures.png');
   });
 
   test('the extension-less audio route: shared/media.js values, and the canonical files a request resolves to', () => {

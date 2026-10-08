@@ -108,7 +108,7 @@ export function ResourceHost({ enabled, optional, onChange, onOptional }) {
     const file = e.currentTarget.files?.[0];
     e.currentTarget.value = '';
     if (!file) return;
-    try { await importResources(file); if (!enabled) onChange(true); } catch { /* controller displays the error */ }
+    try { await importResources(file, { onImported: () => onChange(true) }); } catch { /* controller displays the error */ }
   };
   const exportFile = async () => {
     try {

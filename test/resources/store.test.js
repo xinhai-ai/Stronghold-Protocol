@@ -79,6 +79,47 @@ function fetcherFor({ bodies = {}, fail = [], opaque = [], gzip = [], onCall } =
 const store = (m, extra = {}) => new ResourceStore(m, { caches: extra.caches ?? new MemoryCaches(), fetcher: extra.fetch, origin: ORIGIN, smallLanes: extra.smallLanes ?? 4, bigLanes: extra.bigLanes ?? 1, now: extra.now });
 
 describe('ResourceStore', () => {
+  test('simultaneous status checks share cache metadata reads; later checks detect actual eviction', async () => {
+    const m = manifest([{ url: '/assets/a.png', tier: 1, size: 1 }]);
+    const caches = new MemoryCaches();
+    await seed(caches, `${ORIGIN}/assets/a.png`, 'a', 'h0');
+    const cache = await caches.open(CACHE_NAME);
+    const keys = cache.keys.bind(cache);
+    const match = cache.match.bind(cache);
+    const keysStarted = Promise.withResolvers();
+    const indexStarted = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    let keyReads = 0;
+    let indexReads = 0;
+    cache.keys = async () => { keyReads++; keysStarted.resolve(); await release.promise; return keys(); };
+    cache.match = async (key) => { indexReads++; indexStarted.resolve(); await release.promise; return match(key); };
+    const s = store(m, { caches });
+    const pending = [s.status(), s.status(), s.status()];
+    await Promise.all([keysStarted.promise, indexStarted.promise]);
+    assert.deepEqual([keyReads, indexReads], [1, 1], 'key enumeration and index reading start in parallel, once');
+    release.resolve();
+    const [a, b, c] = await Promise.all(pending);
+    assert.deepEqual([a.count, b.count, c.count], [1, 1, 1]);
+    a.present.clear();
+    a.groups[0].present = 99;
+    assert.equal(b.present.size, 1);
+    assert.equal(b.groups[0].present, 1);
+    await cache.delete(`${ORIGIN}/assets/a.png`);
+    assert.equal((await s.status()).count, 0, 'status results are not permanently cached');
+    assert.deepEqual([keyReads, indexReads], [2, 2]);
+  });
+
+  test('a failed metadata check does not leave a rejected status promise cached', async () => {
+    const caches = new MemoryCaches();
+    const cache = await caches.open(CACHE_NAME);
+    const keys = cache.keys.bind(cache);
+    cache.keys = async () => { throw new Error('cache keys unavailable'); };
+    const s = store(manifest([{ url: '/assets/a.png', tier: 1, size: 1 }]), { caches });
+    await assert.rejects(s.status(), /cache keys unavailable/);
+    cache.keys = keys;
+    assert.equal((await s.status()).count, 0);
+  });
+
   test('status reports what is cached, in files and bytes', async () => {
     const m = manifest([{ url: '/assets/a.png', tier: 1, size: 10 }, { url: '/assets/b.png', tier: 2, size: 20 }, { url: '/assets/c.png', tier: 2, size: 30 }]);
     const caches = new MemoryCaches();

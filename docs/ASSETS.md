@@ -79,6 +79,12 @@ running; 暂停下载 stops them and 关闭预载 disables automatic downloading
   drops the ones that are not, and only then fetches what is missing — the panel says 「正在整理已保存的资源（无需重新下载）」
   while that runs. The worker prefers the current cache when a URL exists in both, so a stale copy can never shadow a
   fresh file.
+  With preload enabled, each page load revalidates the server resource manifest and checks cached URL keys against
+  the local index. Startup does not read or hash resource bodies. Cache key enumeration and index reading run in
+  parallel; simultaneous checks share in-flight reads but receive independent status snapshots. Opening resource
+  management during an active run uses that run's counters rather than starting another scan. Later checks still
+  inspect the real cache so browser eviction is detected. The client logs `[resources] preload check timings` with
+  manifestMs, cacheKeysMs, indexReadMs and total duration to distinguish network waiting from cache metadata access.
 - The client (`public/js/resources/*`) downloads tier 1 first, then tier 2 only when selected: four lanes for small files
   and one for files above 4 MiB, skipping whatever is already cached. Two tabs of the same browser never download the
   same file twice: a Web Lock (`stronghold-resources-preload`, `ifAvailable`) makes one tab do the work while the others
@@ -86,21 +92,54 @@ running; 暂停下载 stops them and 关闭预载 disables automatic downloading
   time, a quota failure stops the run and says so, and a file above 24 MiB is skipped instead of cached. Downloads run
   in the page (plain `fetch` + `cache.put`, `cache: 'no-store'` so nothing is stored twice).
 - **ZIP import/export.** 导出 ZIP packs currently cached files (partial preloads are supported) and
-  `stronghold-resources.json`, which records stable resource paths, sizes, SHA-256 and SHA-1 fingerprints. Import accepts
-  packages exported by this feature, including older resource versions. It checks ZIP structure/CRC, file counts,
-  paths, actual decompressed sizes and both digests for every file before modifying the live cache. Only files matching
+  `stronghold-resources.json` version 2, which records stable resource paths, sizes, full 40-hex `sha1` digests and their
+  12-hex `hash` prefixes for the server fingerprint. Export computes SHA-1 once per resource and does not compute SHA-256.
+  Import accepts both v2 and legacy v1 packages, including older resource versions. It checks the central-directory file counts,
+  paths and manifest before writing. Local headers, data bounds and overlap are checked during each resource's single
+  extraction, along with CRC, actual size and its version's digests; there is no separate all-file header scan before importing.
+  Valid resources are immediately imported. A corrupt entry stops further work while preserving completed verified files. Only files matching
   the current server manifest's content fingerprint are imported; changed/removed files and files with only synthetic
   server hashes are skipped. The selected tiers are then completed using incremental downloads. Site/CDN prefix
   changes do not prevent reuse: validated bytes are stored under the current manifest's URLs. Code, data and package
   cache-index records are never imported. ZIP processing shares the download Web Lock, can be cancelled, and is loaded
-  lazily via vendored zip.js (no extra CDN/worker dependency). Import checks one file at a time in two passes, avoiding a
-  second staging cache. Limits: 24 MiB per resource, 50,000 resource files, 32 MiB manifest, 2 GiB compressed/decompressed
+  lazily via vendored zip.js (no extra CDN/worker dependency). Resources up to 256 KiB run in at most four concurrent
+  slots, with at most 1 MiB of package payload buffers in flight. Larger or unknown-sized resources run alone. This overlaps
+  file reads, checks and Cache Storage writes without retaining the whole ZIP, avoiding a
+  second decompression pass, a staging cache and cloned response streams. Existing and incompatible package entries are
+  still verified. Limits: 24 MiB per resource, 50,000 resource files, 32 MiB manifest, 2 GiB compressed/decompressed
   package. ZIP export uses stored entries because most assets are already compressed; imports also accept deflated
   entries. Cancelled imports or quota errors retain completed, verified files. Preloading assets does not provide
   offline multiplayer gameplay.
+  Stored entries use zip.js to validate their local headers, descriptors, bounds and overlap, then read their payload
+  directly into a byte buffer and verify CRC using zip.js's vendored Crc32 codec. This avoids Blob.stream and the
+  general ZIP stream-copy pipeline. Deflated entries retain the bounded stream extraction path. Stored payloads up to
+  16 MiB and their metadata share file blocks; returned bytes are independent copies. CRC, actual-size
+  and package-digest checks remain mandatory before any cache write. Diagnostics split stored-entry read time into
+  metadataMs, bodyReadMs and crcMs, and report storedFiles. These components are already included in readMs.
+  File read-ahead uses two aligned 16 MiB blocks, up to 32 MiB in total, with LRU eviction. Concurrent requests for a
+  block share one read; physical block reads are serialized. Reads crossing a block boundary concatenate the requested
+  bytes in order. Larger reads bypass the block cache. This cache budget is separate from the small-resource pipeline's
+  1 MiB payload budget and the exclusive large-resource buffer. Returned header and resource arrays are copied so
+  retained entries cannot pin or mutate cached file blocks. Diagnostics report fileReadCalls, fileReadBytes, fileReadMs,
+  maxReadAheadBytes and readCacheLimitBytes. After a successful import the preload setting
+  is enabled and persisted, and only missing resources in the selected tiers download. Failed/cancelled imports do
+  not enable a previously disabled preload.
+  V2 package bytes are checked with one full SHA-1 digest; legacy v1 bytes still require SHA-1 and SHA-256, once each.
+  The format version selects the required digests; v1 packages missing SHA-256 are rejected, not treated as v2.
+  The cache writer reuses an opaque locally issued verification
+  result bound to those bytes and the current fingerprint, so it does not repeat SHA-1 for newly imported files. ZIP
+  metadata cannot fabricate this result; unverified inputs still require a digest check. An existing cache copy is a
+  separate body and still receives its own SHA-1 check before being retained or repaired. Export uses BlobReader,
+  avoiding the additional typed-array slicing of Uint8ArrayReader. Legacy packages need no re-export; clients must be
+  updated to support v2 before importing newly exported packages.
   ZIP progress is displayed as a percentage and updates at most every 500 ms within each phase. During import, the
   category counts, sizes and progress bars refresh together, with the current category highlighted. Phase changes,
   completion, cancellation and errors update immediately; integrity checks and cache writes continue independently.
+  Category counts are maintained incrementally per completed cache key; UI updates copy only the short category list.
+  Parallel imports can complete out of package order. On failure/cancellation, already-started cache puts are awaited
+  and successful writes indexed before releasing the download lock. Index writes are serialized. A console summary
+  records read, hash and cache timings after completion or interruption; stage durations are sums of overlapping work,
+  not CPU measurements or fractions of the total wall time. Diagnostics stay on the client.
   If a same-version package imports far fewer files than it exported, check the server hash table: run
   `node tools/asset-hashes.mjs` after downloading/updating local assets, then reload the receiving browser to fetch the
   refreshed manifest. An absent/incomplete `data/asset-hashes.json` leaves files with synthetic hashes, which cannot

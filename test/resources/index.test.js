@@ -56,7 +56,7 @@ test('required-only preload stops after visuals; opting in later downloads only 
   await mod.syncResources(false);
 });
 
-test('controller ZIP import/export uses shared lock, imports while off, then fills only the selected missing tier', async (t) => {
+test('controller ZIP import/export uses shared lock, automatically enables preload, then fills only selected missing tiers', async (t) => {
   const files = FILES.map((f) => ({ ...f, hash: createHash('sha1').update('b'.repeat(f.size)).digest('hex').slice(0, 12) }));
   const env = stubEnv({ manifest: { ...MANIFEST, files } });
   t.after(env.restore);
@@ -72,9 +72,17 @@ test('controller ZIP import/export uses shared lock, imports while off, then fil
   await mod.syncResources(false);
   await mod.clearResources();
   const previous = env.calls.fetch.length;
-  const result = await mod.importResources(exported.blob);
+  let persistedPreload = false;
+  let enabledCallbacks = 0;
+  const result = await mod.importResources(exported.blob, { onImported: () => {
+    persistedPreload = true;
+    enabledCallbacks++;
+    assert.equal(mod.resourceState().archive, '', 'the setting changes only after the archive lock is released');
+  } });
   assert.equal(result.imported, 2);
-  assert.equal(mod.resourceState().enabled, false);
+  assert.equal(mod.resourceState().enabled, true);
+  assert.equal(persistedPreload, true);
+  assert.equal(enabledCallbacks, 1);
   assert.equal(mod.resourceState().archive, '');
   assert.equal(env.calls.fetch.length, previous);
   await mod.syncResources(true, true);
@@ -107,6 +115,101 @@ test('changing download scope and disabling preload while checking does not rest
   await mod.syncResources(true, false);
   assert.deepEqual(env.calls.fetch.slice(1), FILES.filter((f) => f.tier === 1).map((f) => ORIGIN + f.url));
   await mod.syncResources(false);
+});
+
+test('opening resource management during startup shares its active check instead of scanning the cache twice', async (t) => {
+  const env = stubEnv();
+  t.after(env.restore);
+  const mod = await import('../../public/js/resources/index.js?opening-during-startup');
+  const cache = await env.caches.open(CACHE_NAME);
+  const keys = cache.keys.bind(cache);
+  const gate = Promise.withResolvers();
+  const started = Promise.withResolvers();
+  let scans = 0;
+  cache.keys = async () => { scans++; started.resolve(); await gate.promise; return keys(); };
+  const startup = mod.syncResources(true, false);
+  await started.promise;
+  assert.equal(mod.resourceState().phase, 'checking');
+  await mod.inspectResources();
+  await mod.inspectResources();
+  assert.equal(scans, 1);
+  gate.resolve();
+  await startup;
+  assert.equal(mod.resourceState().selectionComplete, true);
+  await mod.syncResources(false);
+});
+
+test('ZIP quota failures are recognized by name even without an English error message', async (t) => {
+  const files = FILES.slice(0, 2).map((f) => ({ ...f, hash: createHash('sha1').update('b'.repeat(f.size)).digest('hex').slice(0, 12) }));
+  const manifest = { ...MANIFEST, files };
+  const source = new ResourceStore(manifest, { caches: new MemoryCaches(), origin: ORIGIN,
+    fetcher: async (url) => new Response('b'.repeat(files.find((f) => url.endsWith(f.url)).size)) });
+  await source.download();
+  const { blob } = await exportResourceZip(source);
+  const env = stubEnv({ manifest });
+  t.after(env.restore);
+  const cache = await env.caches.open(CACHE_NAME);
+  const put = cache.put.bind(cache);
+  cache.put = async (url, response) => {
+    if (url.endsWith(files[1].url)) throw new DOMException('', 'QuotaExceededError');
+    await put(url, response);
+  };
+  const mod = await import('../../public/js/resources/index.js?zip-quota-name');
+  let enabled = false;
+  await assert.rejects(mod.importResources(blob, { onImported: () => { enabled = true; } }), (err) => err.name === 'QuotaExceededError');
+  assert.equal(mod.resourceState().done, 1);
+  assert.equal(mod.resourceState().error, true);
+  assert.match(mod.resourceState().message, /浏览器存储空间不足/);
+  assert.equal(mod.resourceState().enabled, false);
+  assert.equal(enabled, false, 'a failed import does not persist an enabled setting');
+});
+
+test('successful ZIP import persists the preload setting and completes only the selected missing resources', async (t) => {
+  const files = FILES.map((f) => ({ ...f, hash: createHash('sha1').update('b'.repeat(f.size)).digest('hex').slice(0, 12) }));
+  const source = new ResourceStore({ format: 1, version: 'partial', files: files.slice(0, 1) }, {
+    caches: new MemoryCaches(), origin: ORIGIN, fetcher: async () => new Response('b'.repeat(files[0].size)),
+  });
+  await source.download();
+  const { blob } = await exportResourceZip(source);
+  const env = stubEnv({ manifest: { ...MANIFEST, files } });
+  const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const prefs = new Map();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (key) => prefs.get(key) ?? null, setItem: (key, value) => prefs.set(key, value),
+  } });
+  const { settingsStore, updateSettings } = await import('../../public/js/ui/settings.js?zip-enabled-setting');
+  const originalSettings = settingsStore.get();
+  t.after(async () => {
+    await mod.syncResources(false);
+    updateSettings(originalSettings);
+    if (storageDescriptor) Object.defineProperty(globalThis, 'localStorage', storageDescriptor);
+    else delete globalThis.localStorage;
+    env.restore();
+  });
+  updateSettings({ preload: false, preloadOptional: false });
+  const mod = await import('../../public/js/resources/index.js?zip-enabled-setting');
+  await mod.importResources(blob, { onImported: () => updateSettings({ preload: true }) });
+  await mod.startResources();
+  assert.equal(settingsStore.get().preload, true);
+  assert.equal(JSON.parse(prefs.get('sp.pref.settings')).preload, true);
+  assert.equal(JSON.parse(prefs.get('sp.pref.settings')).preloadOptional, false);
+  assert.equal(mod.resourceState().enabled, true);
+  assert.deepEqual(env.calls.fetch, [MANIFEST_URL, ORIGIN + files[1].url], 'only the missing essential file downloads');
+});
+
+test('invalid or cancelled ZIP imports do not enable preload or invoke the persisted-setting callback', async (t) => {
+  const env = stubEnv();
+  t.after(env.restore);
+  const mod = await import('../../public/js/resources/index.js?zip-enable-failures');
+  let callbacks = 0;
+  const options = { onImported: () => { callbacks++; } };
+  await assert.rejects(mod.importResources(new Blob(['not a ZIP']), options));
+  assert.equal(mod.resourceState().enabled, false);
+  const pending = mod.importResources(new Blob(['not a ZIP']), options);
+  mod.pauseResources();
+  await assert.rejects(pending, (err) => err.name === 'AbortError');
+  assert.equal(mod.resourceState().enabled, false);
+  assert.equal(callbacks, 0);
 });
 
 test('ZIP percentages and category counters update together every 500 ms, with immediate phase completion', async (t) => {

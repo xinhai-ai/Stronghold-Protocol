@@ -76,6 +76,8 @@ describe('where the preload is reachable', () => {
     assert.match(panel, /tier=\$\{2\}/);
     assert.match(panel, /导入 ZIP/);
     assert.match(panel, /导出 ZIP/);
+    assert.match(panel, /importResources\(file, \{ onImported: \(\) => onChange\(true\) \}\)/,
+      'successful imports persist the preload switch through the application settings callback');
     assert.match(panel, /st\.worker/);
     assert.match(panel, /onChange\(false\)/);
     assert.equal(/可离线进入对局|断网[^。]*可用/.test(panel), false);

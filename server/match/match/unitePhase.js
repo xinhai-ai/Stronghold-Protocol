@@ -42,6 +42,7 @@ export class MatchUnite {
   /**
    * The helpers keep their battlefield's terrain and devices. Escape templates still supply the re-entry wave and
    * routes; field metadata and client specs use the same round stage as the server simulation (#282).
+   * The template map remains a fallback when the round's battlefield data is unavailable.
    */
   _uniteOpts(plan, limit) {
     const { wave, players } = uniteBattleOpts(this, plan, limit);

@@ -3507,77 +3507,88 @@
           "hp": 2.0736,
           "speed": 1.15,
           "kAtk": 3,
-          "kHp": 4
+          "kHp": 4,
+          "supplyHp": 1.2
         },
         "6": {
           "atk": 1.4641,
           "hp": 2.239488,
           "speed": 1.15,
           "kAtk": 4,
-          "kHp": 4
+          "kHp": 4,
+          "supplyHp": 1.08
         },
         "7": {
           "atk": 1.61051,
           "hp": 3.583181,
           "speed": 1.15,
           "kAtk": 5,
-          "kHp": 7
+          "kHp": 7,
+          "supplyHp": 1.44
         },
         "8": {
           "atk": 1.61051,
           "hp": 4.299817,
           "speed": 1.15,
           "kAtk": 5,
-          "kHp": 8
+          "kHp": 8,
+          "supplyHp": 1.728
         },
         "9": {
           "atk": 1.61051,
           "hp": 4.299817,
           "speed": 1.15,
           "kAtk": 5,
-          "kHp": 8
+          "kHp": 8,
+          "supplyHp": 1.728
         },
         "10": {
           "atk": 1.61051,
           "hp": 4.299817,
           "speed": 1.15,
           "kAtk": 5,
-          "kHp": 8
+          "kHp": 8,
+          "supplyHp": 1.728
         },
         "11": {
           "atk": 1.771561,
           "hp": 5.15978,
           "speed": 1.15,
           "kAtk": 6,
-          "kHp": 9
+          "kHp": 9,
+          "supplyHp": 1.728
         },
         "12": {
           "atk": 1.771561,
           "hp": 6.191736,
           "speed": 1.15,
           "kAtk": 6,
-          "kHp": 10
+          "kHp": 10,
+          "supplyHp": 2.0736
         },
         "13": {
           "atk": 1.948717,
           "hp": 6.687075,
           "speed": 1.15,
           "kAtk": 7,
-          "kHp": 10
+          "kHp": 10,
+          "supplyHp": 1.86624
         },
         "14": {
           "atk": 2.143589,
           "hp": 6.687075,
           "speed": 1.15,
           "kAtk": 8,
-          "kHp": 10
+          "kHp": 10,
+          "supplyHp": 1.5552
         },
         "15": {
           "atk": 2.143589,
           "hp": 6.687075,
           "speed": 1.15,
           "kAtk": 8,
-          "kHp": 10
+          "kHp": 10,
+          "supplyHp": 1.5552
         }
       },
       "bossHpScale": {

@@ -91,6 +91,10 @@
 
 - 高并发延迟优化须保留：全服广播/心跳分批让出事件循环及广播 FIFO 顺序、跨房间共享本地模拟续步预算、私有状态编码复用，以及保持原有组队规则的按队伍大小 FIFO 匹配。`/metrics.websocket.diagnostics` 的事件循环、消息耗时与发送采样仅在服务端聚合，不记录地址或正文；统计为启动以来累计，发送完成不等于客户端 RTT。`/healthz` 不增加详细诊断字段。压缩开关与原有背压阈值继续保持兼容。
 
+- 在线人数 `presence` 每 10 秒最低优先级刷新，人数不变仍可更新；`welcome.online` 即时提供。周期任务独立延后、分批处理，只保留最新待发快照，普通广播/心跳优先；连接已有任何发送积压时跳过本轮，下一周期再更新，不排队补发。不改变游戏状态/回复的可靠 FIFO、背压或压缩参数；已进入 WS/TCP 的字节无法抢占。关停时取消周期及待发任务，保留标题页未认证连接的周期在线人数展示。验证 `test/presence.test.js`、`test/ws-latency.test.js`。
+
+- 状态增量通过 `hello.stateDelta: 1` 协商，仅用于 `m.public` / `m.private`；旧客户端保持原全量消息。新连接、重连及 `state.resync` 发送全量，补丁按 `base` 校验独立公共/私人基线，失败不派发部分状态，重同步限流后安静重试。基线仅在可靠帧成功入队后推进，不丢弃补丁、不改变确认时机；原全量结果回放仍可用，私人状态不跨玩家共享。源码 build 标识纳入 `shared/stateDelta.js`，生产随 Vite 网络模块打包。保留 `test/state-delta.test.js`、`test/state-delta-integration.test.js`；详见 `docs/STATE_DELTA.md`。性能验收看关联状态完成解码后的 p95 和失败率，按实际四人房间发送，不将全员合成广播视为完整对局容量；状态视图仍完整生成，不能声称已实现细粒度脏标记或压缩正文复用。
+
 - `/healthz` 保留 `ok`、`version`、`app`、`uptimeSec`、`build`。
 - 高频 `/healthz` 保留同步处理路径及每服务实例独立的短期统计快照、JSON 字节复用。稳定状态下最多每秒扫描一次房间/队列；房间、活跃队列对局或排队玩家数量变化时立即失效，连接数、会话数和运行时间及时更新，既有房间内部的座位/对局计数允许最多约 1 秒的快照延迟。过期使用单调时钟，不创建后台扫描定时器，失败返回 500 并重试，不返回旧快照掩盖错误。HTTP 仍为 `no-store`，GET/HEAD 内容长度、405、URL 长度限制和安全响应头保持不变；`/metrics` 的实时统计不复用或覆盖此快照。
 - 以下计数也保留在 `/healthz`：`sockets`、`sessions`、`rooms`、`matches`、`roomMatches`、`standaloneMatches`、`humans`、`bots`、`spectators`、`queued`。不要因精简接口删除这些字段；沿用现有统计含义。

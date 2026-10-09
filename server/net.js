@@ -17,7 +17,7 @@
 //     in server/lobby.js. Local / LAN peers without a forwarding header (dev machine, tests, LAN party)
 //     have no key and are never limited per address.
 //   * Heartbeat (ws ping/pong every `heartbeatMs`, dead sockets terminated), hello timeout.
-//   * Presence: broadcast the authenticated online count every 2 s, even when unchanged; welcome is immediate.
+//   * Presence: every 10 s, lowest-priority best effort (latest only; skip busy send queues); welcome is immediate.
 //   * Send helpers that never throw, with a backpressure guard: non-critical `b.snap` frames are skipped
 //     while the socket has more than 1 MB queued; a socket with more than 16 MB queued is terminated
 //     (the client reconnects and receives a full state resync).
@@ -42,6 +42,7 @@ import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { performance } from 'node:perf_hooks';
 import { NetDiagnostics, socketDiagnostics } from './netDiagnostics.js';
+import { negotiateStateDelta, prepareStateFrame, resetStateDelta } from './stateTransport.js';
 import { C2S, validateC2S } from '../shared/protocol.js';
 import { ERR, ERR_TEXT, NAME_MAX_LEN, PROTOCOL_VERSION } from '../shared/constants.js';
 
@@ -68,14 +69,15 @@ export const NET_DEFAULTS = Object.freeze({
  * room.loadout (a ≤ 160-entry map validated against the game data; the client debounces its edits), room.ownership
  * (a ≤ 160-id list, the same way), room.diy (≤ 8 自选 picks checked against the data, the same way) and room.spectate
  * (taking a spectator seat in a running match resends its state like a watcher's g.watch — server/lobby.js spectate).
+ * state.resync requests a full match recovery; it also uses the lobby's per-session resync coalescing.
  */
-export const HEAVY_TYPES = new Set(['g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.spectate']);
+export const HEAVY_TYPES = new Set(['g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.spectate', 'state.resync']);
 
 /** Close codes (see header). */
 export const CLOSE = Object.freeze({ REPLACED: 4001, HELLO_TIMEOUT: 4002, POLICY: 1008, SHUTDOWN: 1001 });
 
 const WS_OPEN = 1;
-export const PRESENCE_INTERVAL_MS = 2000;
+export const PRESENCE_INTERVAL_MS = 10_000;
 const MAX_RID = 2 ** 31;
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 
@@ -338,7 +340,16 @@ export const isDroppable = (msg) => !!msg && msg.t === 'b.snap';
 export function send(ws, msg, encoded = null) {
   const data = encoded ?? encode(msg);
   if (data == null) return false;
-  return sendRaw(ws, data, { droppable: isDroppable(msg) });
+  if (!ws || ws.readyState !== WS_OPEN) return false;
+  try {
+    const frame = prepareStateFrame(ws, msg, data);
+    const queued = sendRaw(ws, frame.data, { droppable: isDroppable(msg) });
+    if (queued) {
+      frame.commit();
+      if (msg.t === 'm.result' || msg.t === 'room.closed') resetStateDelta(ws);
+    }
+    return queued;
+  } catch { return false; }
 }
 
 /**
@@ -570,6 +581,8 @@ export class Network {
     this._fanoutImmediate = null;
     this._fanoutRunning = false;
     this._heartbeatPending = false;
+    this._presenceJob = null;
+    this._presenceImmediate = null;
     this.presenceTimer = setInterval(() => this.broadcastPresence(), PRESENCE_INTERVAL_MS);
     this.presenceTimer.unref?.();
     this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
@@ -591,13 +604,51 @@ export class Network {
     return n;
   }
 
-  /** Fixed-cadence refresh, including unchanged counts. New authenticated sockets also receive an immediate welcome. */
+  /** Lowest-priority periodic refresh (including unchanged counts). Welcome remains immediate.
+   * Keep only the latest pending count; never put presence behind already queued socket traffic. */
   broadcastPresence() {
-    if (this.closed) return;
+    if (this.closed || this.draining) return;
     const online = this.onlineCount;
     const data = encode({ t: 'presence', online, serverNow: this.now() });
     if (data == null) return;
-    this._eachConnection((conn) => { if (!conn.closing) sendRaw(conn.ws, data); });
+    this._presenceJob = { connections: [...this.conns.values()], index: 0, data };
+    this._schedulePresence();
+  }
+
+  _schedulePresence() {
+    if (this.closed || this.draining || !this._presenceJob || this._presenceImmediate !== null) return;
+    // Always yield first, even with one recipient: current I/O and direct operation replies go first.
+    this._presenceImmediate = setImmediate(() => this._pumpPresence());
+    this._presenceImmediate.unref?.();
+  }
+
+  _pumpPresence() {
+    this._presenceImmediate = null;
+    if (this.closed || this.draining || !this._presenceJob) return;
+    const job = this._presenceJob;
+    const deadline = performance.now() + 2;
+    let visited = 0;
+    // Public FIFO broadcasts and heartbeat batches always win, including jobs added between low-priority slices.
+    while (!this._fanoutRunning && !this._fanout.length && this._fanoutImmediate === null && visited < 128) {
+      if (job.index === job.connections.length) break;
+      const conn = job.connections[job.index++];
+      // bufferedAmount includes ws compression/TCP queues. Presence cannot preempt bytes already sent,
+      // but can avoid adding another frame in front of future state/ack traffic. Busy sockets wait for next cadence.
+      if (this.conns.get(conn.ws) === conn && !conn.closing && conn.ws.bufferedAmount === 0) {
+        sendRaw(conn.ws, job.data);
+      }
+      visited++;
+      if (performance.now() >= deadline || this._presenceJob !== job) break;
+    }
+    if (this._presenceJob === job && job.index === job.connections.length) this._presenceJob = null;
+    this._schedulePresence();
+  }
+
+  _clearPresence() {
+    clearInterval(this.presenceTimer);
+    if (this._presenceImmediate !== null) clearImmediate(this._presenceImmediate);
+    this._presenceImmediate = null;
+    this._presenceJob = null;
   }
 
   /** FIFO fanout preserves public-message order. Small broadcasts remain immediate;
@@ -705,7 +756,7 @@ export class Network {
     if (this.closed) return;
     const data = encode(msg);
     if (data == null) return;
-    this._eachConnection((conn) => { if (!conn.closing) sendRaw(conn.ws, data); });
+    this._eachConnection((conn) => { if (!conn.closing) send(conn.ws, msg, data); });
   }
 
   /** @param {Connection} conn */
@@ -807,6 +858,7 @@ export class Network {
     session.lastSeen = now;
     session.addr = conn.ip;
     session.limitKey = conn.key;
+    negotiateStateDelta(conn.ws, msg.stateDelta);
 
     let extra = null;
     try { extra = this.handler.welcomeInfo?.() ?? null; } catch (e) { this.log.error('[net] welcomeInfo crashed', e); }
@@ -890,6 +942,7 @@ export class Network {
    */
   beginShutdown() {
     this.draining = true;
+    this._clearPresence();
     clearInterval(this.heartbeatTimer);
     clearInterval(this.sweepTimer);
   }
@@ -903,7 +956,7 @@ export class Network {
     this.diagnostics.close();
     clearInterval(this.heartbeatTimer);
     clearInterval(this.sweepTimer);
-    clearInterval(this.presenceTimer);
+    this._clearPresence();
     for (const conn of this.conns.values()) {
       conn.close(code, reason);
       const t = setTimeout(() => { try { conn.ws.terminate(); } catch { /* ignore */ } }, 1000);

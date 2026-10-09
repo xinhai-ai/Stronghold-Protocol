@@ -23,9 +23,89 @@ function socket(network) {
 }
 
 async function drain(network) {
-  for (let n = 0; network._fanout.length && n < 1000; n++) await nextTurn();
+  for (let n = 0; (network._fanout.length || network._presenceJob) && n < 1000; n++) await nextTurn();
   assert.equal(network._fanout.length, 0);
+  assert.equal(network._presenceJob, null);
 }
+
+test('presence yields to later broadcasts, heartbeats and operation replies without changing reliable FIFO', async (t) => {
+  const network = new Network({ registry: new SessionRegistry(), handler: { onMessage() {} } });
+  t.after(() => network.close());
+  const sockets = Array.from({ length: 2500 }, () => socket(network));
+  for (const ws of sockets) {
+    ws.ping = () => { ws.pings++; ws.frames.push({ t: 'heartbeat' }); };
+  }
+  network.broadcastPresence();
+  assert.ok(sockets.every((s) => s.frames.length === 0), 'presence never sends synchronously');
+  network.broadcast({ t: 'first' });
+  network.heartbeat();
+  network.broadcast({ t: 'second' });
+  sockets.at(-1).emit('message', Buffer.from('{"t":"ping","c":123,"rid":1}'), false);
+  assert.equal(sockets.at(-1).frames[0].t, 'pong');
+  await drain(network);
+  for (const ws of sockets) {
+    assert.deepEqual(ws.frames.filter((m) => m.t !== 'pong').map((m) => m.t), ['first', 'heartbeat', 'second', 'presence']);
+  }
+});
+
+test('presence skips busy sockets, coalesces to latest, and resumes only on the next periodic job', async (t) => {
+  let now = 10000;
+  const network = new Network({ registry: new SessionRegistry(), handler: { onMessage() {} }, now: () => now });
+  t.after(() => network.close());
+  const idle = socket(network), busy = socket(network), removed = socket(network);
+  busy.bufferedAmount = 1; // do not wait for the existing 1 MiB snapshot-drop threshold
+  const presence = (ws) => ws.frames.filter((m) => m.t === 'presence');
+  network.broadcastPresence();
+  removed.close();
+  busy.emit('message', Buffer.from('{"t":"hello","name":"Busy","version":1}'), false);
+  now = 20000;
+  network.broadcastPresence();
+  await drain(network);
+  assert.deepEqual(presence(idle), [{ t: 'presence', online: 1, serverNow: 20000 }]);
+  assert.deepEqual(presence(busy), []);
+  assert.deepEqual(presence(removed), []);
+  assert.equal(busy.readyState, 1, 'low-priority traffic must not terminate or change a busy socket');
+  busy.bufferedAmount = 0;
+  await nextTurn();
+  assert.deepEqual(presence(busy), [], 'no retry loop on a skipped socket');
+  now = 30000;
+  network.broadcastPresence();
+  await drain(network);
+  assert.deepEqual(presence(busy), [{ t: 'presence', online: 1, serverNow: 30000 }]);
+});
+
+test('game state unicast, operation ack and pong run before even a single pending presence', async (t) => {
+  const network = new Network({ registry: new SessionRegistry(), handler: { onMessage() {} } });
+  t.after(() => network.close());
+  const ws = socket(network), conn = network.conns.get(ws);
+  network.broadcastPresence();
+  network.reply(conn, { t: 'm.private', funds: 5 });
+  network.reply(conn, { t: 'm.public', phase: 'PREP' });
+  network.reply(conn, { t: 'ok', rid: 1 });
+  ws.emit('message', Buffer.from('{"t":"ping","c":123,"rid":2}'), false);
+  assert.deepEqual(ws.frames.map((m) => m.t), ['m.private', 'm.public', 'ok', 'pong']);
+  await drain(network);
+  assert.deepEqual(ws.frames.map((m) => m.t), ['m.private', 'm.public', 'ok', 'pong', 'presence']);
+});
+
+test('urgent broadcasts preempt between presence slices and shutdown releases pending presence recipients', async (t) => {
+  const network = new Network({ registry: new SessionRegistry(), handler: { onMessage() {} } });
+  t.after(() => network.close());
+  const sockets = Array.from({ length: 300 }, () => socket(network));
+  network.broadcastPresence();
+  await nextTurn();
+  const sent = sockets.filter((s) => s.frames.length).length;
+  assert.ok(sent > 0 && sent <= 128);
+  network.broadcast({ t: 'urgent' });
+  await drain(network);
+  for (const ws of sockets.slice(sent)) assert.deepEqual(ws.frames.map((m) => m.t), ['urgent', 'presence']);
+  network.broadcastPresence();
+  network.beginShutdown();
+  await nextTurn();
+  assert.equal(network._presenceJob, null);
+  assert.equal(network._presenceImmediate, null);
+  assert.ok(sockets.every((ws) => ws.frames.filter((m) => m.t === 'presence').length === 1));
+});
 
 test('2500-socket broadcasts yield to requests, preserve public order, and skip closed sockets', async (t) => {
   const network = new Network({ registry: new SessionRegistry(), handler: { onMessage() {} } });
@@ -69,11 +149,14 @@ test('closing cancels deferred fanout without retaining its recipients', async (
   const network = new Network({ registry: new SessionRegistry(), handler: { onMessage() {} } });
   const sockets = Array.from({ length: 300 }, () => socket(network));
   network.broadcast({ t: 'notice' });
+  network.broadcastPresence();
   network.close();
   await nextTurn();
   assert.equal(sockets.at(-1).frames.length, 0);
   assert.equal(network._fanout.length, 0);
   assert.equal(network._fanoutImmediate, null);
+  assert.equal(network._presenceJob, null);
+  assert.equal(network._presenceImmediate, null);
 });
 
 test('shared CPU queue enforces an aggregate budget and FIFO fairness across continuations', () => {

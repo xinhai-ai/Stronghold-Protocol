@@ -24,8 +24,19 @@ function fixture() {
   return root;
 }
 
-test('BUILD_INPUTS: only the runtime the browser loads (server/, data/ and shared/ are not part of it)', () => {
-  assert.deepEqual([...BUILD_INPUTS], ['public/index.html', 'public/js', 'public/css']);
+test('BUILD_INPUTS: browser runtime plus state decoder, not server/data/shared simulation trees', () => {
+  assert.deepEqual([...BUILD_INPUTS], ['public/index.html', 'public/js', 'public/css', 'shared/stateDelta.js']);
+});
+
+test('source-client detects a state decoder change without watching the entire shared simulation tree', () => {
+  const root = fixture();
+  try {
+    const before = computeBuildTag(root, { clientBuild: false });
+    fs.writeFileSync(path.join(root, 'shared/stateDelta.js'), 'updated decoder');
+    assert.notEqual(computeBuildTag(root, { clientBuild: false }), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('computeBuildTag: stable for one tree, different when a runtime file changes (size or mtime)', () => {

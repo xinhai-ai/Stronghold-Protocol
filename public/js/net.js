@@ -5,8 +5,9 @@
 //   detects dead sockets (a ping left unanswered — no inbound frame at all — for DEAD_AFTER_MS ⇒
 //   close ⇒ reconnect). Measured from the oldest unanswered ping, not from the last inbound frame,
 //   so a background tab whose timers the browser throttles to ~1/min is not mistaken for dead.
-// - On every (re)connect, once a player name is known, sends `hello {name, token, version}`;
+// - On every (re)connect, once a player name is known, sends `hello {name, token, version, stateDelta}`;
 //   the session is "online" after `welcome`.
+// - m.state full/delta frames are decoded into the original m.public/m.private events before dispatch.
 // - `request(t, fields)` adds a `rid` and resolves on the matching `ok` (or any reply carrying the
 //   rid), rejects with a NetError on `error` or after REQUEST_TIMEOUT_MS. Requests made while
 //   reconnecting are queued and flushed after `welcome` (still bound by their timeout).
@@ -32,6 +33,7 @@
 import { PROTOCOL_VERSION, ERR_TEXT } from '../../shared/constants.js';
 import { validateC2S } from '../../shared/protocol.js';
 import { N_ } from '../../shared/i18n.js';
+import { StateReceiver, STATE_DELTA_VERSION } from '../../shared/stateDelta.js';
 
 export const REQUEST_TIMEOUT_MS = 8000;
 export const HELLO_TIMEOUT_MS = 8000;
@@ -134,6 +136,7 @@ export class Net {
     /** @type {'idle'|'connecting'|'connected'|'handshaking'|'online'|'reconnecting'|'closed'} */
     this.status = 'idle';
     this.ws = null;
+    this._states = new StateReceiver();
     this.name = null;          // desired player name (hello is sent when set)
     this.helloName = null;     // name we sent in the hello that got the last welcome
     this.serverName = null;    // name as normalised by the server
@@ -155,6 +158,7 @@ export class Net {
     this._reconnectTimer = null;
     this._pingTimer = null;
     this._helloTimer = null;
+    this._stateResyncTimer = null;
     this._helloRid = null;
     this._helloSentName = null;
     this._lastRx = 0;
@@ -338,6 +342,8 @@ export class Net {
   }
 
   _teardownSocket() {
+    this._states.reset();
+    this._clearTimer('_stateResyncTimer', 'clearTimeout');
     const ws = this.ws;
     if (ws) {
       ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
@@ -362,7 +368,7 @@ export class Net {
   _sendHello() {
     if (!this.name) return;
     const rid = this._nextRid();
-    const msg = { t: 'hello', rid, name: this.name, version: PROTOCOL_VERSION };
+    const msg = { t: 'hello', rid, name: this.name, version: PROTOCOL_VERSION, stateDelta: STATE_DELTA_VERSION };
     let token = null;
     try { token = this.getToken(); } catch { token = null; }
     if (typeof token === 'string' && token.length > 0 && token.length <= 64) msg.token = token;
@@ -528,6 +534,16 @@ export class Net {
       return;
     }
     if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.t !== 'string') return;
+    if (msg.t === 'm.state') {
+      const decoded = this._states.receive(msg);
+      if (decoded.resync) this._recoverState();
+      if (!this._states.missing.size) this._clearTimer('_stateResyncTimer', 'clearTimeout');
+      if (!decoded.message) return;
+      msg = decoded.message;
+    } else if (msg.t === 'room.closed' || msg.t === 'm.result') {
+      this._states.reset();
+      this._clearTimer('_stateResyncTimer', 'clearTimeout');
+    }
     const { t } = msg;
     const rid = msg.rid;
     const isHelloError = t === 'error' && rid != null && rid === this._helloRid;
@@ -563,6 +579,17 @@ export class Net {
   }
 
   // ---- heartbeat & clock -----------------------------------------------------------------------
+
+  _recoverState() {
+    if (this._stateResyncTimer != null || !this._states.missing.size) return;
+    // The heavy bucket may reject the first attempt. Retry quietly, at most once/s, until the FULL frame arrives.
+    // A correlated request consumes RATE errors here instead of surfacing an unrelated toast to the player.
+    this._stateResyncTimer = this.timers.setTimeout(() => {
+      this._stateResyncTimer = null;
+      this._recoverState();
+    }, 1000);
+    this.request('state.resync', {}, { timeout: 1000 }).catch(() => {});
+  }
 
   _startHeartbeat() {
     this._clearTimer('_pingTimer', 'clearInterval');

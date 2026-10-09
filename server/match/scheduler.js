@@ -16,6 +16,8 @@
 // Callbacks are expected to guard themselves; the schedulers still catch and report (onError) so one faulty
 // callback never breaks the queue.
 
+import { matchWorkQueue } from '../cooperative.js';
+
 const MAX_DELAY = 2 ** 31 - 1;
 const clampDelay = (ms) => {
   const n = Number(ms);
@@ -34,6 +36,7 @@ export class RealScheduler {
     this._timeouts = new Set();
     /** @type {Set<any>} */
     this._intervals = new Set();
+    this._work = new Set();
     this.disposed = false;
   }
 
@@ -58,8 +61,18 @@ export class RealScheduler {
 
   clearTimeout(h) {
     if (!h) return;
+    if (this._work.delete(h)) { matchWorkQueue.remove(h); return; }
     clearTimeout(h);
     this._timeouts.delete(h);
+  }
+
+  /** CPU slices share one process-wide budget rather than one timer per room. */
+  setWork(fn) {
+    if (this.disposed || typeof fn !== 'function') return null;
+    const run = this._wrap(fn);
+    const h = matchWorkQueue.enqueue(() => { this._work.delete(h); run(); });
+    this._work.add(h);
+    return h;
   }
 
   setInterval(fn, ms) {
@@ -80,6 +93,8 @@ export class RealScheduler {
     this.disposed = true;
     for (const h of this._timeouts) clearTimeout(h);
     for (const h of this._intervals) clearInterval(h);
+    for (const h of this._work) matchWorkQueue.remove(h);
+    this._work.clear();
     this._timeouts.clear();
     this._intervals.clear();
   }

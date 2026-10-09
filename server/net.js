@@ -40,6 +40,8 @@
 
 import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
+import { performance } from 'node:perf_hooks';
+import { NetDiagnostics, socketDiagnostics } from './netDiagnostics.js';
 import { C2S, validateC2S } from '../shared/protocol.js';
 import { ERR, ERR_TEXT, NAME_MAX_LEN, PROTOCOL_VERSION } from '../shared/constants.js';
 
@@ -313,9 +315,10 @@ export function sendRaw(ws, data, { droppable = false } = {}) {
   if (!ws || ws.readyState !== WS_OPEN || typeof data !== 'string') return false;
   try {
     const queued = ws.bufferedAmount;
-    if (queued > NET_DEFAULTS.hardBufferBytes) { ws.terminate(); return false; }
-    if (droppable && queued > NET_DEFAULTS.snapDropBytes) return false;
-    ws.send(data, onSendDone);
+    const diagnostics = socketDiagnostics.get(ws);
+    if (queued > NET_DEFAULTS.hardBufferBytes) { if (diagnostics) diagnostics.slowDisconnects++; ws.terminate(); return false; }
+    if (droppable && queued > NET_DEFAULTS.snapDropBytes) { if (diagnostics) diagnostics.droppedSnapshots++; return false; }
+    ws.send(data, diagnostics?.sent(data) || onSendDone);
     return true;
   } catch {
     return false;
@@ -329,10 +332,11 @@ export const isDroppable = (msg) => !!msg && msg.t === 'b.snap';
  * Encode and send one message to a socket. Never throws.
  * @param {import('ws').WebSocket | null | undefined} ws
  * @param {object} msg
+ * @param {string | null} [encoded] trusted encoding of this exact message, supplied by the match
  * @returns {boolean}
  */
-export function send(ws, msg) {
-  const data = encode(msg);
+export function send(ws, msg, encoded = null) {
+  const data = encoded ?? encode(msg);
   if (data == null) return false;
   return sendRaw(ws, data, { droppable: isDroppable(msg) });
 }
@@ -343,9 +347,9 @@ export function send(ws, msg) {
  * @param {object} msg
  * @returns {boolean}
  */
-export function sendSession(session, msg) {
+export function sendSession(session, msg, encoded = null) {
   if (!session || !session.connected) return false;
-  return send(session.ws, msg);
+  return send(session.ws, msg, encoded);
 }
 
 /** @param {unknown} rid */
@@ -561,6 +565,11 @@ export class Network {
     this.connsPerKey = new Map();
     this.closed = false;
     this.draining = false;
+    this.diagnostics = new NetDiagnostics();
+    this._fanout = [];
+    this._fanoutImmediate = null;
+    this._fanoutRunning = false;
+    this._heartbeatPending = false;
     this.presenceTimer = setInterval(() => this.broadcastPresence(), PRESENCE_INTERVAL_MS);
     this.presenceTimer.unref?.();
     this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
@@ -588,9 +597,41 @@ export class Network {
     const online = this.onlineCount;
     const data = encode({ t: 'presence', online, serverNow: this.now() });
     if (data == null) return;
-    for (const conn of this.conns.values()) {
-      if (conn.closing) continue;
-      sendRaw(conn.ws, data);
+    this._eachConnection((conn) => { if (!conn.closing) sendRaw(conn.ws, data); });
+  }
+
+  /** FIFO fanout preserves public-message order. Small broadcasts remain immediate;
+   * large ones yield after at most 128 recipients or 2 ms, including send work. */
+  _eachConnection(fn, kind = 'broadcast') {
+    if (this.closed) return;
+    this._fanout.push({ connections: [...this.conns.values()], index: 0, fn, kind });
+    if (!this._fanoutRunning && this._fanoutImmediate === null) this._pumpFanout();
+  }
+
+  _pumpFanout() {
+    this._fanoutImmediate = null;
+    this._fanoutRunning = true;
+    const deadline = performance.now() + 2;
+    let visited = 0;
+    try {
+      while (!this.closed && this._fanout.length && visited < 128) {
+        const job = this._fanout[0];
+        if (job.index === job.connections.length) {
+          this._fanout.shift();
+          if (job.kind === 'heartbeat') this._heartbeatPending = false;
+          continue;
+        }
+        const conn = job.connections[job.index++];
+        if (this.conns.get(conn.ws) === conn && !(job.kind === 'heartbeat' && this.draining)) job.fn(conn);
+        visited++;
+        if (performance.now() >= deadline) break;
+      }
+    } finally {
+      this._fanoutRunning = false;
+      if (!this.closed && this._fanout.length) {
+        this._fanoutImmediate = setImmediate(() => this._pumpFanout());
+        this._fanoutImmediate.unref?.();
+      }
     }
   }
 
@@ -643,9 +684,13 @@ export class Network {
     if (this.closed) { try { ws.close(CLOSE.SHUTDOWN, 'server shutdown'); } catch { /* ignore */ } return; }
     const conn = new Connection(ws, clientAddress(req, this.opts.trustProxy), this.now(), this.opts);
     this.conns.set(ws, conn);
+    socketDiagnostics.set(ws, this.diagnostics);
     if (conn.key) this.connsPerKey.set(conn.key, (this.connsPerKey.get(conn.key) || 0) + 1);
     ws.on('message', (data, isBinary) => {
+      const start = performance.now();
+      conn.frameType = 'invalid';
       try { this.onFrame(conn, data, isBinary); } catch (e) { this.log.error('[net] frame handler crashed', e); }
+      finally { this.diagnostics.received(conn.frameType, data.length || 0, performance.now() - start); }
     });
     ws.on('pong', () => { conn.alive = true; if (conn.session && conn.session.ws === ws) conn.session.lastSeen = this.now(); });
     ws.on('error', (e) => { this.log.debug?.('[net] socket error', e?.code || e?.message); });
@@ -660,7 +705,7 @@ export class Network {
     if (this.closed) return;
     const data = encode(msg);
     if (data == null) return;
-    for (const conn of this.conns.values()) if (!conn.closing) sendRaw(conn.ws, data);
+    this._eachConnection((conn) => { if (!conn.closing) sendRaw(conn.ws, data); });
   }
 
   /** @param {Connection} conn */
@@ -695,6 +740,7 @@ export class Network {
     }
     const reason = validateC2S(msg);
     if (reason) { this.reply(conn, errorMsg(ERR.BAD_MSG, rid, reason)); return; }
+    conn.frameType = msg.t;
 
     if (msg.t === 'ping') {
       const pong = { t: 'pong', c: msg.c, s: now };
@@ -787,6 +833,7 @@ export class Network {
 
   /** @param {Connection} conn */
   onClose(conn) {
+    socketDiagnostics.delete(conn.ws);
     if (this.conns.delete(conn.ws) && conn.key) {
       const n = (this.connsPerKey.get(conn.key) || 1) - 1;
       if (n > 0) this.connsPerKey.set(conn.key, n);
@@ -804,26 +851,28 @@ export class Network {
 
   /** Ping every socket; terminate the ones that did not answer since the previous heartbeat. */
   heartbeat() {
-    const now = this.now();
-    for (const conn of this.conns.values()) {
+    if (this.closed || this.draining || this._heartbeatPending) return;
+    this._heartbeatPending = true;
+    this._eachConnection((conn) => {
+      const now = this.now();
       try {
         if (conn.closing) {
           // Closing handshake never completed within a heartbeat interval → drop the TCP connection.
           if (!conn.alive) conn.ws.terminate();
           conn.alive = false;
-          continue;
+          return;
         }
         if (!conn.session && now - conn.openedAt > this.opts.helloTimeoutMs) {
           conn.close(CLOSE.HELLO_TIMEOUT, 'hello timeout');
-          continue;
+          return;
         }
-        if (!conn.alive) { conn.ws.terminate(); continue; }
+        if (!conn.alive) { conn.ws.terminate(); return; }
         conn.alive = false;
         conn.ws.ping();
       } catch (e) {
         this.log.debug?.('[net] heartbeat error', e?.message);
       }
-    }
+    }, 'heartbeat');
   }
 
   /** Purge expired sessions and tell the handler. */
@@ -848,6 +897,10 @@ export class Network {
   close(code = CLOSE.SHUTDOWN, reason = 'server shutdown') {
     if (this.closed) return;
     this.closed = true;
+    if (this._fanoutImmediate !== null) clearImmediate(this._fanoutImmediate);
+    this._fanoutImmediate = null;
+    this._fanout.length = 0;
+    this.diagnostics.close();
     clearInterval(this.heartbeatTimer);
     clearInterval(this.sweepTimer);
     clearInterval(this.presenceTimer);

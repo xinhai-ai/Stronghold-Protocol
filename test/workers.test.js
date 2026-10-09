@@ -7,7 +7,8 @@ import { TestClient } from './helpers/wsClient.js';
 import { DATA, makeMatch } from './match/harness.js';
 import { PHASE } from '../shared/constants.js';
 import { createBattleFromSpec, resultDigest, compactResult } from '../server/sim/spec.js';
-import { runHeadless } from '../server/match/fields.js';
+import { HeadlessJob, runHeadless } from '../server/match/fields.js';
+import { RealScheduler } from '../server/match/scheduler.js';
 import { createRehearsal, planLayout, REHEARSAL_VARIANTS, LAYOUT_PARAMS } from '../server/match/bot.js';
 
 const fixture = new URL('./fixtures/pool-worker.mjs', import.meta.url);
@@ -103,6 +104,35 @@ test('real battle worker results and progress timelines equal the local simulati
     assert.deepEqual(out.result, expected[i].result);
     assert.deepEqual(out.timeline, expected[i].timeline);
     assert.deepEqual(out.errors, expected[i].battle.errors);
+  });
+});
+
+test('real battles on the shared local queue preserve results and timelines while yielding between slices', async (t) => {
+  const h = combat();
+  t.after(() => h.m.dispose());
+  const scheduler = new RealScheduler();
+  t.after(() => scheduler.dispose());
+  const specs = h.m.fields.map((f) => ({ spec: f.spec, players: f.players }));
+  const expected = specs.map(({ spec, players }) =>
+    runHeadless(createBattleFromSpec(spec, h.m.ds, { recordEvents: false }), { players }));
+  let slices = 0, probeRan = false;
+  const actual = specs.map(({ spec, players }) => {
+    const job = new HeadlessJob(createBattleFromSpec(spec, h.m.ds, { recordEvents: false }), { players });
+    const step = () => {
+      slices++;
+      if (!job.run(0.1)) scheduler.setWork(step);
+    };
+    scheduler.setWork(step);
+    return job;
+  });
+  scheduler.setWork(() => { probeRan = true; });
+  await until(() => actual.every((job) => job.done));
+  assert.equal(probeRan, true);
+  assert.ok(slices > actual.length, 'real battles continue across multiple callbacks');
+  actual.forEach((job, i) => {
+    const out = job.output();
+    assert.deepEqual(out.result, expected[i].result);
+    assert.deepEqual(out.timeline, expected[i].timeline);
   });
 });
 

@@ -32,6 +32,11 @@ export function sendError(req, res, status, title, detail) {
 
 export function sendJson(req, res, status, obj) {
   const body = Buffer.from(JSON.stringify(obj));
+  sendJsonBody(req, res, status, body);
+}
+
+/** Send trusted, already encoded JSON bytes; HEAD uses the same representation length. */
+export function sendJsonBody(req, res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': body.length, 'Cache-Control': 'no-store' });
   res.end(req.method === 'HEAD' ? undefined : body);
 }

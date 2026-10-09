@@ -60,7 +60,7 @@ export class MatchPrep {
         return;
       }
       if (r.done) { then(r.value); return; }
-      this.later(0, () => { if (valid()) drive(gen, label, then); });
+      this.laterWork(() => { if (valid()) drive(gen, label, then); });
     };
     const ready = () => {
       if (!ps.ready) {
@@ -74,7 +74,7 @@ export class MatchPrep {
       if (!gen) { ready(); return; }
       drive(gen, '', ready);
     };
-    this.later(this.scaled(DELAYS.BOT_ACTION + i * DELAYS.BOT_STAGGER), () => {
+    const begin = () => {
       if (!valid()) return;
       drive(botPrepBeginSteps(this, ps), '', (job) => {
         if (!job) { end(null); return; }
@@ -82,8 +82,8 @@ export class MatchPrep {
           if (!valid()) return;
           let done = true;
           try { done = job.run(this.botSliceMs); } catch (e) { this.reportError(`bot ${ps.playerId} rehearsal`, e); }
-          if (done) { if (bounded) this.later(0, () => { if (valid()) end(job); }); else end(job); }
-          else this.later(0, slice);
+          if (done) { if (bounded) this.laterWork(() => { if (valid()) end(job); }); else end(job); }
+          else this.laterWork(slice);
         };
         if (this.workerPool && job.workerPayload) {
           ps._botWorker = this._submitWorker('rehearsal', job.workerPayload, {
@@ -92,16 +92,21 @@ export class MatchPrep {
               ps._botWorker = null;
               job.best = job.plans[bestIndex] || job.plans[0];
               job.done = true;
-              end(job);
+              if (this.sched.setWork) this.laterWork(() => { if (valid()) end(job); });
+              else end(job);
             },
-            failed: () => { ps._botWorker = null; this.later(0, slice); },
+            failed: () => { ps._botWorker = null; this.laterWork(slice); },
           });
           return;
         }
         // bounded slices start in a callback of their own (the economy + default layout above already used this one)
-        if (bounded) this.later(0, slice);
+        if (bounded) this.laterWork(slice);
         else slice();
       });
+    };
+    this.later(this.scaled(DELAYS.BOT_ACTION + i * DELAYS.BOT_STAGGER), () => {
+      if (this.sched.setWork) this.laterWork(begin);
+      else begin();
     });
   }
 

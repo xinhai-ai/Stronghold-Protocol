@@ -89,7 +89,10 @@
 
 ## `/healthz` 与 `/metrics`
 
+- 高并发延迟优化须保留：全服广播/心跳分批让出事件循环及广播 FIFO 顺序、跨房间共享本地模拟续步预算、私有状态编码复用，以及保持原有组队规则的按队伍大小 FIFO 匹配。`/metrics.websocket.diagnostics` 的事件循环、消息耗时与发送采样仅在服务端聚合，不记录地址或正文；统计为启动以来累计，发送完成不等于客户端 RTT。`/healthz` 不增加详细诊断字段。压缩开关与原有背压阈值继续保持兼容。
+
 - `/healthz` 保留 `ok`、`version`、`app`、`uptimeSec`、`build`。
+- 高频 `/healthz` 保留同步处理路径及每服务实例独立的短期统计快照、JSON 字节复用。稳定状态下最多每秒扫描一次房间/队列；房间、活跃队列对局或排队玩家数量变化时立即失效，连接数、会话数和运行时间及时更新，既有房间内部的座位/对局计数允许最多约 1 秒的快照延迟。过期使用单调时钟，不创建后台扫描定时器，失败返回 500 并重试，不返回旧快照掩盖错误。HTTP 仍为 `no-store`，GET/HEAD 内容长度、405、URL 长度限制和安全响应头保持不变；`/metrics` 的实时统计不复用或覆盖此快照。
 - 以下计数也保留在 `/healthz`：`sockets`、`sessions`、`rooms`、`matches`、`roomMatches`、`standaloneMatches`、`humans`、`bots`、`spectators`、`queued`。不要因精简接口删除这些字段；沿用现有统计含义。
 - `/metrics` 返回 JSON，包含健康接口的上述字段，加上详细状态：`persist`、`workers`、`memory`、`staticCache`、`usage`、`socketBuffers`、`announcements`、`websocket`、`assetsCdn`、`dataCdn`、`limits`、`tuning`。
 - 详细统计只在请求 `/metrics` 时采集；不要重新放入页面每分钟轮询的 `/healthz`。保持原有字段名、结构和未启用时的 `null` 语义。

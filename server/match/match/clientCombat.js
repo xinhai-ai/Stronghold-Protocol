@@ -212,9 +212,9 @@ export class MatchClientCombat {
         f.sliceTimer = null;
         if (f.job !== job || f.done) return;
         if (job.run(this.headlessSliceMs)) complete();
-        else f.sliceTimer = this.later(0, slice);
+        else f.sliceTimer = this.laterWork(slice);
       };
-      f.sliceTimer = this.later(0, slice);
+      f.sliceTimer = this.laterWork(slice);
     }
     this._armProgressTicker();
   }

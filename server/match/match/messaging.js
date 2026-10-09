@@ -10,11 +10,11 @@ import { DELAYS } from './common.js';
 import { wireMessage } from '../../../shared/i18n.js';
 
 export class MatchMessaging {
-  sendTo(playerId, msg) {
+  sendTo(playerId, msg, encoded = null) {
     if (this.disposed) return false;
     const ps = this.players.get(playerId) || this.spectators.get(playerId);
     if (!ps || ps.isBot || ps.left) return false;
-    try { return !!this.sendFn(playerId, msg); } catch (e) { this.reportError('send', e); return false; }
+    try { return !!this.sendFn(playerId, msg, encoded); } catch (e) { this.reportError('send', e); return false; }
   }
 
   broadcast(msg) {
@@ -84,7 +84,7 @@ export class MatchMessaging {
     const json = JSON.stringify(view);
     if (!force && json === ps._lastPriv) return;
     ps._lastPriv = json;
-    this.sendTo(ps.playerId, view);
+    this.sendTo(ps.playerId, view, json);
   }
 
   _maybeSendPublic(force) {

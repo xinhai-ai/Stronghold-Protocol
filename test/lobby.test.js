@@ -1148,8 +1148,11 @@ describe('websocket lobby', () => {
       assert.equal(b.ws.extensions, '');
       const onHealth = JSON.parse((await httpReq(on.port, '/metrics')).body.toString());
       const offHealth = JSON.parse((await httpReq(off.port, '/metrics')).body.toString());
-      assert.deepEqual(onHealth.websocket, { compression: true, threshold: 1024 });
-      assert.deepEqual(offHealth.websocket, { compression: false, threshold: 1024 });
+      for (const [health, compression] of [[onHealth, true], [offHealth, false]]) {
+        const { diagnostics, ...config } = health.websocket;
+        assert.deepEqual(config, { compression, threshold: 1024 });
+        assert.equal(diagnostics.period, 'sinceStart');
+      }
     } finally { await a.close(); await b.close(); await on.close(); await off.close(); }
   });
 });

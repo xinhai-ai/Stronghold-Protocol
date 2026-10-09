@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { startServer } from '../server/index.js';
 import { APP_VERSION, PROTOCOL_VERSION } from '../shared/constants.js';
 import { probePort } from '../tools/doctor.mjs';
+import { createRequestHandler } from '../server/http/routes.js';
 
 const COUNTERS = ['sockets', 'sessions', 'rooms', 'matches', 'roomMatches', 'standaloneMatches', 'humans', 'bots', 'spectators', 'queued'];
 const DIAGNOSTICS = ['persist', 'workers', 'memory', 'staticCache', 'usage', 'socketBuffers', 'announcements', 'websocket',
@@ -42,6 +43,10 @@ test('healthz retains metadata and all headline counters; metrics collects the d
   assert.ok(metrics.memory.rss > 0);
   assert.ok(metrics.staticCache.gzipBytes <= metrics.staticCache.gzipLimitBytes);
   assert.deepEqual(metrics.socketBuffers, { total: 0, max: 0 });
+  assert.equal(metrics.websocket.diagnostics.period, 'sinceStart');
+  assert.equal(metrics.websocket.diagnostics.receivedFrames, 0);
+  assert.ok(metrics.websocket.diagnostics.eventLoop.utilization >= 0);
+  assert.deepEqual(metrics.websocket.diagnostics.handlerMs, {});
   assert.deepEqual(calls.sort(), ['usage', 'bufferedBytes', 'usage', 'stats'].sort());
 });
 
@@ -69,4 +74,27 @@ test('metrics retains persistence diagnostics when a state store is configured',
   const metrics = await (await fetch(srv.url + '/metrics')).json();
   assert.deepEqual(metrics.persist, { redis: true, writes: 0, checkpoints: 0, snapshotBytes: 0, workerMemory: null });
   assert.equal('persist' in await (await fetch(srv.url + '/healthz')).json(), false);
+});
+
+test('metrics collects fresh headline counters while healthz reuses its independent snapshot', async (t) => {
+  const srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true, workers: 0, store: null, announcementsFile: null });
+  t.after(() => srv.close());
+  const original = srv.lobby.stats.bind(srv.lobby);
+  let humans = 1;
+  srv.lobby.stats = () => ({ ...original(), humans });
+  // A deterministic HTTP response fixture avoids sleep-based expiry assertions.
+  const handler = createRequestHandler({ health: { startedAt: Date.now(), network: srv.network, registry: srv.registry, lobby: srv.lobby },
+    diagnostics: { persister: null, workerPool: null, announcements: srv.announcements, wsCompression: false,
+      serveStatic: { cacheStats: () => ({}) } }, serveStatic: async () => {}, log: { error: assert.fail } });
+  const reply = (url) => {
+    let resolve;
+    const done = new Promise((yes) => { resolve = yes; });
+    const res = { setHeader() {}, writeHead() {}, end(body) { resolve(JSON.parse(body)); } };
+    handler({ url, method: 'GET' }, res);
+    return done;
+  };
+  assert.equal((await reply('/healthz')).humans, 1);
+  humans = 2;
+  assert.equal((await reply('/metrics')).humans, 2);
+  assert.equal((await reply('/healthz')).humans, 1, 'metrics does not overwrite the health snapshot');
 });

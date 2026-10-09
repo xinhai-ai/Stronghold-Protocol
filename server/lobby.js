@@ -632,7 +632,7 @@ export class Lobby {
         roomCode, mode, difficulty, modeId: modeIdFor(mode, difficulty), seats,
         consoleEnabled: false, seed: Number(checkpoint.seed) >>> 0, matchNo: room ? Math.max(1, room.matchCount) : 1,
         data: this.safeData(), workerPool: this.workerPool, log: this.log, now: this.now,
-        send: (playerId, msg) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg) : false),
+        send: (playerId, msg, encoded) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg, encoded) : false),
         broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
         onEnd: (summary) => this.onQueuedMatchEnd(ctx, summary),
       });
@@ -762,7 +762,8 @@ export class Lobby {
     }
     // A newly matched human party gives its teammates a fresh AI wait. Use the same packing as processing,
     // so another difficulty, a private ticket or a party that does not fit cannot extend their deadline.
-    const selected = this.groupMatchEntries(bucket).find((group) => group.includes(entry));
+    const groups = this.groupMatchEntries(bucket);
+    const selected = groups.find((group) => group.includes(entry));
     if (selected.length > 1) for (const teammate of selected) {
       teammate.deadlineAt = entry.deadlineAt;
       if (teammate.room?.matching) {
@@ -770,7 +771,7 @@ export class Lobby {
         this.broadcastState(teammate.room);
       }
     }
-    this.broadcastQueueCounts(entry.mode, entry.difficulty);
+    this.broadcastQueueCounts(entry.mode, entry.difficulty, groups);
   }
 
   /** Oldest-first party packing without splitting parties or combining private tickets. */
@@ -789,21 +790,44 @@ export class Lobby {
 
   /** Use identical groups for counts, AI deadline resets and match launch. */
   groupMatchEntries(bucket) {
-    let remaining = bucket.filter((entry) => entry && !entry.removed);
+    const remaining = bucket.filter((entry) => entry && !entry.removed);
     const groups = [];
-    while (remaining.length) {
-      const selected = this.selectMatchEntries(remaining);
+    // At most four seats: keep FIFO candidates by party size, then choose the
+    // earliest party that fits. Each candidate is visited once; packing is unchanged.
+    const bySize = Array.from({ length: MAX_SEATS + 1 }, () => []);
+    const heads = new Uint32Array(MAX_SEATS + 1);
+    const used = new Set();
+    for (let i = 0; i < remaining.length; i++) {
+      const entry = remaining[i];
+      if (entry.fillBots && entry.players.length > 0 && entry.players.length <= MAX_SEATS) bySize[entry.players.length].push(i);
+    }
+    for (let i = 0; i < remaining.length; i++) {
+      if (used.has(i)) continue;
+      const first = remaining[i];
+      const selected = [first];
+      used.add(i);
+      let total = first.players.length;
+      while (first.fillBots && total < MAX_SEATS) {
+        let next = Infinity;
+        for (let size = 1; size <= MAX_SEATS - total; size++) {
+          const candidates = bySize[size];
+          while (heads[size] < candidates.length && used.has(candidates[heads[size]])) heads[size]++;
+          if (heads[size] < candidates.length) next = Math.min(next, candidates[heads[size]]);
+        }
+        if (next === Infinity) break;
+        used.add(next);
+        selected.push(remaining[next]);
+        total += remaining[next].players.length;
+      }
       groups.push(selected);
-      const group = new Set(selected);
-      remaining = remaining.filter((entry) => !group.has(entry));
     }
     return groups;
   }
 
   /** Send each ticket the waiting human count of its actual four-seat group. */
-  broadcastQueueCounts(mode, difficulty) {
+  broadcastQueueCounts(mode, difficulty, groups = null) {
     const bucket = this.matchQueues.get(`${mode}:${difficulty}`) || [];
-    for (const group of this.groupMatchEntries(bucket)) {
+    for (const group of groups || this.groupMatchEntries(bucket)) {
       const count = group.reduce((n, entry) => n + entry.players.filter((p) => !p.isBot).length, 0);
       for (const entry of group) this.sendQueueState(entry, 'queued', null, count);
     }
@@ -822,11 +846,8 @@ export class Lobby {
         const total = selected.reduce((n, entry) => n + entry.players.length, 0);
         if (total < MAX_SEATS && now < first.deadlineAt) continue;
         for (const entry of selected) {
-          const idx = bucket.indexOf(entry);
-          if (idx >= 0) bucket.splice(idx, 1);
           this.removeQueueReferences(entry);
         }
-        this.broadcastQueueCounts(first.mode, first.difficulty);
         const players = selected.flatMap((entry) => entry.players.map((p) => ({ ...p })));
         while (players.length < MAX_SEATS) {
           const seat = players.length;
@@ -836,7 +857,13 @@ export class Lobby {
         const owner = selected.find((entry) => entry.room) || first;
         this.startQueuedMatch(owner, players, selected);
       }
-      if (!bucket.length) this.matchQueues.delete(key);
+      const waiting = bucket.filter((entry) => !entry.removed);
+      if (waiting.length !== bucket.length) {
+        this.matchQueues.set(key, waiting);
+        const [mode, difficulty] = key.split(':');
+        this.broadcastQueueCounts(mode, difficulty);
+      }
+      if (!waiting.length) this.matchQueues.delete(key);
     }
   }
 
@@ -1252,7 +1279,7 @@ export class Lobby {
         workerPool: this.workerPool,
         log: this.log,
         now: this.now,
-        send: (playerId, msg) => (ctx.live ? this.matchSend(room, ctx, playerId, msg) : false),
+        send: (playerId, msg, encoded) => (ctx.live ? this.matchSend(room, ctx, playerId, msg, encoded) : false),
         broadcast: (msg) => { if (ctx.live) this.matchBroadcast(room, ctx, msg); },
         onEnd: (summary) => this.onMatchEnd(room, ctx, summary),
       });
@@ -1324,7 +1351,7 @@ export class Lobby {
         seed,
         matchNo: room ? room.matchCount + 1 : 1,
         data: this.safeData(), workerPool: this.workerPool, log: this.log, now: this.now,
-        send: (playerId, msg) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg) : false),
+        send: (playerId, msg, encoded) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg, encoded) : false),
         broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
         onEnd: (summary) => this.onQueuedMatchEnd(ctx, summary),
       });
@@ -1364,14 +1391,14 @@ export class Lobby {
     catch (e) { this.log.warn(`[persist] ${key}: initial checkpoint notification failed (${e.message})`); }
   }
 
-  queueMatchSend(ctx, playerId, msg) {
+  queueMatchSend(ctx, playerId, msg, encoded = null) {
     if (!ctx || ctx.disposed) return false;
     const p = ctx.members.find((x) => x.playerId === playerId);
     if (!p || p.isBot || p.left) return false;
     const session = this.registry.byId(playerId);
     if (!session || !session.connected || session.activeMatchCtx !== ctx) return false;
     if (msg?.t === 'm.result') ctx.results.set(playerId, encode(msg));
-    return sendSession(session, msg);
+    return sendSession(session, msg, encoded);
   }
 
   queueMatchBroadcast(ctx, msg) {
@@ -1434,12 +1461,12 @@ export class Lobby {
   }
 
   /** Match unicast; m.result frames are also kept for the replay. */
-  matchSend(room, ctx, playerId, msg) {
+  matchSend(room, ctx, playerId, msg, encoded = null) {
     if (msg && msg.t === 'm.result') {
       const data = encode(msg);
       if (data != null) ctx.results.set(playerId, data);
     }
-    return this.sendToPlayer(room, playerId, msg);
+    return this.sendToPlayer(room, playerId, msg, encoded);
   }
 
   /** Match broadcast; the latest m.public and a broadcast m.result are also kept for the replay. */
@@ -1824,12 +1851,12 @@ export class Lobby {
   }
 
   /** Match unicast. @returns {boolean} */
-  sendToPlayer(room, playerId, msg) {
+  sendToPlayer(room, playerId, msg, encoded = null) {
     if (room.disposed) return false;
     const seat = room.seatOf(playerId) || room.spectatorOf(playerId);
     if (!seat || seat.isBot || seat.left) return false;
     const session = this.registry.byId(playerId);
     if (!session || session.roomCode !== room.code) return false;
-    return sendSession(session, msg);
+    return sendSession(session, msg, encoded);
   }
 }

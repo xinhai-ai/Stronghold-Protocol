@@ -56,6 +56,7 @@ import { installLoadoutSync, installOwnershipSync, installDiySync } from './ui/l
 import { startBuildGuard } from './ui/buildGuard.js';
 import { initLang, useLang, tickerText } from './ui/lang.js';
 import { t, N_, translateWire } from '../../shared/i18n.js';
+import { appendChat, validChatText } from '../../shared/chat.js';
 
 const RESTORE_GRACE_MS = 1500;
 const JOIN_DELAY_MS = 350;
@@ -139,7 +140,7 @@ function backToLobby() {
   clearTimeout(restoreTimer);
   const s = store.get();
   if (s.room || s.match.public) closeAllDialogs();
-  store.set({ room: null, match: emptyMatch(), ticker: [], emotes: [] });
+  store.set({ room: null, match: emptyMatch(), ticker: [], emotes: [], chatHistory: [] });
   store.patch('ui', { restoring: false, matchQueue: null });
 }
 
@@ -184,12 +185,12 @@ function onRoomState(msg) {
   if (myId != null && seats.length && !seats.some((s) => s && s.playerId === myId) && !isSpectating(room, myId)) {
     // We are no longer seated (kicked / left elsewhere) — neither in a player seat nor a spectator seat.
     if (store.get().room) toast(t('你已不在该同盟中'), 'warn');
-    store.set({ room: null, match: emptyMatch() });
+    store.set({ room: null, match: emptyMatch(), emotes: [], chatHistory: [] });
     return;
   }
   const prevRoom = store.get().room;
   // A (new) match starts: forget the previous match's state so stale results never show.
-  if (room.inMatch && !(prevRoom && prevRoom.inMatch && prevRoom.code === room.code)) store.set({ match: emptyMatch() });
+  if (room.inMatch && !(prevRoom && prevRoom.inMatch && prevRoom.code === room.code)) store.set({ match: emptyMatch(), emotes: [], chatHistory: [] });
   store.set({ room });
   if (room.mode === 'coop' && typeof room.code === 'string') rememberRoom(room.code);
   maybeFinishRestore();
@@ -257,6 +258,16 @@ function wireNet() {
   });
   net.on('m.emote', (msg) => {
     store.set((s) => ({ emotes: [...s.emotes.slice(-(EMOTE_KEEP - 1)), { seq: ++seq, playerId: msg.playerId, id: msg.id, at: Date.now() }] }));
+  });
+  net.on('m.chat', (msg) => {
+    if (!validChatText(msg.text) || typeof msg.playerId !== 'string') return;
+    const entry = { seq: ++seq, playerId: msg.playerId, text: msg.text, at: Date.now(),
+      name: typeof msg.name === 'string' ? msg.name : msg.playerId,
+      sentAt: Number.isFinite(msg.at) ? msg.at : Date.now() };
+    store.set((s) => ({
+      chatHistory: appendChat(s.chatHistory, entry),
+      emotes: [...s.emotes.slice(-(EMOTE_KEEP - 1)), entry],
+    }));
   });
 
   // Entering (title → lobby) while already online also needs the deep-link join.

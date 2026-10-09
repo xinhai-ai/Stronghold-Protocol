@@ -717,7 +717,7 @@ describe('websocket lobby', () => {
     await expectOk(late, { t: 'room.spectate', code: st.code }); // a running match: a spectator seat is still free
     const lateState = await late.waitFor('room.state', (s) => s.inMatch);
     assert.deepEqual(lateState.spectators.map((x) => x.playerId), [spec.id, late.id]);
-    for (const msg of [{ t: 'g.infoReady' }, { t: 'g.buy', slot: 0 }, { t: 'g.ready', ready: true }, { t: 'g.emote', id: EMOTES[0] }, { t: 'g.autoplay', on: true }]) {
+    for (const msg of [{ t: 'g.infoReady' }, { t: 'g.buy', slot: 0 }, { t: 'g.ready', ready: true }, { t: 'g.emote', id: EMOTES[0] }, { t: 'g.chat', text: '你好' }, { t: 'g.autoplay', on: true }]) {
       await expectError(spec, msg, ERR.SPECTATOR);
     }
     await expectOk(spec, { t: 'room.loadout', entries: {} }); // kept for its session, never handed to the match
@@ -831,6 +831,16 @@ describe('websocket lobby', () => {
     await expectOk(guest, { t: 'g.emote', id: 'autochess_battle_happy' });
     const emote = await host.waitFor('m.emote');
     assert.deepEqual([emote.playerId, emote.id], [guest.id, 'autochess_battle_happy']);
+    await expectError(host, { t: 'g.chat', text: '中'.repeat(21) }, ERR.BAD_MSG);
+    await expectOk(host, { t: 'g.chat', text: ' 大家好 ', name: '冒充', playerId: guest.id });
+    for (const c of [host, guest]) {
+      const chat = await c.waitFor('m.chat');
+      assert.equal(chat.playerId, host.id);
+      assert.notEqual(chat.name, '冒充');
+      assert.equal(chat.text, '大家好');
+      assert.ok(Number.isFinite(chat.at));
+    }
+    await expectError(host, { t: 'g.chat', text: '重复发送' }, ERR.RATE);
     await expectError(guest, { t: 'room.ready', ready: false }, ERR.ROOM_STARTED);
     await expectError(host, { t: 'room.start' }, ERR.ROOM_STARTED);
     await expectError(host, { t: 'room.addBot' }, ERR.ROOM_STARTED);

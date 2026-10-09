@@ -133,6 +133,106 @@
 .ebubble__icon { position: absolute; left: .26rem; top: .12rem; width: .68rem; height: .70rem; display: grid; place-items: center; }
 .ebubble .eart { width: 100%; height: 100%; }
 
+/* Left view switcher; emotes/history share one content area above a persistent composer. */
+.ewheel__dialog {
+  position: absolute; left: -.15rem; bottom: calc(100% + .02rem); z-index: 5;
+  width: 3.13rem;
+}
+.ewheel__dialog .ewheel__panel { position: relative; left: auto; bottom: auto; margin: 0 auto; }
+.ewheel__dialog.has-chat {
+  --ewheel-cell-size: 44px;
+  display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: stretch;
+  width: 260px; max-width: calc(100vw - .4rem - env(safe-area-inset-left) - env(safe-area-inset-right));
+  max-height: calc(100vh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+  border: 1px solid var(--line-2); border-radius: .06rem; background: #131918;
+  box-shadow: 0 .04rem .16rem rgba(0, 0, 0, .5);
+}
+.ewheel__compose { min-width: 0; }
+.echat__tabs {
+  display: flex; flex-direction: column; gap: 4px; padding: 4px 2px;
+  border-right: 1px solid #35423b;
+}
+.echat__tab {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  flex: none; min-height: 32px; padding: 3px 0; border: 1px solid #63766d; border-radius: 3px;
+  background: #17241e; color: #e9fff2; font-size: 12px; line-height: 18px;
+}
+.echat__tab .icon { width: 18px; height: 18px; pointer-events: none; }
+.echat__tab.is-on { background: #345744; border-color: #83e5bc; }
+.echat__tab-count { display: block; font-size: 10px; line-height: 12px; color: #c0d0c7; }
+.ewheel__dialog.has-chat .ewheel__panel {
+  display: grid; grid-template-rows: auto 24px; row-gap: 4px;
+  scale: 1; width: 100%; height: auto; padding: 6px; background: none;
+}
+.ewheel__dialog.has-chat .ewheel__panel[hidden] { display: none; }
+.ewheel__dialog.has-chat .ewheel__panel::before { content: none; }
+.ewheel__dialog.has-chat .ewheel__viewport { position: relative; left: auto; top: auto; width: 100%; height: auto; min-height: 0; }
+.ewheel__dialog.has-chat .ewheel__page {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, var(--ewheel-cell-size)); grid-auto-rows: var(--ewheel-cell-size);
+  height: auto; gap: 4px;
+}
+.ewheel__dialog.has-chat .ewheel__item {
+  grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0;
+  width: 100%; height: var(--ewheel-cell-size); padding: 4px; overflow: hidden;
+}
+.ewheel__dialog.has-chat .ewheel__item .eart { min-width: 0; min-height: 0; max-height: 100%; object-fit: contain; }
+.ewheel__dialog.has-chat .ewheel__pager { display: flex; align-items: center; gap: 4px; height: 24px; }
+.ewheel__dialog.has-chat .ewheel__dots {
+  position: relative; flex: 1; top: auto; bottom: auto; left: auto; right: auto; width: auto; height: 24px; gap: 6px;
+}
+.ewheel__dialog.has-chat .ewheel__dot { width: 7px; height: 7px; }
+.ewheel__dialog.has-chat .ewheel__dot::before { inset: -4px -3px; width: auto; height: auto; transform: none; }
+.ewheel__dialog.has-chat .ewheel__nav { position: relative; flex: none; top: auto; bottom: auto; width: 28px; height: 24px; }
+.ewheel__dialog.has-chat .ewheel__nav.is-prev, .ewheel__dialog.has-chat .ewheel__nav.is-next { left: auto; right: auto; }
+.ewheel__dialog.has-chat .ewheel__nav .icon { width: 16px; height: 16px; }
+.ewheel__dialog.has-chat .ewheel__panel .ewheel__nav.is-prev::before,
+.ewheel__dialog.has-chat .ewheel__panel .ewheel__nav.is-next::before { inset: 0; width: auto; height: auto; transform: none; }
+.echat { grid-column: 1 / -1; padding: 2px 4px; border-top: 1px solid #35423b; font-size: 12px; color: #eff7f3; }
+.echat__form { display: flex; align-items: center; gap: 2px; }
+.echat__input {
+  flex: 1; min-width: 0; height: 24px; min-height: 24px; box-sizing: border-box; padding: 1px 3px;
+  background: #080e0c; border: 1px solid #63766d; border-radius: 3px; color: #fff; font: inherit; line-height: 20px;
+  user-select: text; touch-action: auto;
+}
+.echat__count { flex: none; color: #c0d0c7; font-size: 10px; }
+.echat__send {
+  height: 24px; min-height: 24px; box-sizing: border-box; padding: 1px 4px; border: 1px solid #63766d; border-radius: 3px;
+  background: #24392f; color: #e9fff2; font: inherit; font-size: 11px; line-height: 20px; cursor: pointer;
+}
+.echat__send:disabled, .echat__send[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.echat__history-pane {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  box-sizing: border-box; height: calc(var(--ewheel-cell-size) * 2 + 44px); padding: 4px 6px;
+  font-size: 12px; color: #eff7f3;
+}
+.echat__history {
+  flex: 1; height: 0; min-height: 0; overflow-y: auto;
+  overscroll-behavior: contain; touch-action: pan-y; user-select: text;
+}
+.echat__entry { padding: 3px 0; border-bottom: 1px solid #35423b; }
+.echat__meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 6px; color: #c0d0c7; font-size: 10px; }
+.echat__meta span { min-width: 0; overflow-wrap: anywhere; }
+.echat__meta time { flex: none; }
+.echat__entry.is-self .echat__meta span { color: #83e5bc; }
+.echat__text { margin-top: 3px; overflow-wrap: anywhere; line-height: 1.5; }
+.echat__empty { padding: 10px 0; color: #c0d0c7; }
+.ebubble.ebubble--chat {
+  width: max-content; max-width: min(3.2rem, 55vw); height: auto; padding: max(.08rem, 6px) max(.12rem, 8px);
+  border-radius: 6px; background: #17241e; border: 1px solid #638a75; color: #f2fff6;
+  font-size: max(.15rem, 12px); line-height: 1.5; overflow-wrap: anywhere; white-space: normal;
+}
+.ebubble.ebubble--chat::before, .ebubble.ebubble--chat::after { content: none; }
+
+@media (max-width: 600px), (max-width: 1100px) and (any-pointer: coarse), (max-height: 600px) and (any-pointer: coarse) {
+  /* Default emote view shows all six cells; history uses the same height, not a second column. */
+  .ewheel__dialog.has-chat { --ewheel-cell-size: 32px; width: 220px; }
+  .ewheel__dialog.has-chat .ewheel__item { padding: 3px; }
+  .echat__input { font-size: 16px; }
+}
+
 @keyframes emo-panel-in { from { opacity: 0; transform: translateY(.06rem) scale(.96); } }
 @keyframes emo-page-in { from { opacity: 0; } }
 @keyframes emo-page-from-right { from { opacity: .2; transform: translateX(45%); } }

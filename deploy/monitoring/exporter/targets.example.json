@@ -1,0 +1,7 @@
+[
+  {
+    "name": "production",
+    "url": "http://host.docker.internal:3000/metrics",
+    "wsUrl": "ws://host.docker.internal:3000/ws"
+  }
+]

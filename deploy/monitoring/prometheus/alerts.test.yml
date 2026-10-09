@@ -1,0 +1,53 @@
+rule_files:
+  - stronghold-alerts.yml
+evaluation_interval: 30s
+tests:
+  - name: game target down fires only after sustained failure
+    interval: 30s
+    input_series:
+      - series: 'sp_target_up{game="production"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: StrongholdGameTargetDown
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: StrongholdGameTargetDown
+        exp_alerts:
+          - exp_labels:
+              game: production
+              severity: critical
+            exp_annotations:
+              summary: Stronghold game target is not responding
+              description: The configured game /metrics endpoint has failed polling.
+  - name: recent event-loop alert uses seconds not historical milliseconds
+    interval: 30s
+    input_series:
+      - series: 'sp_event_loop_window_p99_seconds{game="production"}'
+        values: '0.3+0x10'
+      - series: 'sp_event_loop_p99_seconds_since_start{game="legacy"}'
+        values: '10+0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StrongholdEventLoopWindowP99High
+        exp_alerts:
+          - exp_labels:
+              game: production
+              severity: warning
+            exp_annotations:
+              summary: Stronghold event-loop p99 is high
+              description: Recent event-loop delay p99 has exceeded 250 ms.
+  - name: healthy worker and socket values do not trigger warnings
+    interval: 30s
+    input_series:
+      - series: 'sp_worker_queued{game="production"}'
+        values: '0+0x10'
+      - series: 'sp_socket_buffer_max_bytes{game="production"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StrongholdWorkerQueueGrowing
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: StrongholdSocketBackpressure
+        exp_alerts: []

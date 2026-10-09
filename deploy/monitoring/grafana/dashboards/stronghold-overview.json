@@ -1,0 +1,2025 @@
+{
+  "uid": "stronghold-platform",
+  "title": "Stronghold 平台：延迟、资源与稳定性",
+  "version": 1,
+  "schemaVersion": 39,
+  "editable": false,
+  "timezone": "browser",
+  "refresh": "10s",
+  "tags": [
+    "stronghold",
+    "websocket",
+    "latency"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "game",
+        "label": "游戏实例",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "stronghold-prometheus"
+        },
+        "query": {
+          "query": "label_values(sp_target_up, game)",
+          "refId": "game-variable"
+        },
+        "definition": "label_values(sp_target_up, game)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "在线、容量与采集状态",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "游戏采集可用",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "sp_target_up{game=~\"$game\"}",
+          "legendFormat": "{{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "连接数（不是对局人数）",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "sp_players_sockets{game=~\"$game\"}",
+          "legendFormat": "{{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "进行中对局",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "sp_players_matches{game=~\"$game\"}",
+          "legendFormat": "{{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "RSS（整个游戏进程）",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "sp_process_rss_bytes{game=~\"$game\"}",
+          "legendFormat": "{{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "最大 socket 积压",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "sp_socket_buffer_max_bytes{game=~\"$game\"}",
+          "legendFormat": "{{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1048576
+              },
+              {
+                "color": "red",
+                "value": 16777216
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "匿名 WS 探针可用",
+      "description": "可选 wsUrl。未配置显示未采集，不代表游戏故障。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "sp_ws_probe_up{game=~\"$game\"}",
+          "legendFormat": "{{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "连接、会话、房间与排队",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_players_sockets{game=~\"$game\"}",
+          "legendFormat": "socket {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_players_sessions{game=~\"$game\"}",
+          "legendFormat": "session {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_players_rooms{game=~\"$game\"}",
+          "legendFormat": "房间 {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_players_queued{game=~\"$game\"}",
+          "legendFormat": "排队 {{game}}",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "对局与座位计数",
+      "description": "真人/AI字段沿用游戏接口定义：房间非离开座位，含断线；不等于在线连接，不包含所有独立匹配成员。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_players_room_matches{game=~\"$game\"}",
+          "legendFormat": "房间对局 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_players_standalone_matches{game=~\"$game\"}",
+          "legendFormat": "公共匹配对局 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_players_humans{game=~\"$game\"}",
+          "legendFormat": "房间真人座位 {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_players_bots{game=~\"$game\"}",
+          "legendFormat": "房间AI座位 {{game}}",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_players_spectators{game=~\"$game\"}",
+          "legendFormat": "观战座位 {{game}}",
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "延迟：网络探针、服务端窗口与客户端边界",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "匿名 WS ping RTT / 建连耗时",
+      "description": "每10秒从监控容器新建匿名连接并ping一次，无hello/token/房间；监控点到目标的单次RTT，不是玩家RUM或操作状态p95。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_ws_probe_rtt_seconds{game=~\"$game\"} * 1000",
+          "legendFormat": "ping RTT {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_ws_probe_connect_seconds{game=~\"$game\"} * 1000",
+          "legendFormat": "建连（含可选 TLS）{{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "最近10秒事件循环 p95 / p99 / max",
+      "description": "游戏每10秒独立窗口采样，不因抓取重置。正常约20ms定时分辨率含在结果中；窗口可能因阻塞延长。新服务器才提供。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_event_loop_window_p95_seconds{game=~\"$game\"} * 1000",
+          "legendFormat": "p95 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_event_loop_window_p99_seconds{game=~\"$game\"} * 1000",
+          "legendFormat": "p99 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_event_loop_window_max_seconds{game=~\"$game\"} * 1000",
+          "legendFormat": "max {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "最近5分钟本机发送完成 p95 / p99",
+      "description": "有界桶插值估计；每64次发送采样。本机压缩/排队/发送回调成功，不代表客户端收到或操作状态真正到达。零样本无数据。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (game, le) (rate(sp_ws_send_completion_seconds_bucket{game=~\"$game\"}[5m]))) * 1000",
+          "legendFormat": "p95 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (game, le) (rate(sp_ws_send_completion_seconds_bucket{game=~\"$game\"}[5m]))) * 1000",
+          "legendFormat": "p99 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "最近5分钟处理耗时 p95（按消息）",
+      "description": "进入JS回调后同步处理的直方图估计；不包括进入回调前排队、网络、客户端重建。所有消息类型固定且有限。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 22,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (game, message, le) (rate(sp_ws_handler_seconds_bucket{game=~\"$game\"}[5m]))) * 1000",
+          "legendFormat": "{{game}} {{message}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "兼容旧服务器：累计延迟（sinceStart）",
+      "description": "启动以来累计，历史启动恢复卡顿会一直保留，不能当最近窗口；旧服务器可使用此面板。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_event_loop_p99_seconds_since_start{game=~\"$game\"} * 1000",
+          "legendFormat": "事件循环累计p99 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_event_loop_max_seconds_since_start{game=~\"$game\"} * 1000",
+          "legendFormat": "事件循环累计max {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_ws_send_completion_p95_upper_seconds_since_start{game=~\"$game\"} * 1000",
+          "legendFormat": "发送完成累计p95上界 {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "text",
+      "title": "尚未采集：玩家操作状态到达 p95",
+      "gridPos": {
+        "x": 12,
+        "y": 30,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**当前没有客户端 RUM 指标。**\n\n匿名 ping、handler耗时、本机发送完成都**不是**“操作发出 → 关联状态完成重建”的延迟。\n\n需另行实现匿名、采样、有限标签的客户端上报并测量；本套监控不上传玩家数据，也不伪造该指标。"
+      }
+    },
+    {
+      "id": 17,
+      "type": "row",
+      "title": "CPU、事件循环负荷、进程与Worker内存",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "游戏进程平均 CPU（100% = 1逻辑核）",
+      "description": "累计process.cpuUsage速率，含Worker/zlib；可大于100%。不是宿主机全核百分比或容器quota百分比。旧服务器无此指标，不能拿collector自身CPU代替。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "(rate(sp_process_cpu_user_seconds_total{game=~\"$game\"}[$__rate_interval]) + rate(sp_process_cpu_system_seconds_total{game=~\"$game\"}[$__rate_interval])) * 100",
+          "legendFormat": "{{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "rate(sp_process_cpu_user_seconds_total{game=~\"$game\"}[$__rate_interval]) * 100",
+          "legendFormat": "user {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "rate(sp_process_cpu_system_seconds_total{game=~\"$game\"}[$__rate_interval]) * 100",
+          "legendFormat": "system {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "事件循环忙碌比例（不是进程 CPU）",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_event_loop_window_utilization{game=~\"$game\"} * 100",
+          "legendFormat": "10秒窗口 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_event_loop_utilization_since_start{game=~\"$game\"} * 100",
+          "legendFormat": "启动累计 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "内存趋势（不能重复相加到 RSS）",
+      "description": "RSS已包含所有线程；Worker样本非同时刻，不构成瞬时总heap。不要使用RSS/在线数外推容量或仅凭高水位断言泄漏。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_process_rss_bytes{game=~\"$game\"}",
+          "legendFormat": "全进程RSS {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_main_heap_used_bytes{game=~\"$game\"}",
+          "legendFormat": "主线程heapUsed {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_main_heap_total_bytes{game=~\"$game\"}",
+          "legendFormat": "主线程heapTotal {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_persist_heap_used_bytes{game=~\"$game\"}",
+          "legendFormat": "持久化Worker heapUsed {{game}}",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_simulation_heap_sampled_bytes{game=~\"$game\"}",
+          "legendFormat": "模拟Worker最近样本之和 {{game}}",
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Worker 内存样本年龄 / 窗口年龄",
+      "description": "Worker样本可能来自任务完成时，空闲Worker旧样本不等于监控失败。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 47,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_simulation_memory_oldest_sample_age_seconds{game=~\"$game\"}",
+          "legendFormat": "模拟最旧样本 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "time() - sp_persist_memory_sample_timestamp_seconds{game=~\"$game\"}",
+          "legendFormat": "持久化样本 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_event_loop_window_age_seconds{game=~\"$game\"}",
+          "legendFormat": "事件循环窗口 {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 22,
+      "type": "row",
+      "title": "吞吐、背压、Worker与持久化",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 55,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "WS应用正文速率（压缩前，非公网流量）",
+      "description": "游戏当前没有导出压缩后socket字节。此图不能当作出口带宽。无需在线hook ws私有发送实现。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "rate(sp_ws_sent_application_bytes_total{game=~\"$game\"}[$__rate_interval])",
+          "legendFormat": "发送压缩前 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "rate(sp_ws_received_application_bytes_total{game=~\"$game\"}[$__rate_interval])",
+          "legendFormat": "接收解压后 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "WS消息帧速率",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "rate(sp_ws_sent_frames_total{game=~\"$game\"}[$__rate_interval])",
+          "legendFormat": "发送帧/s {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "rate(sp_ws_received_frames_total{game=~\"$game\"}[$__rate_interval])",
+          "legendFormat": "接收帧/s {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Socket积压",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_socket_buffer_total_bytes{game=~\"$game\"}",
+          "legendFormat": "总积压 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_socket_buffer_max_bytes{game=~\"$game\"}",
+          "legendFormat": "单socket最大 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "背压事件与Worker失败（5分钟增量）",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "increase(sp_ws_dropped_snapshots_total{game=~\"$game\"}[5m])",
+          "legendFormat": "丢弃快照 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "increase(sp_ws_slow_disconnects_total{game=~\"$game\"}[5m])",
+          "legendFormat": "背压断开 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "increase(sp_worker_failed_total{game=~\"$game\"}[5m])",
+          "legendFormat": "Worker失败 {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "increase(sp_worker_rejected_total{game=~\"$game\"}[5m])",
+          "legendFormat": "Worker拒绝 {{game}}",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "模拟Worker：线程、busy与queue",
+      "description": "未启用Worker无数据。扩大Worker数量前先核对排队趋势/CPU配额；busy=0单点不等于历史无拥堵。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_worker_size{game=~\"$game\"}",
+          "legendFormat": "配置容量 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_worker_busy{game=~\"$game\"}",
+          "legendFormat": "busy {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_worker_queued{game=~\"$game\"}",
+          "legendFormat": "queued {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_worker_queue_limit{game=~\"$game\"}",
+          "legendFormat": "queue上限 {{game}}",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Worker与持久化吞吐",
+      "description": "counter速率处理重启归零；存档无进行中对局时可能无写入，不能直接判断故障。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "rate(sp_worker_completed_total{game=~\"$game\"}[$__rate_interval])",
+          "legendFormat": "Worker完成/s {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "rate(sp_persist_writes_total{game=~\"$game\"}[$__rate_interval])",
+          "legendFormat": "存档写入/s {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "存档规模与缓存",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 80,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_persist_snapshot_bytes{game=~\"$game\"}",
+          "legendFormat": "存档JSON字节 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_static_gzip_bytes{game=~\"$game\"}",
+          "legendFormat": "静态gzip缓存 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "检查点 / Redis / Worker启用",
+      "description": "persist_enabled=1只代表配置，不能证明Redis可达。游戏未导出Redis操作延迟/错误计数。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 80,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_persist_checkpoints{game=~\"$game\"}",
+          "legendFormat": "检查点 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_persist_enabled{game=~\"$game\"}",
+          "legendFormat": "Redis启用0/1 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_worker_enabled{game=~\"$game\"}",
+          "legendFormat": "Worker启用0/1 {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 31,
+      "type": "row",
+      "title": "监控完整性与告警（先确认数据新鲜）",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 88,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "JSON抓取耗时与数据年龄",
+      "description": "失败时collector不保留旧游戏快照作为新值，单独维护target_up和errors。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 89,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_exporter_scrape_duration_seconds{game=~\"$game\"}",
+          "legendFormat": "JSON抓取秒 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_exporter_snapshot_age_seconds{game=~\"$game\"}",
+          "legendFormat": "距最近成功秒 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "新诊断可用 / collector在线",
+      "description": "旧服务器允许先部署此监控栈；升级游戏服务后才有新桶/CPU/窗口指标。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 89,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_latency_histograms_available{game=~\"$game\"}",
+          "legendFormat": "直方图桶0/1 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_process_cpu_available{game=~\"$game\"}",
+          "legendFormat": "进程CPU0/1 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_event_loop_window_available{game=~\"$game\"}",
+          "legendFormat": "10秒窗口0/1 {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "up{job=\"stronghold-exporter\"}",
+          "legendFormat": "Prometheus能抓collector0/1",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "告警状态",
+      "description": "Prometheus规则告警，可从Explore查询。没有Alertmanager/通知contact point时不会主动发邮件/消息。阈值为起点，不代表容量承诺。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 97,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "ALERTS{alertname=~\"Stronghold.*\",alertstate=\"firing\"}",
+          "legendFormat": "{{alertname}} {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未采集 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}

@@ -95,6 +95,8 @@
 
 - 状态增量通过 `hello.stateDelta: 1` 协商，仅用于 `m.public` / `m.private`；旧客户端保持原全量消息。新连接、重连及 `state.resync` 发送全量，补丁按 `base` 校验独立公共/私人基线，失败不派发部分状态，重同步限流后安静重试。基线仅在可靠帧成功入队后推进，不丢弃补丁、不改变确认时机；原全量结果回放仍可用，私人状态不跨玩家共享。源码 build 标识纳入 `shared/stateDelta.js`，生产随 Vite 网络模块打包。保留 `test/state-delta.test.js`、`test/state-delta-integration.test.js`；详见 `docs/STATE_DELTA.md`。性能验收看关联状态完成解码后的 p95 和失败率，按实际四人房间发送，不将全员合成广播视为完整对局容量；状态视图仍完整生成，不能声称已实现细粒度脏标记或压缩正文复用。
 
+- 持续监控配置位于 `deploy/monitoring/`，采用独立 JSON collector → Prometheus → Grafana，不把游戏 `/metrics` 改成文本格式或给 `/healthz` 增加诊断。保留诊断启动以来字段；新增进程CPU累计秒、独立10秒事件循环窗口及耗时累计桶/总和供近期速率/p95查询，多抓取者不重置窗口。collector只抓固定管理员目标，失败不伪装旧数据/零CPU；可选匿名WS ping探针不创建身份/对局，不当作玩家操作状态到达RUM。面板区分压缩前应用正文、全进程RSS、Worker旧样本、单核CPU百分比和本机发送完成；未采集的客户端状态延迟明确标注。Grafana默认仅绑定本机，真实targets/密码不入Git，不挂载Docker socket，不运行 `down -v`。验证 `test/monitoring-exporter.test.js` 及诊断/接口测试；文档以 `deploy/monitoring/README.md` 为准。
+
 - `/healthz` 保留 `ok`、`version`、`app`、`uptimeSec`、`build`。
 - 高频 `/healthz` 保留同步处理路径及每服务实例独立的短期统计快照、JSON 字节复用。稳定状态下最多每秒扫描一次房间/队列；房间、活跃队列对局或排队玩家数量变化时立即失效，连接数、会话数和运行时间及时更新，既有房间内部的座位/对局计数允许最多约 1 秒的快照延迟。过期使用单调时钟，不创建后台扫描定时器，失败返回 500 并重试，不返回旧快照掩盖错误。HTTP 仍为 `no-store`，GET/HEAD 内容长度、405、URL 长度限制和安全响应头保持不变；`/metrics` 的实时统计不复用或覆盖此快照。
 - 以下计数也保留在 `/healthz`：`sockets`、`sessions`、`rooms`、`matches`、`roomMatches`、`standaloneMatches`、`humans`、`bots`、`spectators`、`queued`。不要因精简接口删除这些字段；沿用现有统计含义。

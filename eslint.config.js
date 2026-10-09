@@ -44,6 +44,7 @@ const nodeFiles = [
   'shared/**/*.js',
   'tools/**/*.js',
   'tools/**/*.mjs',
+  'deploy/monitoring/exporter/**/*.mjs',
   'scripts/**/*.js',
   'scripts/**/*.mjs',
   'types/**/*.js',

@@ -38,6 +38,9 @@ logs/
 scripts/service.env.cmd
 .env
 .env.*
+deploy/monitoring/monitoring.env
+deploy/monitoring/exporter/targets.json
+deploy/monitoring/network.override.yml
 
 # --- OS / editor clutter ---------------------------------------------------------------------------
 .DS_Store

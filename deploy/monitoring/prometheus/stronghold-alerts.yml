@@ -1,0 +1,84 @@
+groups:
+  - name: stronghold-platform
+    interval: 30s
+    rules:
+      - alert: StrongholdMetricsExporterDown
+        expr: up{job="stronghold-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Stronghold metrics exporter is down
+          description: Prometheus cannot scrape the Stronghold monitoring exporter.
+
+      - alert: StrongholdGameTargetDown
+        expr: sp_target_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Stronghold game target is not responding
+          description: The configured game /metrics endpoint has failed polling.
+
+      - alert: StrongholdWebSocketProbeDown
+        expr: sp_ws_probe_up == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Stronghold synthetic WebSocket probe failed
+          description: The configured anonymous ping probe cannot connect or receive pong.
+
+      - alert: StrongholdCollectorStale
+        expr: sp_exporter_snapshot_age_seconds > 45
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Stronghold metrics snapshot is stale
+          description: The JSON collector has not obtained a successful game snapshot for 45 seconds.
+
+      - alert: StrongholdEventLoopWindowP99High
+        expr: sp_event_loop_window_p99_seconds > 0.25
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Stronghold event-loop p99 is high
+          description: Recent event-loop delay p99 has exceeded 250 ms.
+
+      - alert: StrongholdEventLoopWindowMaxVeryHigh
+        expr: sp_event_loop_window_max_seconds > 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Stronghold event loop has a severe stall
+          description: Recent event-loop maximum delay has exceeded 1 second.
+
+      - alert: StrongholdSocketBackpressure
+        expr: sp_socket_buffer_max_bytes > 1048576
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Stronghold WebSocket backpressure detected
+          description: At least one socket has more than 1 MiB queued.
+
+      - alert: StrongholdWorkerQueueGrowing
+        expr: sp_worker_queued > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Stronghold simulation worker queue is non-empty
+          description: Simulation work has been waiting in the shared worker queue.
+
+      - alert: StrongholdPersistenceWorkerMemoryHigh
+        expr: sp_persist_heap_used_bytes > 768 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Stronghold persistence worker heap is high
+          description: The persistence worker heap has exceeded 768 MiB.

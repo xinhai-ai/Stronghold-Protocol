@@ -22,3 +22,6 @@ scripts/service.env.cmd
 Thumbs.db
 .env
 .env.*
+deploy/monitoring/monitoring.env
+deploy/monitoring/exporter/targets.json
+deploy/monitoring/network.override.yml

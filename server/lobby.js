@@ -727,24 +727,23 @@ export class Lobby {
         roomCode, mode, difficulty, modeId: modeIdFor(mode, difficulty), seats, consoleEnabled: false, aiPicksLast: !!checkpoint.aiPicksLast,
         seed: Number(checkpoint.seed) >>> 0, matchNo: room ? Math.max(1, room.matchCount) : 1,
       }, {
+        created: (match) => this.attachQueuedWorker(ctx, room, match),
         send: (playerId, msg, encoded) => { if (ctx.live) return this.queueMatchSend(ctx, playerId, msg, encoded); return false; },
         broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
         end: (summary) => this.onQueuedMatchEnd(ctx, summary),
       }, checkpoint, departedPlayerIds);
-      ctx.match = match;
-      ctx.live = true;
-      this.activeQueueMatches.add(ctx);
-      if (room) { room.match = match; room.matchCtx = ctx; room.replay = null; }
-      for (const p of seats) if (!p.isBot && !p.left) {
-        const session = this.registry.byId(p.playerId);
-        if (session) session.activeMatchCtx = ctx;
+      if (ctx.disposed || room?.disposed || (room && room.matchCtx !== ctx)) {
+        await match.dispose();
+        return false;
       }
+      if (room) room.replay = null;
       if (this.completeRecoveredMatch(ctx, room)) return true;
       await match.invoke('flush', true);
       if (room && !room.disposed) this.broadcastState(room);
       return true;
     } catch (e) {
       this.log.error(`[match] ${roomCode} matchmaking Worker restore failed`, e);
+      if (room?.matchCtx === ctx) { room.match = null; room.matchCtx = null; room.matchKey = null; }
       this.disposeMatchCtx(ctx);
       return false;
     }
@@ -800,6 +799,7 @@ export class Lobby {
       if (humans.some((s) => this.queueByPlayer.has(s.playerId))) return fail(ERR.MATCHING);
       const players = room.seats.filter(Boolean).map((s) => ({ seat: s.seat, playerId: s.playerId, name: s.name,
         isBot: !!s.isBot, connected: s.connected !== false, loadout: s.isBot ? null : s.loadout || null,
+        ops: s.isBot ? null : s.ops || null,
         notOwned: s.isBot ? null : s.notOwned || null, diy: s.isBot ? null : s.diy || null }));
       const entry = this.makeQueueEntry({ mode, difficulty: room.difficulty, fillBots: !!fillBots, room, players });
       this.enqueueMatchEntry(entry);
@@ -940,8 +940,11 @@ export class Lobby {
             isBot: true, connected: true, loadout: null });
         }
         const owner = selected.find((entry) => entry.room) || first;
-        Promise.resolve(this.startQueuedMatch(owner, players, selected)).catch((e) => {
+        Promise.resolve(this.startQueuedMatch(owner, players, selected)).then((result) => {
+          if (result?.error) this.failedQueuedStart(selected);
+        }).catch((e) => {
           this.log.error(`[match] queued start failed: ${e?.message || e}`);
+          this.failedQueuedStart(selected);
         });
       }
       const waiting = bucket.filter((entry) => !entry.removed);
@@ -951,6 +954,18 @@ export class Lobby {
         this.broadcastQueueCounts(mode, difficulty);
       }
       if (!waiting.length) this.matchQueues.delete(key);
+    }
+  }
+
+  /** A rejected async launch must clear the client's old queue UI, without cancelling a newer ticket/game. */
+  failedQueuedStart(entries) {
+    for (const entry of entries) {
+      const players = entry.players.filter((p) => {
+        const session = this.registry.byId(p.playerId);
+        return !p.isBot && session && !this.activeMatchOf(session) && !session.matchQueue;
+      });
+      if (players.length) this.sendQueueState({ ...entry, players }, 'closed', 'start_failed');
+      if (entry.room && !entry.room.disposed && !entry.room.match) this.broadcastState(entry.room);
     }
   }
 
@@ -1377,6 +1392,7 @@ export class Lobby {
   }
 
   async startMatchWithWorker(room, key, checkpoint, { departedPlayerIds = [] } = {}) {
+    if (room.disposed || room.match) return fail(ERR.ROOM_STARTED);
     const host = room.seatOf(room.hostId);
     if (host && !checkpoint) host.ready = true;
     const seats = checkpoint
@@ -1400,26 +1416,34 @@ export class Lobby {
         seats, spectators: room.spectators.map((s) => s.playerId), consoleEnabled: !!room.consoleEnabled,
         seed, matchNo, aiPicksLast: !!room.aiPicksLast,
       }, {
+        created: (match) => {
+          ctx.match = match;
+          ctx.live = true;
+          room.match = match;
+          room.matchCtx = ctx;
+          room.matchKey = key;
+        },
         send: (playerId, msg, encoded) => { if (ctx.live) return this.matchSend(room, ctx, playerId, msg, encoded); return false; },
         broadcast: (msg) => { if (ctx.live) this.matchBroadcast(room, ctx, msg); },
         end: (summary) => this.onMatchEnd(room, ctx, summary),
       }, checkpoint, departedPlayerIds);
-      ctx.match = match;
-      room.match = match;
-      room.matchCtx = ctx;
-      room.matchKey = key;
+      if (ctx.disposed || room.disposed || room.matchCtx !== ctx) {
+        await match.dispose();
+        return fail(ERR.NOT_IN_ROOM, 'match initialization cancelled');
+      }
       room.replay = null;
       if (!checkpoint) room.matchCount++;
       ctx.live = true;
       this.broadcastState(room);
       if (checkpoint) {
+        if (this.completeRecoveredMatch(ctx, room)) return OK;
         match._lastPubJson = '';
         await match.invoke('flush', true);
         this.log.info(`[lobby] ${room.code} match #${room.matchCount} restored in Worker (${room.mode}/${room.difficulty})`);
       } else {
         this.log.info(`[lobby] ${room.code} match #${room.matchCount} starting in Worker (${room.mode}/${room.difficulty}, ${seats.length} seats, seed ${seed})`);
         await match.start();
-        this.notifyMatchStarted(room.code, match);
+        if (!ctx.ended && !ctx.disposed) this.notifyMatchStarted(room.code, match);
       }
       return OK;
     } catch (e) {
@@ -1520,6 +1544,18 @@ export class Lobby {
     return this.startQueuedMatchLocal(owner, players, selected);
   }
 
+  /** Reserve room and session ownership before the Worker init yields. */
+  attachQueuedWorker(ctx, room, match) {
+    ctx.match = match;
+    ctx.live = true;
+    this.activeQueueMatches.add(ctx);
+    if (room) { room.match = match; room.matchCtx = ctx; }
+    for (const p of ctx.members) if (!p.isBot && !p.left) {
+      const session = this.registry.byId(p.playerId);
+      if (session) session.activeMatchCtx = ctx;
+    }
+  }
+
   async startQueuedMatchWorker(owner, players, selected = [owner]) {
     const room = owner?.room || null;
     if (room && (room.disposed || room.match)) return fail(ERR.ROOM_STARTED);
@@ -1541,24 +1577,27 @@ export class Lobby {
         roomCode: matchCode, mode: owner.mode, difficulty: owner.difficulty, modeId: modeIdFor(owner.mode, owner.difficulty),
         seats, consoleEnabled: !!room?.consoleEnabled, aiPicksLast: !!room?.aiPicksLast, seed, matchNo: room ? room.matchCount + 1 : 1,
       }, {
+        created: (match) => {
+          this.attachQueuedWorker(ctx, room, match);
+          if (room) room.matchKey = this.registry.byId(room.hostId)?.limitKey || null;
+        },
         send: (playerId, msg, encoded) => { if (ctx.live) return this.queueMatchSend(ctx, playerId, msg, encoded); return false; },
         broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
         end: (summary) => this.onQueuedMatchEnd(ctx, summary),
       });
-      ctx.match = match;
-      this.activeQueueMatches.add(ctx);
-      for (const id of allHumanIds) {
-        const session = this.registry.byId(id);
-        if (session) session.activeMatchCtx = ctx;
+      if (ctx.disposed || ctx.ended || room?.disposed || (room && room.matchCtx !== ctx)
+        || !ctx.members.some((p) => !p.isBot && !p.left && this.registry.byId(p.playerId)?.activeMatchCtx === ctx)) {
+        this.disposeMatchCtx(ctx);
+        await match.dispose();
+        return fail(ERR.NOT_IN_ROOM, 'match initialization cancelled');
       }
       if (room) {
-        room.match = match; room.matchCtx = ctx; room.matchKey = this.registry.byId(room.hostId)?.limitKey || null;
         room.matchCount++; room.replay = null; this.broadcastState(room);
       }
       for (const entry of selected) this.sendQueueState(entry, 'matched');
       ctx.live = true;
       await match.start();
-      this.notifyMatchStarted(room?.code || `queue:${match.roomCode}`, match);
+      if (!ctx.ended && !ctx.disposed) this.notifyMatchStarted(room?.code || `queue:${match.roomCode}`, match);
       return OK;
     } catch (e) {
       this.log.error(`[match] ${matchCode} matchmaking Worker start failed`, e);
@@ -1597,6 +1636,7 @@ export class Lobby {
         modeId: modeIdFor(owner.mode, owner.difficulty),
         seats,
         consoleEnabled: !!room?.consoleEnabled,
+        aiPicksLast: !!room?.aiPicksLast,
         seed,
         matchNo: room ? room.matchCount + 1 : 1,
         data: this.safeData(), workerPool: this.workerPoolFor(matchCode), log: this.log, now: this.now,
@@ -1881,7 +1921,13 @@ export class Lobby {
     if (!ctx?.match) return undefined;
     const fn = ctx.match[method] || (method === 'onLeave' ? ctx.match.onDisconnect : null);
     if (typeof fn !== 'function') return undefined;
-    try { return fn.apply(ctx.match, args); } catch (e) {
+    try {
+      const result = fn.apply(ctx.match, args);
+      if (result && typeof result.then === 'function') {
+        result.catch((e) => this.log.error(`[lobby] ${ctx.match.roomCode || 'queue'} ${method} rejected`, e));
+      }
+      return result;
+    } catch (e) {
       this.log.error(`[lobby] ${ctx.match.roomCode || 'queue'} ${method} threw`, e);
       return undefined;
     }
@@ -1903,7 +1949,11 @@ export class Lobby {
     if (typeof fn !== 'function' && method === 'onLeave') fn = m.onDisconnect;
     if (typeof fn !== 'function') return undefined;
     try {
-      return fn.apply(m, args);
+      const result = fn.apply(m, args);
+      if (result && typeof result.then === 'function') {
+        result.catch((e) => this.log.error(`[lobby] ${room.code} match.${method} rejected`, e));
+      }
+      return result;
     } catch (e) {
       this.log.error(`[lobby] ${room.code} match.${method} threw`, e);
       return undefined;
@@ -1923,7 +1973,7 @@ export class Lobby {
     try { ctx.match?.dispose?.(); } catch (e) { this.log.error('[lobby] match.dispose threw', e); }
     const key = ctx.workerKey || ctx.match?.roomCode || ctx.room?.code;
     if (key && this.workerPool?.release) this.workerPool.release(key);
-    if (key && this.matchWorkerPool?.release) this.matchWorkerPool.release(key);
+    if (key && ctx.match && this.matchWorkerPool?.release) this.matchWorkerPool.release(key, ctx.match);
   }
 
   safeData() {

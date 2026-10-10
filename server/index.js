@@ -118,7 +118,7 @@ export async function startServer(opts = {}) {
   if (!Number.isInteger(matchWorkers) || matchWorkers < 0 || matchWorkers > 32) throw new RangeError('matchWorkers must be 0..32');
   const ownsMatchWorkerPool = opts.matchWorkerPool === undefined;
   const matchWorkerPool = ownsMatchWorkerPool && matchWorkers > 0
-    ? new MatchWorkerPool({ data, lanes: matchWorkers, log })
+    ? new MatchWorkerPool({ data, lanes: matchWorkers, log, timeoutMs: workerConfig.timeoutMs })
     : opts.matchWorkerPool || null;
   const { registry, lobby, network } = createSessionStack(opts, { data, log, workerPool, matchWorkerPool });
   // Resume the last state before listening: every reconnecting client is recognized by its token right away.

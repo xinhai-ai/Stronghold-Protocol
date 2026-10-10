@@ -19,14 +19,22 @@ const metaOf = (match) => ({
   _battleSeq: match._battleSeq,
   ended: !!match.ended,
   lastResultMsg: match.lastResultMsg || null,
+  ...(match.ended ? { public: match.publicView() } : {}),
   order: Array.isArray(match.order) ? match.order.map((p) => ({
     playerId: p.playerId, seat: p.seat, name: p.name, isBot: !!p.isBot, left: !!p.left, connected: !!p.connected,
   })) : [],
 });
 
-const emit = (event) => { try { parentPort.postMessage(event); } catch { /* parent is closing */ } };
+const emit = (event) => {
+  try { parentPort.postMessage(event); }
+  catch (error) {
+    // Never swallow an uncloneable command reply: answer with an error rather than timing out the whole lane.
+    if (event.requestId) throw error;
+    // Unsolicited callbacks are best effort while the parent is closing.
+  }
+};
 
-function makeOptions(key, input) {
+function makeOptions(key, instanceId, input, isReady) {
   const base = { ...(input || {}) };
   delete base.send;
   delete base.broadcast;
@@ -35,58 +43,72 @@ function makeOptions(key, input) {
   delete base.log;
   delete base.now;
   base.log = quiet;
-  base.send = (playerId, msg, encoded) => emit({ type: 'send', key, playerId, msg, encoded: encoded || null });
-  base.broadcast = (msg) => emit({ type: 'broadcast', key, msg });
-  base.onEnd = (summary) => emit({ type: 'end', key, summary, meta: metaOf(matchFor(key)) });
+  // Restore can legitimately finish a match before the parent has attached its context.
+  // Its final public/result travel in ready metadata instead of premature callbacks.
+  base.send = (playerId, msg, encoded) => { if (isReady()) emit({ type: 'send', key, instanceId, playerId, msg, encoded: encoded || null }); };
+  base.broadcast = (msg) => { if (isReady()) emit({ type: 'broadcast', key, instanceId, msg }); };
+  base.onEnd = (summary) => { if (isReady()) emit({ type: 'end', key, instanceId, summary, meta: metaOf(matchFor(key, instanceId)) }); };
   return base;
 }
 
-function matchFor(key) {
-  const m = matches.get(key);
-  if (!m) throw new Error(`unknown match ${key}`);
-  return m;
+function matchFor(key, instanceId) {
+  const entry = matches.get(instanceId);
+  if (!entry || entry.key !== key) throw new Error(`unknown match ${key}`);
+  return entry.match;
 }
 
-async function call(key, requestId, method, args = []) {
-  const match = matchFor(key);
+async function call(key, instanceId, requestId, method, args = []) {
+  const match = matchFor(key, instanceId);
   let value;
   if (method === 'snapshot') value = snapshotMatch(match);
   else if (method === 'capture') value = captureMatch(match);
-  else if (method === 'dispose') value = match.dispose?.();
+  else if (method === 'dispose') {
+    try { value = match.dispose?.(); }
+    finally { matches.delete(instanceId); }
+  }
   else {
     const fn = match[method];
     if (typeof fn !== 'function') throw new Error(`unknown Match method ${method}`);
     value = fn.apply(match, args);
   }
   if (value && typeof value.then === 'function') value = await value;
-  emit({ type: 'result', requestId, value: value && typeof value === 'object' ? value : value ?? null, meta: metaOf(match), key });
+  emit({ type: 'result', requestId, value: value && typeof value === 'object' ? value : value ?? null, meta: metaOf(match), key, instanceId });
 }
 
 parentPort.on('message', async (message) => {
   try {
     if (message.type === 'init') {
       const key = String(message.key);
-      const match = new Match(makeOptions(key, message.options));
-      if (message.checkpoint) {
-        const ok = restoreMatch(match, message.checkpoint, {
-          createRngFromState, log: quiet, bestEffort: true, departedPlayerIds: message.departedPlayerIds || [],
-        });
-        if (!ok) throw new Error('match checkpoint refused');
+      const instanceId = message.instanceId;
+      if (matches.has(instanceId)) throw new Error('match instance already initialized');
+      let ready = false;
+      const match = new Match(makeOptions(key, instanceId, message.options, () => ready));
+      matches.set(instanceId, { key, match });
+      try {
+        if (message.checkpoint) {
+          const ok = restoreMatch(match, message.checkpoint, {
+            createRngFromState, log: quiet, bestEffort: true, departedPlayerIds: message.departedPlayerIds || [],
+          });
+          if (!ok) throw new Error('match checkpoint refused');
+        }
+        ready = true;
+        emit({ type: 'ready', requestId: message.requestId, key, instanceId, meta: metaOf(match) });
+      } catch (error) {
+        try { match.dispose(); } finally { matches.delete(instanceId); }
+        throw error;
       }
-      matches.set(key, match);
-      emit({ type: 'ready', requestId: message.requestId, key, meta: metaOf(match) });
       return;
     }
     if (message.type === 'call') {
-      await call(String(message.key), message.requestId, message.method, message.args);
+      await call(String(message.key), message.instanceId, message.requestId, message.method, message.args);
       return;
     }
     if (message.type === 'shutdown') {
-      for (const match of matches.values()) { try { match.dispose?.(); } catch { /* ignore */ } }
+      for (const { match } of matches.values()) { try { match.dispose?.(); } catch { /* ignore */ } }
       matches.clear();
       process.exit(0);
     }
   } catch (error) {
-    emit({ type: 'error', requestId: message.requestId || null, key: message.key || null, error: String(error?.message || error) });
+    emit({ type: 'error', requestId: message.requestId || null, key: message.key || null, instanceId: message.instanceId, error: String(error?.message || error) });
   }
 });

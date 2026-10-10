@@ -162,3 +162,53 @@ test('unreadable Redis JSON is preserved instead of overwritten by periodic or s
     await probe.close();
   }
 });
+
+test('complete Worker matches preserve tokens and checkpoint state through three real Redis restarts',
+  { skip: !available && `no Redis at ${REDIS_URL}`, timeout: 30000 }, async (t) => {
+    const servers = [], clients = [];
+    const probe = store('worker-restarts');
+    t.after(async () => {
+      for (const c of clients) await c.close().catch(() => {});
+      for (const srv of servers) await srv.close().catch(() => {});
+      await probe.clear();
+      await probe.close();
+    });
+    const boot = async () => {
+      const srv = await startServer({ host: '127.0.0.1', port: 0, quiet: true, log: quietLog,
+        workers: 0, matchWorkers: 1, store: store('worker-restarts') });
+      servers.push(srv);
+      return srv;
+    };
+    const connect = async (srv) => {
+      const c = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`);
+      clients.push(c);
+      return c;
+    };
+    let srv = await boot();
+    let c = await connect(srv);
+    const identity = await c.hello('Worker Redis');
+    await c.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' });
+    const code = (await c.waitFor('room.state')).code;
+    await c.request({ t: 'room.start' }, 10000);
+    await c.waitFor('m.public', (m) => m.phase === 'INFO_CHECK');
+    const before = await srv.lobby.getRoom(code).match.snapshot();
+    let sequence = before._battleSeq;
+    for (let restart = 0; restart < 3; restart++) {
+      assert.equal(await srv.persister.flush('worker-restart'), true);
+      await c.close();
+      await srv.close();
+      assert.ok((await probe.load()).matches[code], 'the checkpoint really reached Redis');
+      srv = await boot();
+      c = await connect(srv);
+      const identityAfter = await c.hello('Worker Redis', identity.token);
+      assert.equal(identityAfter.resumed, true);
+      assert.equal(identityAfter.playerId, identity.playerId);
+      await c.waitFor('m.public', (m) => m.phase === 'INFO_CHECK');
+      const restored = await srv.lobby.getRoom(code).match.snapshot();
+      for (const key of ['seed', 'battlePrefix', 'rng', 'poolLeft', 'factions', 'disabledBonds', 'bannedChess', 'setupRevision']) {
+        assert.deepEqual(restored[key], before[key], key);
+      }
+      assert.ok(restored._battleSeq > sequence);
+      sequence = restored._battleSeq;
+    }
+  });

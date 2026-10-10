@@ -99,14 +99,16 @@ export function snapshotServer({ registry, lobby, matchDocs = null, now = Date.n
     for (const [code, doc] of matchDocs) if (doc) matches[code] = doc;
   }
   // Membership may change during combat, while the last safe game checkpoint stays in PREP.
-  for (const { key, match } of lobby.persistenceMatches()) {
+  for (const { key, match, ctx, room } of lobby.persistenceMatches()) {
     const previous = lobby.recoveryDocs?.get(key);
     if (previous) {
       const archiveKey = `superseded:${key}:${previous.checkpoint?.seed}:${previous.checkpoint?.savedAt}`;
       lobby.recoveryDocs.set(archiveKey, { ...previous, key, superseded: true });
       lobby.recoveryDocs.delete(key);
     }
-    const departed = (match.order || []).filter((p) => !p.isBot && p.left).map((p) => p.playerId);
+    // Main-thread membership is authoritative even if a Worker dies before acknowledging onLeave.
+    const departed = [...new Set([...(match.order || []), ...(ctx?.members || []), ...(room?.seats || [])]
+      .filter((p) => p && !p.isBot && p.left).map((p) => p.playerId))];
     if (departed.length) matchDepartures[key] = departed;
     if (Number.isInteger(match._battleSeq)) matchBattleSeq[key] = match._battleSeq;
   }

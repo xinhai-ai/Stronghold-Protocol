@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SimulationPool, workerSettings } from '../server/workers/pool.js';
+import { RoomWorkerPool } from '../server/workers/roomPool.js';
+import { MatchWorkerPool } from '../server/workers/matchPool.js';
 import { startServer } from '../server/index.js';
 import { TestClient } from './helpers/wsClient.js';
 import { DATA, makeMatch } from './match/harness.js';
@@ -35,6 +37,124 @@ test('worker settings honor CPU budget, disabled mode and bounded overrides', ()
   assert.equal(workerSettings({ SP_WORKERS: '-1' }, 8).size, 6);
   assert.deepEqual(workerSettings({ SP_WORKERS: '3', SP_WORKER_QUEUE: '9', SP_WORKER_TIMEOUT_MS: '456' }),
     { size: 3, maxQueue: 9, timeoutMs: 456 });
+});
+
+test('room worker lanes pin keys and expose per-lane load without sharing assignments', async (t) => {
+  const pool = new RoomWorkerPool({ data: DATA, lanes: 2, totalWorkers: 2, maxQueue: 4 });
+  t.after(() => pool.close());
+  const first = pool.assign('room:A');
+  const same = pool.assign('room:A');
+  const second = pool.assign('room:B');
+  assert.equal(first, same);
+  assert.notEqual(first, second);
+  let stats = pool.stats();
+  assert.equal(stats.kind, 'room-lanes');
+  assert.equal(stats.size, 2);
+  assert.equal(stats.lanes.length, 2);
+  assert.equal(stats.lanes.reduce((n, lane) => n + lane.rooms, 0), 2);
+  pool.release('room:A');
+  stats = pool.stats();
+  assert.equal(stats.lanes.reduce((n, lane) => n + lane.rooms, 0), 1);
+  assert.equal(stats.lanes.find((lane) => lane.rooms === 0)?.id, 0);
+});
+
+test('server can opt into room-pinned lanes while preserving the same /ws and match protocol', async (t) => {
+  const srv = await startServer({ host: '127.0.0.1', port: 0, quiet: true, workers: 2, roomWorkers: 2, store: null });
+  t.after(() => srv.close());
+  assert.equal(srv.workerPool.stats().kind, 'room-lanes');
+  assert.equal(srv.workerPool.stats().size, 2);
+  const c = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`);
+  t.after(() => c.close());
+  await c.hello('Lane Test');
+  await c.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' });
+  const room = await c.waitFor('room.state');
+  await c.request({ t: 'room.start' });
+  const match = srv.lobby.rooms.get(room.code).match;
+  assert.notEqual(match.workerPool, srv.workerPool);
+  assert.equal(srv.lobby.workerPool.stats().kind, 'room-lanes');
+});
+
+test('complete Match can run in a room Worker and still emit normal frames and snapshots', async (t) => {
+  const pool = new MatchWorkerPool({ data: DATA, lanes: 1 });
+  t.after(() => pool.close());
+  const frames = [];
+  const match = await pool.create('worker-match', {
+    roomCode: 'WORKER',
+    mode: 'solo',
+    difficulty: 'NORMAL',
+    modeId: 'mode_single_normal',
+    seed: 91,
+    matchNo: 1,
+    seats: [{ seat: 0, playerId: 'p_0', name: 'Worker', isBot: false, connected: true, loadout: null, notOwned: null, diy: null }],
+    spectators: [],
+    consoleEnabled: false,
+  }, {
+    broadcast: (msg) => frames.push(msg),
+    send: (_playerId, msg) => frames.push(msg),
+  });
+  await match.start();
+  assert.ok(frames.some((msg) => msg.t === 'm.public'));
+  assert.equal((await match.handle('p_0', { t: 'g.infoReady' })).ok, true);
+  assert.ok(match.publicView()?.phase);
+  assert.ok((await match.snapshot())?.v >= 1, 'the Worker returns the existing encoded checkpoint format');
+  await match.dispose();
+  assert.equal(pool.stats().rooms, 1, 'pool retains the proxy until the owner releases it');
+  pool.release('worker-match');
+  assert.equal(pool.stats().rooms, 0);
+});
+
+test('server can route a room Match to a Worker while keeping /ws and persistence-shaped snapshots', async (t) => {
+  const srv = await startServer({ host: '127.0.0.1', port: 0, quiet: true, workers: 0, matchWorkers: 1, store: null });
+  t.after(() => srv.close());
+  assert.equal(srv.matchWorkerPool.stats().kind, 'match-workers');
+  const c = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`);
+  t.after(() => c.close());
+  await c.hello('Remote Match');
+  await c.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' });
+  const room = await c.waitFor('room.state');
+  await c.request({ t: 'room.start' });
+  const running = srv.lobby.rooms.get(room.code).match;
+  assert.equal(running.remote, true);
+  await c.waitFor('m.public', (m) => m.phase === 'INFO_CHECK');
+  await c.request({ t: 'g.infoReady' });
+  assert.ok(running.publicView()?.phase);
+  const snapshot = await running.snapshot();
+  assert.equal(snapshot?.v, 1);
+});
+
+test('room Worker checkpoints use the existing persistence document and restore after restart', async (t) => {
+  class MemoryStore {
+    constructor() { this.doc = null; }
+    async load() { return this.doc ? structuredClone(this.doc) : null; }
+    async save(doc) { this.doc = structuredClone(doc); return true; }
+    async clear() { this.doc = null; }
+    async close() {}
+    get label() { return 'memory'; }
+  }
+  const store = new MemoryStore();
+  const servers = [];
+  t.after(async () => { for (const srv of servers) await srv.close().catch(() => {}); });
+  const boot = async () => {
+    const srv = await startServer({ host: '127.0.0.1', port: 0, quiet: true, workers: 0, matchWorkers: 1, store });
+    servers.push(srv);
+    return srv;
+  };
+  const first = await boot();
+  const c = await TestClient.connect(`ws://127.0.0.1:${first.port}/ws`);
+  await c.hello('Persist');
+  await c.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' });
+  const room = await c.waitFor('room.state');
+  await c.request({ t: 'room.start' });
+  await c.waitFor('m.public', (m) => m.phase === 'INFO_CHECK');
+  await first.persister.checkpointMatches();
+  await first.persister.flush('worker-test');
+  assert.ok(Object.keys(store.doc?.matches || {}).includes(room.code));
+  await c.close();
+  await first.close();
+  const second = await boot();
+  assert.equal(second.lobby.rooms.has(room.code), true);
+  const restored = second.lobby.rooms.get(room.code).match;
+  assert.equal(restored?.remote, true, `${restored?.constructor?.name || 'none'} workerRooms=${second.matchWorkerPool?.stats().rooms}`);
 });
 
 test('bounded queue, priority, queued cancellation, and thread reuse', async (t) => {

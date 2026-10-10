@@ -234,6 +234,15 @@ export function restoreServer({ doc, registry, lobby, now = Date.now(), log = no
   }
   const ordered = [...matches].sort(([ak, a], [bk, b]) => Number(Object.hasOwn(retained, ak)) - Number(Object.hasOwn(retained, bk))
     || (Number(b?.savedAt) || 0) - (Number(a?.savedAt) || 0));
+  const pendingRestores = [];
+  const deferMatch = (key, raw) => {
+    stats.deferredMatches++;
+    const ids = new Set(Array.isArray(raw.players) ? raw.players.map((p) => p?.playerId) : []);
+    lobby.recoveryDocs?.set(key, { checkpoint: raw, room: roomDocs.get(key) || null,
+      sessions: [...sessionDocs.values()].filter((s) => ids.has(s.playerId)), departedPlayerIds: departures(key),
+      battleSeq: Number(doc.matchBattleSeq?.[key]) || Number(retained[key]?.battleSeq) || 0 });
+    log.warn?.(`[persist] ${key}: checkpoint retained for a later recovery attempt`);
+  };
   for (const [key, raw] of ordered) {
     if (!raw) continue;
     let restored = false;
@@ -245,17 +254,16 @@ export function restoreServer({ doc, registry, lobby, now = Date.now(), log = no
       restored = key.startsWith('queue:') ? lobby.restoreQueuedMatch(checkpoint, opts)
         : !!room && lobby.restoreMatch(room, checkpoint, { ...opts, queue: roomDocs.get(key)?.queueMatch === true });
     } catch (e) { log.warn?.(`[persist] ${key}: match restore failed (${e.message}); other matches continue`); }
-    if (restored) { stats.matches++; lobby.recoveryDocs?.delete(key); }
-    else {
-      stats.deferredMatches++;
-      const ids = new Set(Array.isArray(raw.players) ? raw.players.map((p) => p?.playerId) : []);
-      lobby.recoveryDocs?.set(key, { checkpoint: raw, room: roomDocs.get(key) || null,
-        sessions: [...sessionDocs.values()].filter((s) => ids.has(s.playerId)), departedPlayerIds: departures(key),
-        battleSeq: Number(doc.matchBattleSeq?.[key]) || Number(retained[key]?.battleSeq) || 0 });
-      log.warn?.(`[persist] ${key}: checkpoint retained for a later recovery attempt`);
-    }
+    if (restored && typeof restored.then === 'function') {
+      pendingRestores.push(Promise.resolve(restored).then((ok) => {
+        if (ok) { stats.matches++; lobby.recoveryDocs?.delete(key); }
+        else deferMatch(key, raw);
+      }).catch(() => deferMatch(key, raw)));
+    } else if (restored) { stats.matches++; lobby.recoveryDocs?.delete(key); }
+    else deferMatch(key, raw);
   }
   stats.ok = true;
+  if (pendingRestores.length) stats.ready = Promise.all(pendingRestores).then(() => stats);
   return stats;
 }
 
@@ -329,7 +337,8 @@ export class Persister {
     const doc = await this.store.load({ attempts: 1 });
     if (!doc && ['unavailable', 'invalid'].includes(this.store.loadState)) return false;
     if (doc) {
-      const stats = restoreServer({ doc, registry: this.registry, lobby: this.lobby, now: this.now(), log: this.log });
+      const initialStats = restoreServer({ doc, registry: this.registry, lobby: this.lobby, now: this.now(), log: this.log });
+      const stats = initialStats.ready ? await initialStats.ready : initialStats;
       if (!stats.ok) return false;
       await this.seed(doc);
       this.log.info?.(`[persist] deferred state loaded (${stats.matches} match(es), ${stats.deferredMatches} checkpoint(s) retained)`);
@@ -374,7 +383,9 @@ export class Persister {
 
   async checkpoint(item) {
     try {
-      const capture = captureMatch(item.match);
+      const capture = typeof item.match.captureSnapshot === 'function'
+        ? await item.match.captureSnapshot()
+        : captureMatch(item.match);
       if (!capture) return false;
       if (!this.generations.has(item.match)) this.generations.set(item.match, ++this.generationSeq);
       await this.encoder.request('checkpoint', { key: item.key, generation: this.generations.get(item.match), capture });

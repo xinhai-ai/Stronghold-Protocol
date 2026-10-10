@@ -814,6 +814,20 @@ export class Network {
       this.log.error(`[net] handler crashed on ${msg.t}`, e);
       res = { error: ERR.INTERNAL };
     }
+    if (res && typeof res.then === 'function') {
+      Promise.resolve(res).then(
+        (result) => this.replyHandlerResult(conn, msg, rid, result),
+        (err) => {
+          this.log.error(`[net] async handler failed on ${msg.t}`, err);
+          this.replyHandlerResult(conn, msg, rid, { error: ERR.INTERNAL });
+        },
+      );
+      return;
+    }
+    this.replyHandlerResult(conn, msg, rid, res);
+  }
+
+  replyHandlerResult(conn, msg, rid, res) {
     if (res && res.error) {
       // fire-and-forget battle progress (no rid) that reached no running match — the match just ended, the room went
       // back to the lobby — is stale, not a client mistake: never answered (DESIGN §14; a rid-less error frame would

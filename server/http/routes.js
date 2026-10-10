@@ -108,13 +108,14 @@ export function createRequestHandler({ serveStatic, health, serveApi = null, dia
     }
     if (parts.rawPath === '/metrics') {
       const { network, lobby } = health;
-      const { persister, workerPool, announcements, wsCompression, assetsCdn, dataCdn, serveStatic } = diagnostics;
+      const { persister, workerPool, matchWorkerPool, announcements, wsCompression, assetsCdn, dataCdn, serveStatic } = diagnostics;
       const socketUsage = network.usage();
       sendJson(req, res, 200, {
         ...healthReport(health),
         persist: persister ? { redis: true, writes: persister.writes, checkpoints: persister.checkpointKeys.size,
           snapshotBytes: persister.encoder.seed?.bytes.byteLength || 0, workerMemory: persister.encoder.memory } : null,
         workers: workerPool?.stats() || null,
+        ...(matchWorkerPool ? { matchWorkers: matchWorkerPool.stats() } : {}),
         announcements: announcements.stats(),
         // rss is process-wide (all Workers); other counters describe this main thread, in bytes.
         memory: process.memoryUsage(),

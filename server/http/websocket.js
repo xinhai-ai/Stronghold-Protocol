@@ -24,7 +24,7 @@ const perNetwork = (n) => Number.isFinite(n) && n > 0 ? String(n) : 'unlimited';
  * @param {{ data: object, log: object }} deps the game data the lobby's matches use, the logger
  * @returns {{ registry: SessionRegistry, lobby: Lobby, network: Network }}
  */
-export function createSessionStack(opts, { data, log, workerPool }) {
+export function createSessionStack(opts, { data, log, workerPool, matchWorkerPool = null }) {
   const netOptions = netOptionsFrom(opts);
   const lobbyOptions = lobbyOptionsFrom(opts);
   // Limit overrides (docs/DEPLOY.md §3.4): an explicit startServer option wins, then the environment, then the code
@@ -43,7 +43,10 @@ export function createSessionStack(opts, { data, log, workerPool }) {
   log.info(`[http] limits: rooms ${lobbyOptions.maxRooms} (${perNetwork(lobbyOptions.maxRoomsPerAddr)}/network), matches ${perNetwork(lobbyOptions.maxMatchesPerAddr)}/network, sockets ${netOptions.maxConnections} (${perNetwork(netOptions.maxConnectionsPerAddr)}/network)`);
   log.info(`[match] tuning: combat ${parseCombat(process.env.SP_COMBAT)}, verify ${parseVerify(process.env.SP_VERIFY)}, bot rehearsal ${parseBotRehearsal(process.env.SP_BOT_REHEARSAL)} (docs/DEPLOY.md §3.4)`);
   const registry = new SessionRegistry({ reconnectWindowMs: netOptions.reconnectWindowMs ?? NET_DEFAULTS.reconnectWindowMs });
-  const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions, workerPool });
+  const lobby = new Lobby({
+    registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions,
+    workerPool, matchWorkerPool,
+  });
   const network = new Network({ registry, handler: lobby, log, options: netOptions });
   return { registry, lobby, network };
 }

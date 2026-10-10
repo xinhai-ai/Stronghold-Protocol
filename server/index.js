@@ -26,6 +26,8 @@ import { parseAssetCdn, parseEnvLimit, parseWsCompression } from './http/config.
 import { openStoreFromEnv } from './redis.js';
 import { Persister, restoreServer, SAVE_MS } from './persist.js';
 import { SimulationPool, workerSettings } from './workers/pool.js';
+import { RoomWorkerPool } from './workers/roomPool.js';
+import { MatchWorkerPool } from './workers/matchPool.js';
 import { Announcements } from './announcements.js';
 import { createPublicApi } from './publicApi.js';
 import { sendJson, sendError } from './http/common.js';
@@ -61,7 +63,7 @@ export {
  *   maxConnectionsPerAddr?: number, maxRoomsPerAddr?: number, maxMatchesPerAddr?: number, resyncMinGapMs?: number,
  *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number,
  *   store?: object | null, resume?: boolean, saveMs?: number, assetsCdn?: string, dataCdn?: string,
- *   workers?: number, workerQueue?: number, workerTimeoutMs?: number, workerPool?: SimulationPool | null,
+ *   workers?: number, roomWorkers?: number, matchWorkers?: number, workerQueue?: number, workerTimeoutMs?: number, workerPool?: SimulationPool | null,
  *   announcementsFile?: string | null, announcementPollMs?: number, wsCompression?: boolean, clientBuild?: boolean,
  * }} [opts]
  * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: import('ws').WebSocketServer,
@@ -100,15 +102,33 @@ export async function startServer(opts = {}) {
   if (!Number.isInteger(workerConfig.size) || workerConfig.size < 0 || workerConfig.size > 32) {
     throw new RangeError('workers must be 0..32');
   }
-  const workerPool = ownsWorkerPool ? (workerConfig.size > 0 ? new SimulationPool({ data, ...workerConfig }) : null) : opts.workerPool;
-  const { registry, lobby, network } = createSessionStack(opts, { data, log, workerPool });
+  const rawRoomWorkers = opts.roomWorkers ?? process.env.SP_ROOM_WORKERS;
+  const roomWorkers = rawRoomWorkers == null || String(rawRoomWorkers).trim() === '' ? 0 : Number(rawRoomWorkers);
+  if (!Number.isInteger(roomWorkers) || roomWorkers < 0 || roomWorkers > 32) throw new RangeError('roomWorkers must be 0..32');
+  if (roomWorkers > workerConfig.size) throw new RangeError('roomWorkers cannot exceed workers');
+  const workerPool = ownsWorkerPool
+    ? (workerConfig.size > 0
+      ? (roomWorkers > 0
+        ? new RoomWorkerPool({ data, lanes: roomWorkers, totalWorkers: workerConfig.size, maxQueue: workerConfig.maxQueue, timeoutMs: workerConfig.timeoutMs })
+        : new SimulationPool({ data, ...workerConfig }))
+      : null)
+      : opts.workerPool;
+  const rawMatchWorkers = opts.matchWorkers ?? process.env.SP_MATCH_WORKERS;
+  const matchWorkers = rawMatchWorkers == null || String(rawMatchWorkers).trim() === '' ? 0 : Number(rawMatchWorkers);
+  if (!Number.isInteger(matchWorkers) || matchWorkers < 0 || matchWorkers > 32) throw new RangeError('matchWorkers must be 0..32');
+  const ownsMatchWorkerPool = opts.matchWorkerPool === undefined;
+  const matchWorkerPool = ownsMatchWorkerPool && matchWorkers > 0
+    ? new MatchWorkerPool({ data, lanes: matchWorkers, log })
+    : opts.matchWorkerPool || null;
+  const { registry, lobby, network } = createSessionStack(opts, { data, log, workerPool, matchWorkerPool });
   // Resume the last state before listening: every reconnecting client is recognized by its token right away.
   const persister = store ? new Persister({ store, registry, lobby, log, now: opts.now, saveMs }) : null;
   if (store && opts.resume !== false) {
     try {
       const doc = await store.load();
       if (doc) {
-        const stats = restoreServer({ doc, registry, lobby, log, now: Date.now() });
+        const initialStats = restoreServer({ doc, registry, lobby, log, now: Date.now() });
+        const stats = initialStats.ready ? await initialStats.ready : initialStats;
         if (stats.ok) {
           await persister.seed(doc);
           log.info(`[persist] state loaded (${stats.sessions} session(s), ${stats.rooms} room(s), ${stats.matches} match(es), ${stats.expired} expired${stats.droppedSeats ? `, ${stats.droppedSeats} seat(s) dropped` : ''}${stats.deferredMatches ? `, ${stats.deferredMatches} checkpoint(s) retained` : ''})`);
@@ -144,7 +164,8 @@ export async function startServer(opts = {}) {
   resetBuildTag();
   buildTag(ROOT, { clientBuild });
 
-  const server = http.createServer(createRequestHandler({ serveStatic, health: { startedAt, network, registry, lobby }, serveApi, diagnostics: { persister, workerPool, announcements, wsCompression, assetsCdn, dataCdn, serveStatic }, log }));
+  const server = http.createServer(createRequestHandler({ serveStatic, health: { startedAt, network, registry, lobby }, serveApi,
+    diagnostics: { persister, workerPool, matchWorkerPool, announcements, wsCompression, assetsCdn, dataCdn, serveStatic }, log }));
   server.on('clientError', answerClientError);
   const wss = attachWebSocket(server, { network, log, wsCompression, announcements });
 
@@ -163,6 +184,7 @@ export async function startServer(opts = {}) {
     await persister?.encoder.close();
     lobby.shutdown('shutdown');
     if (ownsWorkerPool) await workerPool?.close();
+    if (ownsMatchWorkerPool) await matchWorkerPool?.close();
     throw e;
   }
   server.on('error', (e) => log.error('[http] server error', e));
@@ -188,6 +210,7 @@ export async function startServer(opts = {}) {
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       network.close();
       if (ownsWorkerPool) await workerPool?.close();
+      if (ownsMatchWorkerPool) await matchWorkerPool?.close();
       await new Promise((resolve) => {
         server.close(() => resolve());
         server.closeIdleConnections?.();
@@ -199,7 +222,8 @@ export async function startServer(opts = {}) {
     return closing;
   }
 
-  return { port: actualPort, host, url, server, wss, lobby, network, registry, packs, store: store || null, persister, workerPool, announcements, close };
+  return { port: actualPort, host, url, server, wss, lobby, network, registry, packs, store: store || null, persister,
+    workerPool, matchWorkerPool, announcements, close };
 }
 
 // `node server/index.js` / npm start: listen, print the banner, stop on SIGINT / SIGTERM (http/boot.js).

@@ -2,6 +2,7 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { encodeMatchCapture } from '../match/snapshot.js';
 import { memorySample } from './memory.js';
+import { deserialize } from 'node:v8';
 
 const checkpoints = new Map();
 function seed(doc, entries) {
@@ -21,8 +22,9 @@ parentPort.on('message', ({ id, type, payload }) => {
       seed(payload.doc, payload.entries);
       const bytes = new TextEncoder().encode(JSON.stringify(payload.doc));
       parentPort.postMessage({ id, bytes, memory: memorySample() }, [bytes.buffer]);
-    } else if (type === 'checkpoint') {
-      const checkpoint = encodeMatchCapture(payload.capture);
+    } else if (type === 'checkpoint' || type === 'checkpointBytes') {
+      const capture = type === 'checkpointBytes' ? deserialize(payload.bytes) : payload.capture;
+      const checkpoint = encodeMatchCapture(capture);
       if (!checkpoint) throw new Error('match checkpoint could not be encoded');
       checkpoints.set(payload.key, { generation: payload.generation, checkpoint });
       parentPort.postMessage({ id, memory: memorySample() });

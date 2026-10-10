@@ -269,8 +269,14 @@ test('explicit name rejection returns to editable title, without clearing tokens
   assert.equal(entered, false); assert.equal(selectRoute(state.get()), 'title');
   assert.equal(state.get().room.code, 'ABCD'); assert.equal(state.get().match.public.phase, 'PREP');
   state.patch('session', { entered: true });
-  assert.equal(returnToTitleAfterNameReview({ code: ERR.NAME_REJECTED }, { status: 'online' }, identity, state), false);
-  assert.equal(state.get().session.entered, true);
+  assert.equal(returnToTitleAfterNameReview({ code: ERR.NAME_REJECTED }, { status: 'online' }, identity, state), true);
+  assert.equal(state.get().session.entered, false);
+  state.patch('session', { entered: true });
+  for (const code of [ERR.CHAT_REJECTED, ERR.RATE, ERR.INTERNAL]) {
+    assert.equal(returnToTitleAfterNameReview({ code }, { status: 'connected' }, identity, state), false);
+    assert.equal(state.get().session.entered, true);
+  }
+  assert.equal(returnToTitleAfterNameReview({ code: ERR.BAD_MSG }, { status: 'online' }, identity, state), false);
   assert.equal(returnToTitleAfterNameReview({ code: ERR.INTERNAL }, { status: 'connected' }, identity, state), false);
 });
 
@@ -281,6 +287,47 @@ test('server recheck rejection after preapproval also preserves accepted session
   net.setName('新名字'); await turn(); const rename = ws.sent.at(-1);
   ws.onmessage({ data: JSON.stringify({ t: 'error', rid: rename.rid, code: ERR.NAME_REJECTED }) });
   assert.equal(net.status, 'online'); assert.equal(net.name, '博士'); assert.equal(net.serverName, '博士');
+});
+
+test('online rename rejection returns to title without leaving the accepted session; retry and chat rejection stay independent', async (t) => {
+  const { returnToTitleAfterNameReview } = await import('../public/js/screens/title.js');
+  const { createStore, selectRoute } = await import('../public/js/store.js');
+  const { net, ws } = client(t);
+  const first = ws.sent.find((m) => m.t === 'hello');
+  ws.onmessage({ data: JSON.stringify({ t: 'welcome', rid: first.rid, playerId: 'p1', name: '博士', token: 'token' }) });
+  const room = { code: 'ABCD', inMatch: true }, match = { public: { phase: 'PREP' } };
+  const state = createStore({ session: { entered: true }, me: { name: '博士', token: 'token', playerId: 'p1' }, room, match });
+  let entered = true;
+  const identity = { setEntered(value) { entered = value; } };
+  net.on('helloError', (error) => returnToTitleAfterNameReview(error, net, identity, state));
+  net.setName('不可用名称');
+  const rename = ws.sent.findLast((m) => m.t === 'hello');
+  ws.onmessage({ data: JSON.stringify({ t: 'error', rid: rename.rid, code: ERR.NAME_REJECTED }) });
+  assert.equal(selectRoute(state.get()), 'title');
+  assert.equal(entered, false);
+  assert.equal(net.status, 'online');
+  assert.equal(net.name, '博士');
+  assert.equal(state.get().me.token, 'token');
+  assert.equal(state.get().room, room);
+  assert.equal(state.get().match, match);
+  assert.ok(!ws.sent.some((m) => m.t === 'g.leave' || m.t === 'room.leave'));
+  // Explicitly entering again, not a reconnect loop, can retry a different name with the same token.
+  state.patch('session', { entered: true });
+  identity.setEntered(true);
+  net.setName('可用名称');
+  const retry = ws.sent.findLast((m) => m.t === 'hello');
+  assert.equal(retry.token, 'token');
+  ws.onmessage({ data: JSON.stringify({ t: 'welcome', rid: retry.rid, playerId: 'p1', name: '可用名称', token: 'token' }) });
+  assert.equal(net.status, 'online');
+  assert.equal(selectRoute(state.get()), 'game');
+  // Ordinary/chat errors never pass through the name-rejection route.
+  const chat = net.request('g.chat', { text: '消息' });
+  const refused = assert.rejects(chat, (error) => error.code === ERR.CHAT_REJECTED);
+  const request = ws.sent.findLast((m) => m.t === 'g.chat');
+  ws.onmessage({ data: JSON.stringify({ t: 'error', rid: request.rid, code: ERR.CHAT_REJECTED }) });
+  await refused;
+  assert.equal(selectRoute(state.get()), 'game');
+  assert.equal(entered, true);
 });
 
 

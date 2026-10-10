@@ -88,11 +88,12 @@ export function enterSession(rawName) {
   return true;
 }
 
-/** A failed name check returns to the editable title; do not clear reconnect tokens/room state. */
+/** Explicit rejection always returns to the editable title, even if a rename preserved the accepted session. */
 export function returnToTitleAfterNameReview(error, connection = net, sessionIdentity = identity, state = store) {
-  if (connection.status === 'online' || !['NAME_REJECTED', 'BAD_MSG'].includes(error?.code)) return false;
+  if (error?.code !== 'NAME_REJECTED' && !(error?.code === 'BAD_MSG' && connection.status !== 'online')) return false;
   sessionIdentity.setEntered(false);
   state.patch('session', { entered: false });
+  state.patch('ui', { restoring: false });
   return true;
 }
 

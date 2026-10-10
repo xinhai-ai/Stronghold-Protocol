@@ -255,22 +255,48 @@ export function localPathFor(url, publicDir, cdnBase = '') {
 /**
  * The served resource manifest, built from the data directory and cached until one of its sources changes.
  * @param {{ dataDir: string, publicDir: string, cdnBase?: string, rewrite?: (v: any) => any,
- *           statFile?: (p: string) => Promise<{ isFile(): boolean, size: number }>, log?: any }} opts
+ *           statFile?: (p: string) => Promise<{ isFile(): boolean, size: number, mtimeMs: number }>,
+ *           readFile?: typeof fsp.readFile, log?: any }} opts
  */
-export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite = (v) => v, statFile = (p) => fsp.stat(p), log = null } = {}) {
-  /** @type {{ key: string, body: Buffer, gzip: Buffer, etag: string, mtimeMs: number, manifest: any } | null} */
+export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite = (v) => v,
+  statFile = (p) => fsp.stat(p), readFile = fsp.readFile, log = null } = {}) {
+  /** @type {{ key: string, sourceKey: string, tileFiles: { url: string }[], body: Buffer, gzip: Buffer,
+   *   etag: string, mtimeMs: number, manifest: any } | null} */
   let cache = null;
+  let pending = null, generation = 0;
 
-  async function readJson(name) {
+  async function sourceFile(name) {
     const file = path.join(dataDir, name);
     try {
       const stat = await statFile(file);
       if (!stat.isFile()) return null;
-      return { doc: JSON.parse(await fsp.readFile(file, 'utf8')), mtimeMs: stat.mtimeMs, size: stat.size };
+      return { file, mtimeMs: stat.mtimeMs, size: stat.size };
     } catch (e) {
       if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return null;
       throw e;
     }
+  }
+
+  const stamp = (source) => source ? `${source.mtimeMs}:${source.size}` : '-';
+  async function readJson(source) {
+    if (!source) return null;
+    try { return { ...source, doc: JSON.parse(await readFile(source.file, 'utf8')) }; }
+    catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+      throw error;
+    }
+  }
+  async function tileSources(files) {
+    return Promise.all(files.map(async (file) => {
+      const abs = localPathFor(file.url, publicDir, cdnBase);
+      try {
+        const stat = abs && await statFile(abs);
+        return stat?.isFile() ? { url: file.url, abs, stamp: stamp(stat) } : null;
+      } catch (error) {
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+        throw error;
+      }
+    }));
   }
 
   /** File sizes of the files present on disk (bounded concurrency: ~4 000 stats of a real install). */
@@ -291,27 +317,27 @@ export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite 
     return sizes;
   }
 
-  async function build() {
-    const assets = await readJson('assets.json');
-    const local = await readJson('local-assets.json');
-    const hashesDoc = await readJson(ASSET_HASHES_FILE);
+  async function build(epoch) {
+    const previous = cache;
+    const sources = await Promise.all(['assets.json', 'local-assets.json', ASSET_HASHES_FILE].map(sourceFile));
+    const sourceKey = [...sources.map(stamp), cdnBase].join('|');
+    // Cache hits only stat the source files and the already-discovered board companions.
+    // Keep missing companions in tileFiles so creation, not just edits/deletion, invalidates the cache.
+    if (previous && previous.sourceKey === sourceKey) {
+      const tiles = await tileSources(previous.tileFiles);
+      const key = [sourceKey, ...tiles.map((file) => file?.stamp || '-')].join('|');
+      if (previous.key === key) return previous;
+    }
+    const [assets, local, hashesDoc] = await Promise.all(sources.map(readJson));
     const assetsDoc = assets ? rewrite(assets.doc) : null;
     const localDoc = local ? rewrite(local.doc) : null;
     const collected = collectResourceFiles(assetsDoc, localDoc);
     const tileFiles = collected.filter((f) => /\/assets\/local\/map\/autochess\/tiles\.json$/.test(f.url));
-    const tiles = await Promise.all(tileFiles.map(async (file) => {
-      const abs = localPathFor(file.url, publicDir, cdnBase);
-      try {
-        const stat = abs && await statFile(abs);
-        return stat?.isFile() ? { url: file.url, abs, stamp: `${stat.mtimeMs}:${stat.size}` } : null;
-      } catch { return null; }
-    }));
-    const key = [assets ? `${assets.mtimeMs}:${assets.size}` : '-', local ? `${local.mtimeMs}:${local.size}` : '-',
-      hashesDoc ? `${hashesDoc.mtimeMs}:${hashesDoc.size}` : '-', cdnBase, ...tiles.map((f) => f?.stamp || '-')].join('|');
-    if (cache && cache.key === key) return cache;
+    const tiles = await tileSources(tileFiles);
+    const key = [sourceKey, ...tiles.map((f) => f?.stamp || '-')].join('|');
     const t0 = Date.now();
     const real = collectRealHashes(localDoc, hashesDoc ? hashesDoc.doc : null);
-    for (const tile of tiles) if (tile) real.set(pathKey(tile.url), crypto.createHash('sha1').update(await fsp.readFile(tile.abs)).digest('hex').slice(0, 12));
+    for (const tile of tiles) if (tile) real.set(pathKey(tile.url), crypto.createHash('sha1').update(await readFile(tile.abs)).digest('hex').slice(0, 12));
     const files = collected.filter((f) => !tileFiles.includes(f) || real.has(pathKey(f.url))
       || (cdnBase && real.has(pathKey(f.url.slice(cdnBase.length)))));
     const stamps = {
@@ -326,18 +352,24 @@ export function createResourceIndex({ dataDir, publicDir, cdnBase = '', rewrite 
     const body = Buffer.from(JSON.stringify(manifest));
     // Hash the complete response (including tiers and sizes), so unchanged rebuilds/restarts keep their validator.
     const etag = `"resources-${crypto.createHash('sha256').update(body).digest('hex')}"`;
-    cache = { key, body, gzip: zlib.gzipSync(body), etag, mtimeMs: Date.now(), manifest };
+    const result = { key, sourceKey, tileFiles, body, gzip: zlib.gzipSync(body), etag, mtimeMs: Date.now(), manifest };
+    if (epoch === generation) cache = result;
     log?.info?.(`[resources] ${manifest.count} file(s), ${manifest.tier1} essential, ${manifest.sized} sized`
       + `${manifest.totalBytes ? `, ${(manifest.totalBytes / 1048576).toFixed(1)} MiB` : ''}, `
       + `${fileHashes.size ? [...fileHashes.values()].filter((h) => !h.startsWith('syn-')).length : 0} hashed`
       + `, version ${version} (${Date.now() - t0} ms)`);
-    return cache;
+    return result;
   }
 
   return {
     /** @returns {Promise<{ body: Buffer, gzip: Buffer, etag: string, mtimeMs: number, manifest: any }>} */
-    get: build,
+    get() {
+      if (pending) return pending;
+      const work = build(generation).finally(() => { if (pending === work) pending = null; });
+      pending = work;
+      return work;
+    },
     /** Drop the cache (tests). */
-    reset() { cache = null; },
+    reset() { cache = null; pending = null; generation++; },
   };
 }

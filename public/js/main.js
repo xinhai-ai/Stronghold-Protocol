@@ -230,7 +230,11 @@ function wireNet() {
     popupAnnouncement: announcementFromMessage(msg, 'popup') }));
   net.on('helloError', (err) => {
     if (err.code === 'SESSION_IN_USE') identity.rejectToken();
-    returnToTitleAfterNameReview(err);
+    if (returnToTitleAfterNameReview(err)) {
+      clearTimeout(restoreTimer);
+      clearTimeout(joinTimer);
+      closeAllDialogs();
+    }
     toastError(err);
   });
   net.on('replaced', () => toast(t('该身份已在其他页面登录，本页已断开'), 'warn', { ttl: 6000 }));

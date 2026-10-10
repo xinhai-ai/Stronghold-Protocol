@@ -385,6 +385,15 @@ export class Persister {
 
   async checkpoint(item) {
     try {
+      if (typeof item.match.captureSnapshotBytes === 'function') {
+        const bytes = await item.match.captureSnapshotBytes();
+        if (!bytes) return false;
+        if (!this.generations.has(item.match)) this.generations.set(item.match, ++this.generationSeq);
+        // Transfer ownership onward without inspecting/decoding the capture on the main thread.
+        await this.encoder.request('checkpointBytes', { key: item.key, generation: this.generations.get(item.match), bytes }, [bytes.buffer]);
+        this.checkpointKeys.add(item.key);
+        return true;
+      }
       const capture = typeof item.match.captureSnapshot === 'function'
         ? await item.match.captureSnapshot()
         : captureMatch(item.match);

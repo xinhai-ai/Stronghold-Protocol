@@ -1,5 +1,20 @@
 // Main-thread proxy for complete Match instances hosted in lane Workers.
 import { Worker } from 'node:worker_threads';
+// Worker JSON owns the wire value. Routing only needs its kind; old hooks materialize a complete message lazily.
+// State transport parses an independent snapshot, so mutation by a hook cannot corrupt its baseline.
+export function encodedMessage(kind, encoded) {
+  let view;
+  const read = () => view ||= JSON.parse(encoded);
+  return new Proxy({ t: kind }, {
+    get(_target, key) { return key === 't' && !view ? kind : Reflect.get(read(), key); },
+    has(_target, key) { return key === 't' && !view || Reflect.has(read(), key); },
+    ownKeys() { return Reflect.ownKeys(read()); },
+    getOwnPropertyDescriptor(_target, key) { return Reflect.getOwnPropertyDescriptor(read(), key); },
+    set(_target, key, value) { return Reflect.set(read(), key, value); },
+    deleteProperty(_target, key) { return Reflect.deleteProperty(read(), key); },
+  });
+}
+
 class RemoteMatch {
   constructor(pool, key, hooks, instanceId) {
     this.pool = pool;
@@ -42,6 +57,7 @@ class RemoteMatch {
   cancelSetupReroll(...args) { return this.invoke('cancelSetupReroll', ...args); }
   snapshot() { return this.invoke('snapshot'); }
   captureSnapshot() { return this.invoke('capture'); }
+  captureSnapshotBytes() { return this.invoke('captureBytes'); }
   publicView() { return this.public || null; }
   dispose() {
     if (this.disposing) return this.disposing;
@@ -177,12 +193,18 @@ export class MatchWorkerPool {
     const current = lane.matches.get(message.key);
     const match = current?.instanceId === message.instanceId ? current : null;
     if (message.type === 'send') {
-      if (match?.hooks.send) match.hooks.send(message.playerId, message.msg, message.encoded);
+      if (match?.hooks.send) {
+        const msg = typeof message.kind === 'string' && typeof message.encoded === 'string'
+          ? encodedMessage(message.kind, message.encoded) : message.msg;
+        match.hooks.send(message.playerId, msg, message.encoded);
+      }
     } else if (message.type === 'broadcast') {
       if (match) {
-        if (message.msg?.t === 'm.public') match.public = message.msg;
-        if (message.msg?.t === 'm.result') match.lastResultMsg = message.msg;
-        match.hooks.broadcast?.(message.msg, message.encoded);
+        const msg = typeof message.kind === 'string' && typeof message.encoded === 'string'
+          ? encodedMessage(message.kind, message.encoded) : message.msg;
+        if (msg?.t === 'm.public') match.public = msg;
+        if (msg?.t === 'm.result') match.lastResultMsg = msg;
+        match.hooks.broadcast?.(msg, message.encoded);
       }
     } else if (message.type === 'end') {
       if (match) { match.update(message.meta); match.hooks.end?.(message.summary); }

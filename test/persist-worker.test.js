@@ -5,6 +5,7 @@ import { PersistenceWorker } from '../server/workers/persistenceClient.js';
 import { Persister } from '../server/persist.js';
 import { captureMatch, snapshotMatch, canSnapshot } from '../server/match/snapshot.js';
 import { makeMatch } from './match/harness.js';
+import { serialize } from 'node:v8';
 
 test('Worker checkpoints equal the existing snapshot format, including hidden schedules and draft Maps', async (t) => {
   const worker = new PersistenceWorker();
@@ -48,6 +49,35 @@ test('Worker keeps the last safe checkpoint and prunes ended or replaced matches
     JSON.parse(Buffer.from(saved.bytes).toString()).matches);
   const replaced = await worker.request('serialize', { entries: [{ key: 'TEST', generation: 2 }], doc: {} });
   assert.deepEqual(replaced.keys, [], 'new match in the same room cannot inherit an old checkpoint');
+});
+
+test('transferred capture bytes retain Maps/hidden schedules, detach the sender buffer, and keep the old JSON format', async (t) => {
+  const worker = new PersistenceWorker();
+  t.after(() => worker.close());
+  const h = makeMatch({ humans: 2, bots: 2, fake: true, seed: 42 });
+  t.after(() => h.m.dispose());
+  h.start();
+  const entries = [{ key: 'TEST', generation: 1 }];
+  for (const phase of ['INFO_CHECK', 'BAND_DRAFT', 'PREP', 'SP_DRAFT']) {
+    assert.ok(h.drive(() => h.m.phase === phase && canSnapshot(h.m)));
+    const expected = snapshotMatch(h.m);
+    const bytes = Uint8Array.from(serialize(captureMatch(h.m)));
+    const update = worker.request('checkpointBytes', { ...entries[0], bytes }, [bytes.buffer]);
+    assert.equal(bytes.byteLength, 0, 'postMessage transfers rather than cloning the buffer');
+    const funds = h.m.order[0].funds;
+    h.m.order[0].funds++;
+    await update;
+    h.m.order[0].funds = funds;
+    const { bytes: saved } = await worker.request('serialize', { entries, doc: {} });
+    assert.deepEqual(JSON.parse(Buffer.from(saved).toString()).matches.TEST, expected);
+  }
+  const before = await worker.request('serialize', { entries, doc: {} });
+  const bad = Uint8Array.from([1, 2, 3]);
+  await assert.rejects(worker.request('checkpointBytes', { ...entries[0], bytes: bad }, [bad.buffer]));
+  const after = await worker.request('serialize', { entries, doc: {} });
+  assert.deepEqual(JSON.parse(Buffer.from(after.bytes).toString()).matches, JSON.parse(Buffer.from(before.bytes).toString()).matches,
+    'malformed bytes do not overwrite the last valid checkpoint or poison the Worker');
+  assert.equal(worker.pending.size, 0);
 });
 
 test('capture failures keep the last checkpoint and do not block other state writes or encode synchronously', async (t) => {

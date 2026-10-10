@@ -94,6 +94,7 @@
 - 棋盘资源 JSON 仅放行 `/assets/local/map/fx/materials.json`、`prefab.json` 及 `/assets/local/map/autochess/materials.json`、`tiles.json`（兼容素材 CDN 前缀），作为必备地图资源参与预载、指纹和 ZIP 导入导出，不泛化放行游戏数据或语言 JSON。`tiles.json` 从已列出的 `TX_autochessi_D.png` 同目录推导，存在本地文件或服务器哈希表记录时纳入；本地裁切表内容用于生成真实指纹，其大小/mtime 参与清单失效。带方括号的资源 URL 统一 `%5B`/`%5D`，服务器清单、磁盘路径、缓存键及 ZIP 身份一致，兼容旧 ZIP 原始方括号路径和旧缓存读取。`tools/asset-hashes.mjs` 同步此 JSON 白名单和路径规则。新增 shared/resourcePaths.js 属于 SW 依赖，生产 build 标识须覆盖，部署后更新 SW。
 
 - HTML 保持 `no-cache`；`/build/assets/` 下带内容哈希的 JS/CSS 使用 `public, max-age=31536000, immutable`。运行时配置和非指纹代码不能套用此长期缓存。
+- 资源清单缓存命中仅 stat 三个源清单和已发现的棋盘裁切表，不重读 JSON 正文、CDN 改写或全资源遍历；只合并进行中的检查/重建，后续请求重新校验。源清单及裁切表出现、删除、size/mtime 变化仍失效；失败不伪装旧数据，reset 后旧任务不覆盖新缓存。保持指纹、JSON 白名单、ETag/gzip/304/GET/HEAD，验证 `test/resources/manifest.test.js`。
 - 保留 gzip、ETag/304、HEAD 和原有素材 Range 行为。
 - 素材预载 SW 的 scope 为 `/`，但 `/build/` 必须直接放行，不调用 `respondWith()`。即使 Cache Storage 已有旧构建文件，也不能用它响应代码请求。
 - `public/js/resources/common.js` 和 `server/resources.js` 均明确排除 `/build/`。原有规则会匹配路径任意位置的 `/assets/`，用于兼容 CDN 前缀；不能因 Vite 也使用 assets 目录而再次误匹配，也不要直接改为只匹配根 `/assets/` 而破坏 CDN。
@@ -108,6 +109,7 @@
 - 房间 Worker 化第一阶段可通过 `SP_ROOM_WORKERS` 或 `startServer({ roomWorkers })` 启用：保留同一 `/ws` 和主线程 Match，仅将每个房间/独立匹配的战斗与 bot 预演任务固定到按活跃房间数选择的独立模拟 Worker lane；`workers` 是全 lane 总线程预算，不能让每个 lane 各自复制完整默认线程数。默认 `0` 保持单一共享池，释放房间时清理 lane 归属；这不是完整 Match 跨线程迁移，仍须继续验证主线程状态生成和发送耗时。
 - 完整 Match Worker 可通过 `SP_MATCH_WORKERS` 或 `startServer({ matchWorkers })` 启用：房间/公共匹配的 Match 实例、计时器、AI、状态视图和对局生命周期在 lane Worker 中运行，主线程保留 `/ws`、身份、房间目录和消息发送；Worker 通过 `captureMatch` 提供与原 Redis 文档相同的检查点，恢复等待异步 Worker 完成后再继续启动。`/metrics.workers` 保留模拟任务池，`/metrics.matchWorkers` 单独报告 Match Worker；默认 `0` 保持旧路径。启用前必须验证多房间公共匹配、观战、重连、退出、连续重启和真实 Redis。
 - 完整 Match Worker 的游戏数据每 lane 首次使用只传一次，安装线程数据源后再导入游戏模块；同 lane 的 Match 共用深冻结快照，不共用玩家库存、池或 RNG，不恢复为每局复制完整数据。Worker 编码的单播/广播 JSON 由主线程发送及回放复用，未提供编码的旧路径仍可用。初始化代理元数据全量，后续只发变化字段，连接/退出、阶段及战斗序号仍同步，IPC 失败不推进元数据基线；每个对局实例基线独立。状态增量仍由主线程管理，可靠入队基线、FIFO 及确认语义不变。验证 `test/match-worker-hotpaths.test.js`、生命周期、状态增量与持久化测试；`tools/match-workerbench.mjs` 仅为 IPC 微基准，不能当作真实对局容量或主线程 CPU 实测。
+- 完整 Match Worker 的有效下行消息仅传类型和编码，不重复复制完整消息对象；主线程按需为旧回调解码，状态增量仍从编码建立独立快照，不能信任回调可变对象作为基线。原始 capture 在 Match Worker 内序列化为独占字节缓冲，主线程只转交所有权，由持久化 Worker 解码并执行原 `encodeMatchCapture`；保持 Maps、波次隐藏排期、检查点代际、失败保留及旧对象路径，IPC 字节格式不写入 Redis、不作为跨版本存档。验证 `test/encoded-message.test.js`、持久化/生命周期及真实 Redis 重启测试。
 
 - 在线人数 `presence` 每 10 秒最低优先级刷新，人数不变仍可更新；`welcome.online` 即时提供。周期任务独立延后、分批处理，只保留最新待发快照，普通广播/心跳优先；连接已有任何发送积压时跳过本轮，下一周期再更新，不排队补发。不改变游戏状态/回复的可靠 FIFO、背压或压缩参数；已进入 WS/TCP 的字节无法抢占。关停时取消周期及待发任务，保留标题页未认证连接的周期在线人数展示。验证 `test/presence.test.js`、`test/ws-latency.test.js`。
 
@@ -254,3 +256,4 @@ docs/SIM.md (the test harness section) and the patterns in `test/content/op_sieg
 - `server/nameModeration.js` 同时支持 Sensitive-lexicon 与 Jev：`SP_NAME_MODERATION=lexicon|jev|both|off`；仅设置 URL 自动选 lexicon，仅设置 TYPESAFE_API_KEY 自动选 jev。both 并行调用，任一明确 `NAME_REJECTED` 拦截；任一服务故障/超时/限流/非法响应静默放行，不缓存降级结果。both 缺配置必须启动失败，不可假装双审。
 - Sensitive-lexicon 使用 dev Docker 的 POST `/contains` `{text}` 和布尔 `contains`，不使用 `/detect`；Jev 使用服务端 key 和官方 `/v1/systemone` 单个精简 Noul 违规概率，合并类别以尽可能降低输入至 100 tokens 以下；不截断正文或声明未经实测的计费 token 数。浏览器不接触 Jev key；名称审核只在服务端直连 WS hello 触发，并通过同一 WS 返回不可用。
 - 保持服务端最终校验、同源 HTTP 安全、名字格式、缓存/并发/限流、断线竞态和 fail-open 约定。审核触发及拒绝以固定日志标记记录，不包含昵称、聊天正文、地址、令牌、响应或 key；故障不记录敏感后端错误。昵称拒绝提示“该名称不可用”，聊天拒绝提示“该内容不可用”，标题页无审核说明或服务不可用提示。词库后端只放受控 Docker 网络。文档 `docs/NAME_MODERATION.md`，回归 `test/name-moderation.test.js`、`test/chat-moderation-lifecycle.test.js`。
+- 首次/恢复登录及在线改名收到明确 `NAME_REJECTED` 后都自动返回可编辑昵称标题页，清除 entered 标记并关闭旧对话框；保留原 token、房间及对局，不自动退出或重试被拒名称。在线改名被拒仍保留服务器已批准的昵称和会话，用户手动改名后可继续；`CHAT_REJECTED`、限流及普通对局错误不触发此回退。

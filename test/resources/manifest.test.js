@@ -368,6 +368,120 @@ describe('the served resource manifest', () => {
 });
 
 describe('the resource index cache', () => {
+  test('warm hits only stat sources/known tile companions; concurrent cold and warm checks share the work', async (t) => {
+    const atlas = '/assets/local/map/autochess/TX_autochessi_D.png';
+    const tile = '/assets/local/map/autochess/tiles.json';
+    const inst = install({ localDoc: { groups: { 'map/autochess': { atlas: { path: atlas } } } },
+      hashesDoc: { files: {} }, files: [atlas.slice(1), tile.slice(1)] });
+    t.after(inst.cleanup);
+    const reads = [], stats = [];
+    let rewrites = 0;
+    const index = createResourceIndex({ ...inst, readFile: async (...args) => {
+      reads.push(args[0]); return fs.promises.readFile(...args);
+    }, statFile: async (file) => { stats.push(file); return fs.promises.stat(file); },
+    rewrite: (doc) => { rewrites++; return doc; } });
+    const first = index.get();
+    assert.equal(index.get(), first, 'cold requests share one pending build');
+    const a = await first;
+    assert.equal(reads.length, 4, 'three source bodies and one tile body');
+    reads.length = 0; stats.length = 0;
+    const checks = Array.from({ length: 20 }, () => index.get());
+    assert.ok(checks.every((check) => check === checks[0]), 'warm requests share only the ongoing check');
+    for (const b of await Promise.all(checks)) assert.equal(b, a);
+    assert.equal(reads.length, 0, 'no JSON or tile body read on a cache hit');
+    assert.equal(stats.length, 4, 'only three manifests and the known tile companion');
+    assert.equal(rewrites, 2, 'no CDN rewrite or resource traversal on a cache hit');
+    await index.get();
+    assert.equal(stats.length, 8, 'completed checks are not cached indefinitely');
+    index.reset();
+    assert.notEqual((await index.get()).body, a.body);
+    assert.equal(reads.length, 4);
+  });
+
+  test('negative tile lookups and all manifest sources still invalidate the warm cache', async (t) => {
+    const atlas = '/assets/local/map/autochess/TX_autochessi_D.png';
+    const tile = '/assets/local/map/autochess/tiles.json';
+    const inst = install({ localDoc: { groups: { 'map/autochess': { atlas: { path: atlas } } } }, files: [atlas.slice(1)] });
+    t.after(inst.cleanup);
+    const index = createResourceIndex(inst);
+    const a = await index.get();
+    assert.ok(!a.manifest.files.some((f) => f.url === tile));
+    fs.writeFileSync(path.join(inst.publicDir, tile), '{"board":1}');
+    const b = await index.get();
+    assert.ok(b.manifest.files.some((f) => f.url === tile && !f.hash.startsWith('syn-')));
+    assert.notEqual(b.etag, a.etag);
+    fs.writeFileSync(path.join(inst.dataDir, 'asset-hashes.json'), JSON.stringify({ files: { [atlas]: 'aaaabbbbcccc' } }));
+    const c = await index.get();
+    assert.equal(c.manifest.files.find((f) => f.url === atlas).hash, 'aaaabbbbcccc');
+    fs.unlinkSync(path.join(inst.dataDir, 'local-assets.json'));
+    const d = await index.get();
+    assert.ok(!d.manifest.files.some((f) => f.url === atlas));
+    fs.writeFileSync(path.join(inst.dataDir, 'local-assets.json'), JSON.stringify({ groups: { map: { new: { path: '/assets/local/map/new.png' } } } }));
+    assert.ok((await index.get()).manifest.files.some((f) => f.url === '/assets/local/map/new.png'));
+  });
+
+  test('tile revalidation errors are not mistaken for missing files or served as a stale cache hit', async (t) => {
+    const atlas = '/assets/local/map/autochess/TX_autochessi_D.png';
+    const tile = '/assets/local/map/autochess/tiles.json';
+    const inst = install({ localDoc: { groups: { 'map/autochess': { atlas: { path: atlas } } } },
+      files: [atlas.slice(1), tile.slice(1)] });
+    t.after(inst.cleanup);
+    let fail = false;
+    const index = createResourceIndex({ ...inst, statFile: async (file) => {
+      if (fail && file === path.join(inst.publicDir, tile)) throw Object.assign(new Error('tile stat failed'), { code: 'EIO' });
+      return fs.promises.stat(file);
+    } });
+    const before = await index.get();
+    fail = true;
+    await assert.rejects(index.get(), /tile stat failed/);
+    fail = false;
+    assert.equal(await index.get(), before);
+  });
+
+  test('failed revalidation/builds reject rather than serving stale data, and the next request retries', async (t) => {
+    const inst = install();
+    t.after(inst.cleanup);
+    let fail = false;
+    const index = createResourceIndex({ ...inst, statFile: async (file) => {
+      if (fail) throw Object.assign(new Error('stat failed'), { code: 'EIO' });
+      return fs.promises.stat(file);
+    } });
+    const a = await index.get();
+    fail = true;
+    await assert.rejects(index.get(), /stat failed/);
+    fail = false;
+    assert.equal(await index.get(), a);
+    fs.writeFileSync(path.join(inst.dataDir, 'assets.json'), '{invalid');
+    await assert.rejects(index.get(), SyntaxError);
+    fs.writeFileSync(path.join(inst.dataDir, 'assets.json'), JSON.stringify(manifest({ hash: 'repaired' })));
+    assert.notEqual((await index.get()).manifest.version, a.manifest.version);
+  });
+
+  test('reset during an in-flight build prevents an old generation from replacing a newer cached response', async (t) => {
+    const inst = install();
+    t.after(inst.cleanup);
+    let release, entered;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const waiting = new Promise((resolve) => { entered = resolve; });
+    let block = true;
+    const index = createResourceIndex({ ...inst, readFile: async (...args) => {
+      const bytes = await fs.promises.readFile(...args);
+      if (block && args[0] === path.join(inst.dataDir, 'assets.json')) {
+        block = false; entered(); await gate;
+      }
+      return bytes;
+    } });
+    const old = index.get();
+    await waiting;
+    index.reset();
+    fs.writeFileSync(path.join(inst.dataDir, 'assets.json'), JSON.stringify(manifest({ hash: 'new-generation' })));
+    const fresh = await index.get();
+    release();
+    const stale = await old;
+    assert.notEqual(stale.manifest.version, fresh.manifest.version);
+    assert.equal(await index.get(), fresh);
+  });
+
   test('installed board sidecars have real hashes and sizes, tile changes invalidate the manifest, and CDN paths agree', async (t) => {
     const atlas = '/assets/local/map/autochess/TX_autochessi_D.png';
     const texture = '/assets/local/map/fx/[opt]merged_textures.png';

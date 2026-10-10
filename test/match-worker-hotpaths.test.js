@@ -4,6 +4,9 @@ import { MatchWorkerPool } from '../server/workers/matchPool.js';
 import { Lobby } from '../server/lobby.js';
 import { SessionRegistry } from '../server/net.js';
 import { DATA } from './match/harness.js';
+import { deserialize } from 'node:v8';
+import { encodeMatchCapture } from '../server/match/snapshot.js';
+import { Persister } from '../server/persist.js';
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const options = (roomCode) => ({
@@ -100,9 +103,50 @@ test('uncloneable lane configuration is isolated and does not remain available t
   await assert.rejects(pool.create('NEXT', options('NEXT')), /no healthy/);
 });
 
+test('remote persistence forwards owned capture bytes without exposing a large capture object on the main thread', async (t) => {
+  const pool = poolFor(t, { workerUrl: inspectWorker });
+  const match = await pool.create('SAVE', options('SAVE'));
+  await match.invoke('inspectFixedClock', Date.now());
+  await match.start();
+  const expected = await match.snapshot();
+  const first = await match.captureSnapshotBytes();
+  assert.ok(first instanceof Uint8Array && first.byteLength > 0);
+  assert.equal(first.buffer.byteLength, first.byteLength, 'owned allocation, not a pooled Buffer slab');
+  assert.deepEqual(encodeMatchCapture(deserialize(first)), expected);
+  let saved, forwarded;
+  const persister = new Persister({ registry: { all: () => [] },
+    lobby: { rooms: new Map(), persistenceMatches: () => [{ key: 'SAVE', match }] },
+    store: { async saveSerialized(bytes) { saved = JSON.parse(bytes.toString()); return true; } } });
+  t.after(() => persister.encoder.close());
+  match.captureSnapshot = () => { throw new Error('raw capture must not reach the main thread'); };
+  const request = persister.encoder.request.bind(persister.encoder);
+  persister.encoder.request = (type, payload, transfer) => {
+    if (type === 'checkpointBytes') {
+      forwarded = payload.bytes;
+      assert.equal(Object.hasOwn(payload, 'capture'), false);
+      assert.deepEqual(transfer, [payload.bytes.buffer]);
+    }
+    return request(type, payload, transfer);
+  };
+  assert.equal(await persister.flush('test'), true);
+  assert.deepEqual(saved.matches.SAVE, expected);
+  assert.equal(forwarded.byteLength, 0, 'main thread relinquishes ownership, without deserializing the capture');
+  await match.invoke('inspectInvalidCapture', true);
+  assert.equal(await persister.flush('bad'), true, 'a single capture failure still permits other state saving');
+  assert.equal(persister.failures, 1);
+  assert.deepEqual(saved.matches.SAVE, expected, 'bad remote capture keeps the last good checkpoint');
+  await match.invoke('inspectInvalidCapture', false);
+  assert.equal(await persister.flush('good'), true);
+  assert.deepEqual(saved.matches.SAVE, expected);
+  await match.invoke('inspectCapturePhase', 'COMBAT');
+  assert.equal(await match.captureSnapshotBytes(), null, 'unsafe phases do not serialize a fresh checkpoint');
+});
+
 test('production Worker encodes broadcasts/unicasts and room/queue routing reuses the exact bytes for replay', async (t) => {
   const pool = poolFor(t);
   const received = [];
+  const packets = [];
+  pool.lanes[0].worker.on('message', (message) => packets.push(message));
   const match = await pool.create('WIRE', options('WIRE'), {
     broadcast: (msg, encoded) => received.push({ msg, encoded }),
     send: (playerId, msg, encoded) => received.push({ playerId, msg, encoded }),
@@ -111,6 +155,11 @@ test('production Worker encodes broadcasts/unicasts and room/queue routing reuse
   assert.ok(received.some((x) => x.msg.t === 'm.public' && !x.playerId));
   assert.ok(received.some((x) => x.msg.t === 'm.private' && x.playerId === 'p_0'));
   for (const { msg, encoded } of received) assert.deepEqual(JSON.parse(encoded), msg);
+  for (const packet of packets.filter((p) => p.type === 'send' || p.type === 'broadcast')) {
+    assert.equal(typeof packet.kind, 'string');
+    assert.equal(typeof packet.encoded, 'string');
+    assert.equal(Object.hasOwn(packet, 'msg'), false, 'valid frames do not clone a redundant object graph');
+  }
   const malformed = { t: 'malformed' };
   malformed.self = malformed;
   await match.invoke('broadcast', malformed);

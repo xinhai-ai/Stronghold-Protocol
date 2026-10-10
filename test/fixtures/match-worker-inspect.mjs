@@ -36,4 +36,14 @@ async function install() {
     this._battleSeq++;
     return () => {};
   };
+  Match.prototype.inspectFixedClock = function (now) {
+    this.sched._now = () => now;
+  };
+  Match.prototype.inspectInvalidCapture = function (invalid) {
+    if (invalid) this.order[0].hand.push(() => {});
+    else this.order[0].hand.pop();
+  };
+  Match.prototype.inspectCapturePhase = function (phase) {
+    this.phase = phase;
+  };
 }

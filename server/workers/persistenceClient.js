@@ -16,7 +16,7 @@ export class PersistenceWorker {
   remember(bytes, entries) { this.seed = { bytes, entries }; }
   rememberDocument(doc, entries) { this.seed = { doc, entries }; }
 
-  request(type, payload) {
+  request(type, payload, transfer = []) {
     if (this.closed) return Promise.reject(new Error('persistence worker closed'));
     if (!this.worker) {
       const worker = new Worker(new URL('./persistence.js', import.meta.url), { workerData: { seed: this.seed } });
@@ -42,7 +42,7 @@ export class PersistenceWorker {
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
       worker.ref();
-      try { worker.postMessage({ id, type, payload }); }
+      try { worker.postMessage({ id, type, payload }, transfer); }
       catch (e) {
         this.pending.delete(id);
         clearTimeout(timer);

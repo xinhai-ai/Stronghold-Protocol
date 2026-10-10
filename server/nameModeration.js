@@ -1,5 +1,7 @@
 // Sensitive-lexicon Docker HTTP screening. Endpoint and cache stay on the server.
 import { performance } from 'node:perf_hooks';
+import { createJevNameModeration } from './jevNameModeration.js';
+export { createJevNameModeration, JEV_ENDPOINT } from './jevNameModeration.js';
 import { sanitizeName, TokenBucket } from './net.js';
 import { NAME_MAX_LEN, ERR } from '../shared/constants.js';
 
@@ -72,9 +74,36 @@ export function createNameModeration({ baseUrl = DEFAULT_LEXICON_URL,
   };
 }
 
+export function createCombinedNameModeration(reviewers, mode = 'both') {
+  const active = reviewers.filter(Boolean);
+  if (!active.length) return null;
+  return {
+    mode,
+    async check(name, address) {
+      return new Promise((resolve) => {
+        let remaining = active.length;
+        let settled = false;
+        const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
+        for (const reviewer of active) {
+          Promise.resolve().then(() => reviewer.check(name, address)).catch(() => ({ allowed: true })).then((result) => {
+            if (result?.allowed !== true && [ERR.NAME_REJECTED, ERR.BAD_MSG].includes(result?.code)) finish(result);
+            else if (--remaining === 0) finish({ allowed: true });
+          });
+        }
+      });
+    },
+    close() { for (const reviewer of active) reviewer.close?.(); },
+  };
+}
+
 export function nameModerationFromEnv(env = process.env) {
-  const mode = env.SP_NAME_MODERATION || (env.SP_NAME_MODERATION_URL ? 'lexicon' : 'off');
+  const mode = env.SP_NAME_MODERATION || (env.SP_NAME_MODERATION_URL ? 'lexicon' : env.TYPESAFE_API_KEY ? 'jev' : 'off');
   if (mode === 'off') return null;
-  if (mode !== 'lexicon') throw new Error('SP_NAME_MODERATION must be lexicon or off');
-  return createNameModeration({ baseUrl: env.SP_NAME_MODERATION_URL || DEFAULT_LEXICON_URL });
+  if (!['lexicon', 'jev', 'both'].includes(mode)) throw new Error('SP_NAME_MODERATION must be lexicon, jev, both or off');
+  const lexicon = ['lexicon', 'both'].includes(mode)
+    ? createNameModeration({ baseUrl: env.SP_NAME_MODERATION_URL || DEFAULT_LEXICON_URL }) : null;
+  const jev = ['jev', 'both'].includes(mode)
+    ? createJevNameModeration({ apiKey: env.TYPESAFE_API_KEY, model: env.SP_NAME_MODERATION_MODEL || 'jev-latest',
+      threshold: env.SP_NAME_MODERATION_THRESHOLD === undefined ? 0.5 : Number(env.SP_NAME_MODERATION_THRESHOLD) }) : null;
+  return createCombinedNameModeration([lexicon, jev], mode);
 }

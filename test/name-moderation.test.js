@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { setImmediate as turn } from 'node:timers/promises';
 import http from 'node:http';
 import { WebSocket } from 'ws';
-import { createNameModeration, nameModerationFromEnv, DEFAULT_LEXICON_URL, lexiconEndpoint } from '../server/nameModeration.js';
+import { createNameModeration, createCombinedNameModeration, createJevNameModeration, nameModerationFromEnv, DEFAULT_LEXICON_URL, JEV_ENDPOINT, lexiconEndpoint } from '../server/nameModeration.js';
 import { Network, SessionRegistry } from '../server/net.js';
 import { startServer } from '../server/index.js';
 import { Net, checkNameBeforeHello } from '../public/js/net.js';
@@ -38,12 +38,16 @@ test('Docker API contract sends only sanitized text, no key/model, cache snapsho
 
 test('lexicon config supports Docker host/prefix, explicit off; invalid URL/mode fails startup', () => {
   assert.equal(nameModerationFromEnv({}), null);
-  assert.equal(nameModerationFromEnv({ TYPESAFE_API_KEY: 'old-unused-key' }), null);
+  const jevDefault = nameModerationFromEnv({ TYPESAFE_API_KEY: 'test-key' }); assert.equal(jevDefault.mode, 'jev'); jevDefault.close();
   assert.equal(nameModerationFromEnv({ SP_NAME_MODERATION: 'off', SP_NAME_MODERATION_URL: 'broken' }), null);
   for (const env of [{ SP_NAME_MODERATION: 'lexicon' }, { SP_NAME_MODERATION_URL: 'http://lexicon:8080' }]) {
     const m = nameModerationFromEnv(env); assert.ok(m); m.close();
   }
-  for (const mode of ['jev', 'typo']) assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION: mode }), /must be/);
+  const jev = nameModerationFromEnv({ SP_NAME_MODERATION: 'jev', TYPESAFE_API_KEY: 'test-key' }); assert.equal(jev.mode, 'jev'); jev.close();
+  const both = nameModerationFromEnv({ SP_NAME_MODERATION: 'both', SP_NAME_MODERATION_URL: 'http://lexicon:8080', TYPESAFE_API_KEY: 'test-key' }); assert.equal(both.mode, 'both'); both.close();
+  assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION: 'jev' }), /TYPESAFE_API_KEY/);
+  assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION: 'both', SP_NAME_MODERATION_URL: 'http://lexicon:8080' }), /TYPESAFE_API_KEY/);
+  for (const mode of ['typo']) assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION: mode }), /must be/);
   for (const url of ['bad', 'file:///test', 'ftp://localhost', 'http://user:pass@localhost', 'http://localhost?q=1', 'http://localhost/#x']) assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION_URL: url }), /URL/);
   assert.equal(lexiconEndpoint('http://lexicon:8080/'), 'http://lexicon:8080/contains');
   assert.equal(lexiconEndpoint('https://review.internal/api/'), 'https://review.internal/api/contains');
@@ -293,4 +297,32 @@ test('real lexicon HTTP contract feeds preflight and WS; fresh instance clears c
   assert.equal((await rejected).code, ERR.NAME_REJECTED); assert.equal(calls.length, 2); assert.equal(srv.registry.size, 0);
   // A fresh instance has no approval/rejection baseline from the old lexicon version.
   const fresh = createNameModeration({ baseUrl }); t.after(() => fresh.close()); await fresh.check('博士'); assert.equal(calls.length, 3);
+});
+
+
+test('Jev sends official systemone Noul request and blocks an explicit category', async () => {
+  let calls = 0;
+  const answers = Object.fromEntries(['politics', 'violence', 'sexual', 'illegal'].map((key) => [key, { type: 'noul', noul: key === 'politics' ? 0.5 : 0.01 }]));
+  const jev = createJevNameModeration({ apiKey: 'test-key', fetchFn: async (url, init) => {
+    calls++; assert.equal(url, JEV_ENDPOINT); assert.equal(init.headers.Authorization, 'Bearer test-key');
+    const body = JSON.parse(init.body); assert.deepEqual(body.state, { username: '博士' }); assert.equal(body.model, 'jev-latest');
+    assert.equal(Object.keys(body.questions).length, 4); return response({ answers });
+  }});
+  assert.deepEqual(await jev.check(' 博​士 '), { allowed: false, code: ERR.NAME_REJECTED }); assert.equal(calls, 1); jev.close();
+});
+
+test('both runs backends independently: one explicit rejection blocks, one failure silently allows', async () => {
+  const lexicon = { check: async () => ({ allowed: false, code: ERR.NAME_REJECTED }), close() {} };
+  const jev = { check: async () => { throw new Error('Jev unavailable'); }, close() {} };
+  const both = createCombinedNameModeration([lexicon, jev], 'both');
+  assert.equal(both.mode, 'both'); assert.deepEqual(await both.check('博士', 'local'), { allowed: false, code: ERR.NAME_REJECTED }); both.close();
+  const allow = createCombinedNameModeration([{ check: async () => ({ allowed: true }) }, { check: async () => { throw new Error('down'); } }], 'both');
+  assert.deepEqual(await allow.check('博士'), { allowed: true }); allow.close();
+});
+
+test('both preserves a rejection even when the other backend is slow', async () => {
+  const slow = new Promise(() => {});
+  const both = createCombinedNameModeration([{ check: async () => ({ allowed: false, code: ERR.NAME_REJECTED }) }, { check: () => slow }], 'both');
+  const result = await Promise.race([both.check('博士'), new Promise((resolve) => setTimeout(() => resolve('timeout'), 100))]);
+  assert.deepEqual(result, { allowed: false, code: ERR.NAME_REJECTED }); both.close();
 });

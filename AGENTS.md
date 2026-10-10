@@ -246,3 +246,8 @@ docs/SIM.md (the test harness section) and the patterns in `test/content/op_sieg
 - 资源管理直接选择中文、日语、两种语言或不预载语音，浏览器持久化 preloadVoiceLang，独立于播放 voiceLang 和干员个人语音覆盖；旧配置以已保存的播放语言迁移，默认中文。可选资源仍需同时预载开关。
 - 按 /voice/cn/ 与 /voice/jp/ 目录识别（兼容 CDN 前缀），不能按 cn_019 等文件名判语言。保留旧未分语言语音组及不预载时的排除。切换中止旧范围、等待已开始操作，只增量下载最新选择，不删除已有缓存；完成与进度只计算所选可缓存资源。
 - ZIP 内未选择但有效的资源仍须校验并保留，导出仍包含全部有效缓存；仅导入后的缺失下载按范围过滤。分类计数增量维护，不在每个进度更新重扫全清单。更新 common.js 等独立 SW 依赖后部署需更新 SW，并同步 CDN 的 UI 语言 JSON。验证 test/ui/preload-voice.test.js 和现有资源/ZIP/构建测试。
+## 双用户名审核后端
+
+- `server/nameModeration.js` 同时支持 Sensitive-lexicon 与 Jev：`SP_NAME_MODERATION=lexicon|jev|both|off`；仅设置 URL 自动选 lexicon，仅设置 TYPESAFE_API_KEY 自动选 jev。both 并行调用，任一明确 `NAME_REJECTED` 拦截；任一服务故障/超时/限流/非法响应静默放行，不缓存降级结果。both 缺配置必须启动失败，不可假装双审。
+- Sensitive-lexicon 使用 dev Docker 的 POST `/contains` `{text}` 和布尔 `contains`，不使用 `/detect`；Jev 使用服务端 key 和官方 `/v1/systemone` 四类 Noul。浏览器不接触 Jev key，hello 前同源预审与服务端直连 WS hello 双重覆盖。
+- 保持服务端最终校验、同源 HTTP 安全、名字格式、缓存/并发/限流、断线竞态和 fail-open 约定；不在日志记录昵称、响应或 key。词库后端只放受控 Docker 网络。文档 `docs/NAME_MODERATION.md`，回归 `test/name-moderation.test.js`。

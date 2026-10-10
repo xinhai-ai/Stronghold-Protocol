@@ -74,6 +74,15 @@ groups:
           summary: Stronghold simulation worker queue is non-empty
           description: Simulation work has been waiting in the shared worker queue.
 
+      - alert: StrongholdMatchWorkerLaneFailed
+        expr: sp_match_worker_failed_lanes > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Stronghold complete-match worker lane failed
+          description: A complete Match Worker lane is isolated; affected matches are not automatically migrated.
+
       - alert: StrongholdPersistenceWorkerMemoryHigh
         expr: sp_persist_heap_used_bytes > 768 * 1024 * 1024
         for: 5m

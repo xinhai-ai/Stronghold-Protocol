@@ -119,6 +119,7 @@ collector 不接受 `?target=` 参数改变抓取地址，避免变成公开 SSR
 - `processCpu`：进程累计user/system CPU时间；
 - `recentEventLoop`：独立10秒窗口，启动后首个窗口完成前为null；多个抓取者不重置窗口；
 - `handlerMs.*` / `sendCompletionMs` 的 `sumMs` 和累计 `buckets`。
+- `matchWorkers`：完整对局 Worker 的配置线程、存活线程、对局代理和故障线程组；对应 Prometheus 指标 `sp_match_worker_*`。它与原模拟任务池的 `sp_worker_*` 分开，不能混看。
 
 `/healthz` 不增加诊断字段，`/metrics`仍是JSON，旧字段/启动以来统计/持久化未启用时null均保留。无新字段时面板显示未采集，而不是用collector CPU或零值假装游戏CPU。游戏数据/素材未变化，无需因本改动同步CDN。
 
@@ -135,6 +136,7 @@ collector 不接受 `?target=` 参数改变抓取地址，避免变成公开 SSR
 | RSS / 各线程堆 | RSS已包含Worker；不能重复相加。模拟Worker样本可能不同时刻，样本年龄单独显示 |
 | WS应用正文吞吐 | **发送为压缩前、接收为解压后**字节；不是实际公网出口。本次不在线hook私有ws帧发送实现 |
 | Worker队列/失败/完成 | queue与busy为瞬时，完成/失败/拒绝用近5分钟增量；未启用时无数据 |
+| 完整对局 Worker | `sp_match_worker_failed_lanes` 大于0表示线程组已隔离；当前不支持在线自动迁移，需结合 Redis 检查点和重启恢复 |
 | Redis/存档 | enabled只代表配置，不代表Redis可达；writes速率和检查点规模，尚无Redis查询延迟/错误计数 |
 | 玩家操作状态到达 | 明确为**尚未采集**：需后续单独实现匿名、采样、有限标签RUM，不能用上述任一曲线顶替 |
 

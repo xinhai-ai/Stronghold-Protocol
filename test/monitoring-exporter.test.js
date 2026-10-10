@@ -6,6 +6,7 @@ import { renderMetrics } from '../deploy/monitoring/exporter/metrics.mjs';
 import { fetchSnapshot, probeWebSocket, startExporter, validateTargets } from '../deploy/monitoring/exporter/index.mjs';
 import { startServer } from '../server/index.js';
 import { C2S } from '../shared/protocol.js';
+import { TestClient } from './helpers/wsClient.js';
 
 const sample = {
   ok: true, app: '0.2.1', build: 'abc', uptimeSec: 10, sockets: 2, sessions: 2, rooms: 1, matches: 1,
@@ -13,6 +14,7 @@ const sample = {
   memory: { rss: 100, heapUsed: 50, heapTotal: 90, external: 5, arrayBuffers: 1 },
   socketBuffers: { total: 0, max: 0 }, staticCache: { gzipBytes: 1, gzipLimitBytes: 2 },
   workers: { size: 2, busy: 0, queued: 0, maxQueue: 4, avgComputeMs: 3, submitted: 4, completed: 4, failed: 0, cancelled: 0, rejected: 0, queueMs: 5, computeMs: 12, memory: [] },
+  matchWorkers: { size: 2, threads: 2, busy: 1, rooms: 3, failedLanes: 0 },
   persist: { redis: true, writes: 3, checkpoints: 1, snapshotBytes: 8, workerMemory: { heapUsed: 4, heapTotal: 5 } },
   websocket: { compression: true, diagnostics: {
     eventLoop: { utilization: 0.1, meanMs: 20, maxMs: 60, p95Ms: 30, p99Ms: 50 },
@@ -29,6 +31,9 @@ test('renderMetrics exports recent windows, counters and valid histogram familie
   const text = renderMetrics([{ name: 'prod', url: 'http://game/metrics' }],
     new Map([['prod', { up: true, data: sample, errors: 0, lastSuccess: 100, durationSeconds: 0.02 }]]), 110);
   assert.match(text, /^sp_players_sockets\{game="prod"\} 2$/m);
+  assert.match(text, /sp_match_worker_size\{game="prod"\} 2/);
+  assert.match(text, /sp_match_worker_rooms\{game="prod"\} 3/);
+  assert.match(text, /sp_match_worker_enabled\{game="prod"\} 1/);
   assert.match(text, /^sp_event_loop_window_p99_seconds\{game="prod"\} 0.07$/m);
   assert.match(text, /^sp_ws_send_completion_seconds_bucket\{game="prod",le="\+Inf"\} 2$/m);
   assert.match(text, /^sp_ws_handler_seconds_bucket\{game="prod",message="g\.ready",le="\+Inf"\} 2$/m);
@@ -71,9 +76,11 @@ test('legacy JSON exports existing diagnostics but no invented CPU, window, hist
   delete old.websocket.diagnostics.sendCompletionMs.buckets;
   delete old.websocket.diagnostics.handlerMs['g.ready'].buckets;
   old.workers = null; old.persist = null;
+  old.matchWorkers = null;
   const text = renderMetrics([{ name: 'prod', url: 'http://game/metrics' }], new Map([['prod', { up: true, data: old }]]));
   assert.match(text, /sp_process_cpu_available\{game="prod"\} 0/);
-  assert.doesNotMatch(text, /sp_process_cpu_user_seconds_total|sp_worker_size|sp_persist_writes_total|sp_ws_handler_seconds_bucket/);
+  assert.match(text, /sp_match_worker_enabled\{game="prod"\} 0/);
+  assert.doesNotMatch(text, /sp_process_cpu_user_seconds_total|sp_worker_size|sp_match_worker_size|sp_persist_writes_total|sp_ws_handler_seconds_bucket/);
   assert.match(text, /sp_ws_send_completion_p95_upper_seconds_since_start/);
   assert.doesNotMatch(text, /NaN|undefined|null/);
 });
@@ -168,6 +175,32 @@ test('actual local game JSON/WS probe integration: no identities or rooms, histo
   assert.equal(metrics.websocket.diagnostics.handlerMs.ping.buckets.at(-1).leMs, '+Inf');
 });
 
+test('complete Match Worker diagnostics remain separate and usable by the collector', async (t) => {
+  const game = await startServer({ port: 0, host: '127.0.0.1', quiet: true, workers: 0, matchWorkers: 1, store: null });
+  t.after(() => game.close());
+  const client = await TestClient.connect(`ws://127.0.0.1:${game.port}/ws`);
+  t.after(() => client.close());
+  await client.hello('Monitor');
+  await client.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' });
+  const room = await client.waitFor('room.state');
+  await client.request({ t: 'room.start' }, 10000);
+  await client.waitFor('m.public', (message) => message.phase === 'INFO_CHECK');
+
+  const metrics = await (await fetch(`${game.url}/metrics`)).json();
+  assert.equal(metrics.matchWorkers.kind, 'match-workers');
+  assert.equal(metrics.matchWorkers.size, 1);
+  assert.equal(metrics.matchWorkers.failedLanes, 0);
+  assert.equal(metrics.matchWorkers.rooms, 1);
+  assert.equal(metrics.workers, null, 'the complete Match Worker is not the simulation task pool');
+  const text = renderMetrics([{ name: 'local', url: `${game.url}/metrics` }],
+    new Map([['local', { up: true, data: metrics }]]));
+  assert.match(text, /sp_match_worker_enabled\{game="local"\} 1/);
+  assert.match(text, /sp_match_worker_failed_lanes\{game="local"\} 0/);
+  assert.match(text, /sp_match_worker_rooms\{game="local"\} 1/);
+  assert.doesNotMatch(text, /sp_worker_size\{game="local"\}/);
+  assert.ok(game.lobby.getRoom(room.code).match.remote);
+});
+
 test('WS probe times out and closes without emitting player operations', async () => {
   const calls = [];
   class SilentWS {
@@ -199,4 +232,7 @@ test('provisioned dashboard separates scopes and binds queries to configured dat
   const cpu = d.panels.find((p) => p.title.includes('平均 CPU'));
   assert.equal(cpu.fieldConfig.defaults.unit, 'percent');
   assert.ok(!cpu.targets.some((t) => t.expr.includes('worker_compute')));
+  const matchWorkers = d.panels.find((p) => p.title.includes('完整对局 Worker'));
+  assert.ok(matchWorkers);
+  assert.ok(matchWorkers.targets.some((t) => t.expr.includes('sp_match_worker_failed_lanes')));
 });

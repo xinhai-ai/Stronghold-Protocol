@@ -1969,6 +1969,99 @@
       }
     },
     {
+      "id": 35,
+      "type": "timeseries",
+      "title": "完整对局 Worker",
+      "description": "完整对局 Worker 与模拟 Worker 分开统计。failed_lanes 大于0表示该线程组已隔离；busy是待回复IPC，不是CPU占用。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "stronghold-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 97,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sp_match_worker_size{game=~\"$game\"}",
+          "legendFormat": "配置线程 {{game}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_match_worker_threads{game=~\"$game\"}",
+          "legendFormat": "存活线程 {{game}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_match_worker_rooms{game=~\"$game\"}",
+          "legendFormat": "对局代理 {{game}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_match_worker_failed_lanes{game=~\"$game\"}",
+          "legendFormat": "故障线程组 {{game}}",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        },
+        {
+          "expr": "sp_match_worker_busy{game=~\"$game\"}",
+          "legendFormat": "待回复IPC {{game}}",
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "stronghold-prometheus"
+          },
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "未启用 / 无样本",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
       "id": 34,
       "type": "timeseries",
       "title": "告警状态",
@@ -1979,7 +2072,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 97,
+        "y": 105,
         "w": 24,
         "h": 8
       },

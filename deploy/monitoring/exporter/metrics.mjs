@@ -19,6 +19,9 @@ const fields = [
   ['static_gzip_bytes', 'staticCache.gzipBytes'], ['static_gzip_limit_bytes', 'staticCache.gzipLimitBytes'],
   ['worker_size', 'workers.size'], ['worker_busy', 'workers.busy'], ['worker_queued', 'workers.queued'],
   ['worker_queue_limit', 'workers.maxQueue'], ['worker_avg_compute_seconds_since_start', 'workers.avgComputeMs', 0.001],
+  ['match_worker_size', 'matchWorkers.size'], ['match_worker_threads', 'matchWorkers.threads'],
+  ['match_worker_busy', 'matchWorkers.busy'], ['match_worker_rooms', 'matchWorkers.rooms'],
+  ['match_worker_failed_lanes', 'matchWorkers.failedLanes'],
   ['persist_checkpoints', 'persist.checkpoints'], ['persist_snapshot_bytes', 'persist.snapshotBytes'],
   ['persist_heap_used_bytes', 'persist.workerMemory.heapUsed'], ['persist_heap_total_bytes', 'persist.workerMemory.heapTotal'],
   ['persist_memory_sample_timestamp_seconds', 'persist.workerMemory.sampledAt', 0.001],
@@ -104,6 +107,7 @@ export function renderMetrics(targets, states, nowSeconds = Date.now() / 1000) {
     const m = s.data;
     emit('game_info', 1, { ...labels, app: String(m.app || 'unknown'), build: String(m.build || 'unknown') });
     emit('worker_enabled', m.workers ? 1 : 0, labels);
+    emit('match_worker_enabled', m.matchWorkers ? 1 : 0, labels);
     emit('persist_enabled', m.persist?.redis ? 1 : 0, labels);
     emit('ws_compression_enabled', m.websocket?.compression ? 1 : 0, labels);
     emit('announcement_config_error', m.announcements?.configError ? 1 : 0, labels);

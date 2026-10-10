@@ -1117,6 +1117,8 @@
 .connection-status { display: flex; align-items: center; gap: .1rem; flex: none; }
 .connection-status .ping { flex: none; white-space: nowrap; }
 .online-count .ping__value { min-width: .28rem; text-align: right; }
+.topbar-announcement { flex: none; }
+.topbar-announcement .btn__label { white-space: nowrap; }
 
 .announcement-modal { max-height: calc(100vh - var(--sa-t, 0px) - var(--sa-b, 0px) - .6rem); max-height: calc(100dvh - var(--sa-t, 0px) - var(--sa-b, 0px) - .6rem); }
 .announcement-modal .modal__head, .announcement-modal .modal__actions { flex: none; }
@@ -1133,6 +1135,62 @@
 .me-chip { display: flex; align-items: center; gap: .12rem; padding: .06rem .18rem .06rem .06rem; border: 1px solid var(--line); background: rgba(0, 0, 0, .35); }
 .me-chip__text { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
 .me-chip__name { font-weight: 700; font-size: calc(.18 * var(--t)); max-width: 2.4rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The lobby/room chrome has several actions. On phones keep the connection cluster readable,
+   let the centre title use its own row, and make secondary actions icon-only instead of
+   allowing the right side to push the topbar beyond the viewport. */
+@media (max-width: 760px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    grid-template-areas: "left right" "center center";
+    height: auto;
+    min-height: 1.08rem;
+    padding: .1rem .16rem .08rem;
+    row-gap: .06rem;
+  }
+  .room-screen .topbar { height: auto; }
+  .topbar__left { grid-area: left; gap: .08rem; flex-wrap: wrap; }
+  .topbar__center { grid-area: center; min-width: 0; padding: .03rem 0 .02rem; }
+  .topbar__right {
+    grid-area: right;
+    max-width: 58vw;
+    gap: .08rem;
+    overflow: visible;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .topbar__right > .btn .btn__icon + .btn__label,
+  .topbar__left > .stats-entry .btn__icon + .btn__label,
+  .topbar__left > .room-settings .btn__icon + .btn__label,
+  .topbar__left > .room-guide .btn__icon + .btn__label,
+  .topbar-announcement .btn__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .topbar__right .me-chip { padding-right: .06rem; }
+  .topbar__right .me-chip__text { display: none; }
+  .topbar__right .invite { max-width: 100%; min-width: 0; }
+  .topbar__right .solo-note { display: none; }
+  .topbar__title { max-width: 100%; font-size: calc(.25 * var(--t)); letter-spacing: .06em; }
+  .connection-status { gap: .06rem; }
+  .topbar-announcement { padding-left: .08rem; padding-right: .08rem; }
+  .room-ping { align-items: center; }
+  .room-ping > .micro-label { display: none; }
+}
+
+@media (max-width: 420px) {
+  .topbar__right { max-width: 52vw; }
+  .topbar__title { font-size: calc(.22 * var(--t)); }
+  .topbar .ping { padding-left: .08rem; padding-right: .08rem; }
+  .topbar .ping__unit { display: none; }
+}
 
 .crash { align-items: center; justify-content: center; }
 .crash__box {

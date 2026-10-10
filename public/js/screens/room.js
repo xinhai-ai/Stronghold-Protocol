@@ -358,6 +358,7 @@ export function RoomScreen() {
           <div class="connection-status">
             <${PingPill} ms=${conn.ping} online=${online} />
             <${OnlineCount} online=${presence.online} />
+            <${AnnouncementButton} variant="ghost" size="sm" class="topbar-announcement" />
           </div>
           <${MicroLabel}>${t('连接状态')}<//>
         </div>
@@ -370,7 +371,6 @@ export function RoomScreen() {
         <h1 class="topbar__title">${coop ? t('同盟模拟') : t('独立模拟')}<span class="topbar__sep"></span><${DifficultyTag} difficulty=${room.difficulty} size="lg" /></h1>
       </div>
       <div class="topbar__right">
-        <${AnnouncementButton} />
         ${coop ? html`<${InviteBox} code=${room.code} name=${me.name} difficulty=${room.difficulty} />` : html`<div class="solo-note"><${MicroLabel}>SINGLE OPERATOR<//><span>${t('仅限 1 名博士')}</span></div>`}
       </div>
     </header>

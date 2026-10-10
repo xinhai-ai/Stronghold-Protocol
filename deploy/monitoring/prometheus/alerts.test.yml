@@ -51,3 +51,18 @@ tests:
       - eval_time: 3m
         alertname: StrongholdSocketBackpressure
         exp_alerts: []
+  - name: complete match worker failure is surfaced
+    interval: 30s
+    input_series:
+      - series: 'sp_match_worker_failed_lanes{game="production"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: StrongholdMatchWorkerLaneFailed
+        exp_alerts:
+          - exp_labels:
+              game: production
+              severity: critical
+            exp_annotations:
+              summary: Stronghold complete-match worker lane failed
+              description: A complete Match Worker lane is isolated; affected matches are not automatically migrated.

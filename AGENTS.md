@@ -166,3 +166,9 @@ git diff --check
 - 2026-10-06 曾在修改前源码复现三个全量测试失败：`test/match/fuzz.test.js` 的两个用例生成缺少字段的 `g.console` 消息，以及 `test/ui/playtest3.test.js` 直接调用组件导致 Preact Hook 错误。这是历史记录；以后遇到失败需重新核实基线，不能永久忽略或默认归为已有问题。
 - 全量测试出现额外失败时逐项检查：素材缺失先核对清单与磁盘并补齐；静态断言与合并后的 import/标签不同先核对实际功能；Windows 临时目录清理和短计时测试先独立复测并判断是否依赖平台或负载，再做有依据的修复，不直接跳过测试。
 - 提交只纳入合并/修复范围，沿用仓库 Conventional Commit 与已有签名配置；报告实际验证结果及尚未验证的部分。
+
+## Sensitive-lexicon 用户名审核
+
+- 浏览器发送 hello 前经同源 POST /api/name-moderation 预审；服务端对 hello 独立检查，等待审核结束后才创建、接管或重命名会话。词库明确命中拦截，审核超时/错误/审核预算耗尽按用户要求静默放行且不缓存降级结果；名字格式和原有传输限流不变。登录、改名、重连及直接 WS 请求均须覆盖，保留断线及并发昵称竞态隔离。
+- 审核后端使用 konsheng/Sensitive-lexicon 的 dev Docker HTTP 接口 POST /contains，请求 {text}，仅布尔 contains 为有效结果；不要用 /detect 替换，其子串搜索方向不同。SP_NAME_MODERATION=lexicon，SP_NAME_MODERATION_URL 是仅服务端配置的 HTTP(S) 基地址（默认 http://127.0.0.1:8080）；无配置兼容关闭且日志标注 OFF。不再使用 Jev、TypeSafe 密钥、模型或概率阈值。
+- 后端只部署在回环或受控私网，不公开无鉴权的 /reload；浏览器不直连后端。不在日志记录昵称/响应，保持有界短期缓存；更新词库后重启游戏服务清除缓存。词库有误报/漏报，命中属于昵称政策，不等同法律认定。文档 docs/NAME_MODERATION.md，回归 test/name-moderation.test.js。

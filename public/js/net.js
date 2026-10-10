@@ -106,6 +106,7 @@ export function defaultWsUrl(loc = globalThis.location) {
 
 const WS_OPEN = 1;
 const WS_CONNECTING = 0;
+const NAME_REVIEW_ERRORS = new Set(['NAME_REJECTED', 'NAME_REVIEW_UNAVAILABLE', 'RATE']);
 
 /**
  * Game server connection. Construct with injectable dependencies for tests.
@@ -116,6 +117,7 @@ export class Net {
    * @param {string} [opts.url] socket URL (default: derived from location at connect time)
    * @param {any} [opts.WebSocket] WebSocket constructor (default: globalThis.WebSocket)
    * @param {() => (string|null)} [opts.getToken] reconnect-token provider for `hello`
+   * @param {(name: string, signal: AbortSignal) => Promise<{allowed: boolean, code?: string}>} [opts.moderateName]
    * @param {() => number} [opts.now]
    * @param {() => number} [opts.random]
    * @param {{setTimeout: Function, clearTimeout: Function, setInterval: Function, clearInterval: Function}} [opts.timers]
@@ -123,6 +125,8 @@ export class Net {
   constructor(opts = {}) {
     this.url = opts.url || null;
     this.WS = opts.WebSocket || null;
+    this.moderateName = opts.moderateName || null;
+    this._nameCheck = null;
     this.getToken = typeof opts.getToken === 'function' ? opts.getToken : () => null;
     this.now = opts.now || (() => Date.now());
     this.random = opts.random || Math.random;
@@ -342,6 +346,9 @@ export class Net {
   }
 
   _teardownSocket() {
+    this._nameCheck?.controller.abort();
+    this._nameCheck = null;
+    this._helloHadSession = false;
     this._states.reset();
     this._clearTimer('_stateResyncTimer', 'clearTimeout');
     const ws = this.ws;
@@ -366,7 +373,41 @@ export class Net {
   // ---- handshake -------------------------------------------------------------------------------
 
   _sendHello() {
+    if (!this.name || !this.ws || this.ws.readyState !== WS_OPEN) return;
+    if (!this.moderateName) { this._sendApprovedHello(); return; }
+    const ws = this.ws, name = this.name;
+    if (this._nameCheck?.ws === ws && this._nameCheck.name === name) return;
+    this._nameCheck?.controller.abort();
+    const controller = new AbortController();
+    const check = this._nameCheck = { ws, name, controller };
+    if (this.status !== 'online') this._setStatus('handshaking');
+    const timer = this.timers.setTimeout(() => controller.abort(), 7000);
+    const aborted = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(new NetError('NAME_REVIEW_UNAVAILABLE')), { once: true }));
+    Promise.race([Promise.resolve().then(() => this.moderateName(name, controller.signal)), aborted]).then((result) => {
+      if (this._nameCheck !== check || this.ws !== ws || this.name !== name || ws.readyState !== WS_OPEN) return;
+      if (result?.allowed !== true && ['NAME_REJECTED', 'BAD_MSG'].includes(result?.code)) throw new NetError(result.code);
+      this._sendApprovedHello();
+    }).catch((err) => {
+      if (this._nameCheck !== check || this.ws !== ws || this.name !== name || ws.readyState !== WS_OPEN) return;
+      if (!(err instanceof NetError) || !['NAME_REJECTED', 'BAD_MSG'].includes(err.code)) {
+        this._sendApprovedHello(); // Timeout/network/review errors silently use normal hello.
+        return;
+      }
+      this.lastError = err;
+      if (this.status !== 'online') {
+        this.name = null; // Stay on the editable title instead of repeatedly retrying a rejected name.
+        this._setStatus('connected'); this._failPending('OFFLINE', true);
+      } else this.name = this.helloName;
+      this._emit('helloError', this.lastError);
+    }).finally(() => {
+      this.timers.clearTimeout(timer);
+      if (this._nameCheck === check) this._nameCheck = null;
+    });
+  }
+
+  _sendApprovedHello() {
     if (!this.name) return;
+    this._helloHadSession = this.status === 'online';
     const rid = this._nextRid();
     const msg = { t: 'hello', rid, name: this.name, version: PROTOCOL_VERSION, stateDelta: STATE_DELTA_VERSION };
     let token = null;
@@ -408,6 +449,15 @@ export class Net {
     this._clearTimer('_helloTimer', 'clearTimeout');
     this._helloRid = null;
     this.lastError = new NetError(msg.code, msg.msg, msg.detail);
+    if (NAME_REVIEW_ERRORS.has(msg.code)) {
+      if (this._helloHadSession) {
+        this.name = this.helloName;
+        this._setStatus('online');
+        this._emit('helloError', this.lastError);
+        return;
+      }
+      this.name = null;
+    }
     this._setStatus('connected');
     // Queued requests can't be sent without a session.
     this._failPending('OFFLINE', true);
@@ -859,5 +909,19 @@ export function createIdentity(deps = {}) {
 /** Browser identity singleton (main.js awaits `identity.init()` before connecting). */
 export const identity = createIdentity();
 
-/** Browser connection singleton (created lazily-safe: nothing touches the network until connect()). */
-export const net = new Net({ getToken: () => identity.getToken() });
+/** Same-origin preflight; the lexicon service URL stays on the server. */
+export async function checkNameBeforeHello(name, signal, fetchFn = globalThis.fetch) {
+  try {
+    const response = await fetchFn('/api/name-moderation', { method: 'POST', cache: 'no-store',
+      credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    const result = await response.json();
+    if (response.ok && result?.allowed === true) return { allowed: true };
+    // Only an explicit, well-formed rejection blocks the preflight. HTTP/API failures are silent.
+    if (response.status === 422 && result?.allowed === false && result.code === 'NAME_REJECTED') return { allowed: false, code: 'NAME_REJECTED' };
+    if (response.status === 400 && result?.allowed === false && result.code === 'BAD_MSG') return { allowed: false, code: 'BAD_MSG' };
+    return { allowed: true };
+  } catch { return { allowed: true }; }
+}
+
+/** Browser singleton; no request until connect()/setName(). */
+export const net = new Net({ getToken: () => identity.getToken(), moderateName: checkNameBeforeHello });

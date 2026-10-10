@@ -1253,5 +1253,8 @@
   "1–{n} 名博士 · 可邀请或匹配队友": "1–{n} Doctors · Invite or find teammates",
   "单人加入 · 自动匹配队友": "Join alone · Find teammates automatically",
   "{name}博士通过控制台获得了{item}": "Doctor {name} obtained {item} through the console",
-  "{name}博士通过控制台获得了{item} {n} 层": "Doctor {name} obtained {n} layers of {item} through the console"
+  "{name}博士通过控制台获得了{item} {n} 层": "Doctor {name} obtained {n} layers of {item} through the console",
+  "用户名不符合本服务器命名规则，请更换名字": "This username does not meet this server's naming rules. Please choose another name.",
+  "用户名审核暂不可用，请稍后重试": "Username review is temporarily unavailable. Please try again later.",
+  "启用用户名审核时，代号会由敏感词服务检测；请勿填写个人信息。": "When username review is enabled, your callsign is checked by a sensitive-word service. Do not include personal information."
 }

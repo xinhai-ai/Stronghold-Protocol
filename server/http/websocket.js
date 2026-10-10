@@ -44,7 +44,7 @@ export function createSessionStack(opts, { data, log, workerPool }) {
   log.info(`[match] tuning: combat ${parseCombat(process.env.SP_COMBAT)}, verify ${parseVerify(process.env.SP_VERIFY)}, bot rehearsal ${parseBotRehearsal(process.env.SP_BOT_REHEARSAL)} (docs/DEPLOY.md §3.4)`);
   const registry = new SessionRegistry({ reconnectWindowMs: netOptions.reconnectWindowMs ?? NET_DEFAULTS.reconnectWindowMs });
   const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, options: lobbyOptions, workerPool });
-  const network = new Network({ registry, handler: lobby, log, options: netOptions });
+  const network = new Network({ registry, handler: lobby, log, options: netOptions, nameModeration: opts.nameModeration });
   return { registry, lobby, network };
 }
 

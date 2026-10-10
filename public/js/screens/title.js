@@ -86,6 +86,14 @@ export function enterSession(rawName) {
   return true;
 }
 
+/** A failed name check returns to the editable title; do not clear reconnect tokens/room state. */
+export function returnToTitleAfterNameReview(error, connection = net, sessionIdentity = identity, state = store) {
+  if (connection.status === 'online' || !['NAME_REJECTED', 'BAD_MSG'].includes(error?.code)) return false;
+  sessionIdentity.setEntered(false);
+  state.patch('session', { entered: false });
+  return true;
+}
+
 // data/assets.json `ui` keys are 'group/key' (docs/ASSETS.md).
 const BACKDROP_KEYS = ['titleBackdrop', 'entry/bkg_01', 'entry/bkg_02'];
 const RIDGE_KEYS = ['titleRidges', 'entry/bg_mountains_tiled'];
@@ -271,7 +279,8 @@ export function TitleScreen() {
         </div>` : null}
         <${TextField} label=${t('博士代号')} micro="CALLSIGN" size="lg" icon="user" value=${name} maxLength=${NAME_MAX_LEN}
           placeholder=${t('输入你的代号（最多 {NAME_MAX_LEN} 字）', { NAME_MAX_LEN })} autoFocus=${!touchUi}
-          onInput=${setName} onEnter=${start} />
+          onInput=${setName} onEnter=${start}
+          hint=${t('启用用户名审核时，代号会由敏感词服务检测；请勿填写个人信息。')} />
         <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" disabled=${!valid} onClick=${start}>${t('开始')}<//>
         <div class="title-conn">
           <span class=${`status-dot ${dotClass}`}></span>

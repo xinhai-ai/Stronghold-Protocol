@@ -21,6 +21,8 @@
 // The server only auto-listens when this file is the process entry point.
 
 import http from 'node:http';
+import { nameModerationFromEnv } from './nameModeration.js';
+import { createNameModerationRoute } from './http/nameModeration.js';
 import path from 'node:path';
 import { parseAssetCdn, parseEnvLimit, parseWsCompression } from './http/config.js';
 import { openStoreFromEnv } from './redis.js';
@@ -53,6 +55,7 @@ export {
 /**
  * Build and start the HTTP + WebSocket server.
  * @param {{
+ *   nameModeration?: { check: Function, close?: Function } | null,
  *   port?: number, host?: string, quiet?: boolean, log?: object,
  *   publicDir?: string, dataDir?: string, sharedDir?: string, packsDir?: string,
  *   MatchClass?: Function, seedFn?: () => number,
@@ -70,6 +73,7 @@ export {
  *                     close: () => Promise<void> }>}
  */
 export async function startServer(opts = {}) {
+  const nameModeration = opts.nameModeration !== undefined ? opts.nameModeration : nameModerationFromEnv();
   const { port, host } = listenAddress(opts);
   const log = opts.log || makeLogger(!!opts.quiet);
   const { publicDir, dataDir, sharedDir, packsDir } = serveDirs(opts);
@@ -101,7 +105,7 @@ export async function startServer(opts = {}) {
     throw new RangeError('workers must be 0..32');
   }
   const workerPool = ownsWorkerPool ? (workerConfig.size > 0 ? new SimulationPool({ data, ...workerConfig }) : null) : opts.workerPool;
-  const { registry, lobby, network } = createSessionStack(opts, { data, log, workerPool });
+  const { registry, lobby, network } = createSessionStack({ ...opts, nameModeration }, { data, log, workerPool });
   // Resume the last state before listening: every reconnecting client is recognized by its token right away.
   const persister = store ? new Persister({ store, registry, lobby, log, now: opts.now, saveMs }) : null;
   if (store && opts.resume !== false) {
@@ -133,7 +137,11 @@ export async function startServer(opts = {}) {
   const announcements = new Announcements({ file: announcementFile ? path.resolve(announcementFile) : null,
     broadcast: (msg) => network.broadcast(msg), log, pollMs: opts.announcementPollMs });
   await announcements.start();
-  const serveApi = createPublicApi({ lobby, announcements, trustProxy: network.opts.trustProxy, sendJson, sendError });
+  log.info(`[names] moderation ${nameModeration ? 'Sensitive-lexicon enabled (fail open)' : 'OFF — set SP_NAME_MODERATION=lexicon and SP_NAME_MODERATION_URL to enable'}`);
+  const servePublicApi = createPublicApi({ lobby, announcements, trustProxy: network.opts.trustProxy, sendJson, sendError });
+
+  const serveNameReview = createNameModerationRoute({ moderation: nameModeration, trustProxy: network.opts.trustProxy });
+  const serveApi = async (req, res, pathname) => await serveNameReview(req, res, pathname) || await servePublicApi(req, res, pathname);
 
   // content packs (docs/PACKS.md): scanned now — the start log names them — and again whenever their folders change
   const packs = createPackRegistry({ publicDir, dataDir, packsDir }, { log });
@@ -158,6 +166,7 @@ export async function startServer(opts = {}) {
     });
   } catch (e) {
     await announcements.stop();
+    nameModeration?.close?.();
     network.close(); // stop heartbeat/sweep timers of the half-built server
     persister?.stop();
     await persister?.encoder.close();
@@ -177,6 +186,7 @@ export async function startServer(opts = {}) {
     if (closing) return closing;
     closing = (async () => {
       network.beginShutdown();
+      nameModeration?.close?.();
       lobby.stopMatchmaking();
       await announcements.stop();
       // the state (match checkpoints included) is written while the rooms still exist, then the rooms are disposed

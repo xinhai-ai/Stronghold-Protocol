@@ -42,7 +42,7 @@ import { net, identity, NetError } from './net.js';
 import { store, useStore, emptyMatch, selectRoute, sessionResetNotice, isSpectating } from './store.js';
 import { data } from './data.js';
 import { GAME_FILES } from './ui/gameComponents.js';
-import { TitleScreen, sanitizeName } from './screens/title.js';
+import { TitleScreen, sanitizeName, returnToTitleAfterNameReview } from './screens/title.js';
 import { LobbyScreen, rememberRoom, parseRoomParam } from './screens/lobby.js';
 import { RoomScreen } from './screens/room.js';
 import { GameScreen } from './screens/game.js';
@@ -219,7 +219,7 @@ function wireNet() {
   });
   net.on('site.announcement', (msg) => store.set({ announcement: announcementFromMessage(msg),
     popupAnnouncement: announcementFromMessage(msg, 'popup') }));
-  net.on('helloError', (err) => toastError(err));
+  net.on('helloError', (err) => { returnToTitleAfterNameReview(err); toastError(err); });
   net.on('replaced', () => toast(t('该身份已在其他页面登录，本页已断开'), 'warn', { ttl: 6000 }));
   net.on('unhandledError', (err) => toastError(err));
   net.on('room.state', onRoomState);

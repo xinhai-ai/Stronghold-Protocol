@@ -46,6 +46,7 @@ test('lexicon config supports Docker host/prefix, explicit off; invalid URL/mode
   const jev = nameModerationFromEnv({ SP_NAME_MODERATION: 'jev', TYPESAFE_API_KEY: 'test-key' }); assert.equal(jev.mode, 'jev'); jev.close();
   const both = nameModerationFromEnv({ SP_NAME_MODERATION: 'both', SP_NAME_MODERATION_URL: 'http://lexicon:8080', TYPESAFE_API_KEY: 'test-key' }); assert.equal(both.mode, 'both'); both.close();
   assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION: 'jev' }), /TYPESAFE_API_KEY/);
+  assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION: 'both', TYPESAFE_API_KEY: 'test-key' }), /SP_NAME_MODERATION_URL/);
   assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION: 'both', SP_NAME_MODERATION_URL: 'http://lexicon:8080' }), /TYPESAFE_API_KEY/);
   for (const mode of ['typo']) assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION: mode }), /must be/);
   for (const url of ['bad', 'file:///test', 'ftp://localhost', 'http://user:pass@localhost', 'http://localhost?q=1', 'http://localhost/#x']) assert.throws(() => nameModerationFromEnv({ SP_NAME_MODERATION_URL: url }), /URL/);

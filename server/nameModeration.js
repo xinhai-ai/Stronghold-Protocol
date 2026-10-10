@@ -100,6 +100,7 @@ export function nameModerationFromEnv(env = process.env) {
   const mode = env.SP_NAME_MODERATION || (env.SP_NAME_MODERATION_URL ? 'lexicon' : env.TYPESAFE_API_KEY ? 'jev' : 'off');
   if (mode === 'off') return null;
   if (!['lexicon', 'jev', 'both'].includes(mode)) throw new Error('SP_NAME_MODERATION must be lexicon, jev, both or off');
+  if (mode === 'both' && !env.SP_NAME_MODERATION_URL) throw new Error('both moderation requires SP_NAME_MODERATION_URL');
   const lexicon = ['lexicon', 'both'].includes(mode)
     ? createNameModeration({ baseUrl: env.SP_NAME_MODERATION_URL || DEFAULT_LEXICON_URL }) : null;
   const jev = ['jev', 'both'].includes(mode)

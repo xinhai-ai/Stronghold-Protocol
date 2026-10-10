@@ -709,7 +709,7 @@ describe('keyboard & settings', () => {
   test('sanitizeSettings', () => {
     assert.deepEqual(sanitizeSettings(null), { ...DEFAULT_SETTINGS });
     assert.deepEqual(sanitizeSettings({ bgm: 3, sfx: -1, voice: 2, muted: 'yes', damageNumbers: false, quality: 'ultra' }),
-      { bgm: 1, sfx: 0, voice: 1, voiceLang: 'cn', voiceOverrides: {}, textSize: 'sm', muted: false, damageNumbers: false, quality: 'high', fpsLimit: 0, preload: false, preloadOptional: false });
+      { bgm: 1, sfx: 0, voice: 1, voiceLang: 'cn', voiceOverrides: {}, textSize: 'sm', muted: false, damageNumbers: false, quality: 'high', fpsLimit: 0, preload: false, preloadOptional: false, preloadVoiceLang: 'cn' });
     assert.equal(sanitizeSettings({ bgm: 0.5 }).voice, DEFAULT_SETTINGS.voice, 'a saved profile without `voice` gets the default');
     // 语音语言 (0.2.2): 中文 by default — a profile saved before it, or any other value, plays the Chinese dub
     assert.equal(DEFAULT_SETTINGS.voiceLang, 'cn');

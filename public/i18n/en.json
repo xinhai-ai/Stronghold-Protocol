@@ -1408,5 +1408,15 @@
   "正在准备导入资源包…": "Preparing resource package import…",
   "用户名不符合本服务器命名规则，请更换名字": "This username does not meet this server's naming rules. Please choose another name.",
   "用户名审核暂不可用，请稍后重试": "Username review is temporarily unavailable. Please try again later.",
-  "启用用户名审核时，代号会由敏感词服务检测；请勿填写个人信息。": "When username review is enabled, your callsign is checked by a sensitive-word service. Do not include personal information."
+  "启用用户名审核时，代号会由敏感词服务检测；请勿填写个人信息。": "When username review is enabled, your callsign is checked by a sensitive-word service. Do not include personal information.",
+  "中文语音": "Chinese voices",
+  "日语语音": "Japanese voices",
+  "其他角色语音": "Other character voices",
+  "预载语音语言": "Preload voice language",
+  "两种语言": "Both languages",
+  "不预载语音": "Do not preload voices",
+  "仅影响预载范围；播放语言仍在设置中选择。切换后保留已有缓存。": "Only affects preloading. Choose the playback language in Settings. Switching keeps cached files.",
+  "勾选“同时预载”后下载所选语音。": "Enable “Preload together” to download the selected voices.",
+  "未选择": "Not selected",
+  "所选 {done}/{total}": "Selected {done}/{total}"
 }

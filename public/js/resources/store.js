@@ -400,22 +400,24 @@ export class ResourceStore {
   /**
    * Download every missing file (essential tier first). Aborting the signal stops within one file; single file failures
    * are collected instead, so one broken file cannot waste a whole run.
-   * @param {{ signal?: AbortSignal, onProgress?: (p: any) => void, tiers?: number[] }} [opts]
+   * @param {{ signal?: AbortSignal, onProgress?: (p: any) => void, tiers?: number[], includeFile?: (file: any) => boolean }} [opts]
    */
-  download({ signal, onProgress, tiers = [TIER_ESSENTIAL, TIER_REST] } = {}) {
+  download({ signal, onProgress, tiers = [TIER_ESSENTIAL, TIER_REST], includeFile = () => true } = {}) {
     if (this.running) return this.running;
-    const run = this.#download({ signal, onProgress, tiers }).finally(() => { this.running = null; });
+    const run = this.#download({ signal, onProgress, tiers, includeFile }).finally(() => { this.running = null; });
     this.running = run;
     return run;
   }
 
-  async #download({ signal, onProgress, tiers }) {
+  async #download({ signal, onProgress, tiers, includeFile }) {
     const wanted = new Set(tiers);
     const cache = await this.caches.open(this.cacheName);
     const index = await this.#readIndex(cache);
     const start = await this.status();
     checkAbort(signal);
-    const work = this.files.filter((f) => wanted.has(f.tier) && this.eligible(f) && !start.present.has(this.keyOf(f.url)));
+    const work = this.files.filter((f) => wanted.has(f.tier) && includeFile(f) && this.eligible(f) && !start.present.has(this.keyOf(f.url)));
+    const groups = start.groups.map((group) => ({ ...group }));
+    const groupsById = new Map(groups.map((group) => [group.id, group]));
     let done = start.count;
     let bytes = start.bytes;
     let sized = start.sized;
@@ -435,7 +437,7 @@ export class ResourceStore {
       bytes, totalBytes: start.totalBytes, sized, sizedTotal: start.sizedTotal,
       tier1: start.tier1, tier1Present: tier1Done, tier2: start.tier2, tier2Present: tier2Done,
       tier1Wanted: start.tier1Wanted, tier2Wanted: start.tier2Wanted,
-      groups: this.#tally(start.present).groups,
+      groups: groups.map((group) => ({ ...group })),
       complete: false, failed, failures: failures.slice(), current, adopted, downloaded,
     });
     const emit = (current = null, force = false) => {
@@ -479,6 +481,9 @@ export class ResourceStore {
             index.files[key] = file.hash;
             if (++pendingFlush >= INDEX_FLUSH_EVERY) { pendingFlush = 0; await this.#writeIndex(cache, index.files, this.manifest.version); }
           }
+          const group = groupsById.get(resourceGroup(file));
+          group.present++;
+          if (Number.isSafeInteger(file.size)) group.bytes += file.size;
           done++;
           start.present.add(key);
           if (file.tier === TIER_ESSENTIAL) tier1Done++; else tier2Done++;

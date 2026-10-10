@@ -240,3 +240,9 @@ docs/SIM.md (the test harness section) and the patterns in `test/content/op_sieg
 - 浏览器发送 hello 前经同源 POST /api/name-moderation 预审；服务端对 hello 独立检查，等待审核结束后才创建、接管或重命名会话。词库明确命中拦截，审核超时/错误/审核预算耗尽按用户要求静默放行且不缓存降级结果；名字格式和原有传输限流不变。登录、改名、重连及直接 WS 请求均须覆盖，保留断线及并发昵称竞态隔离。
 - 审核后端使用 konsheng/Sensitive-lexicon 的 dev Docker HTTP 接口 POST /contains，请求 {text}，仅布尔 contains 为有效结果；不要用 /detect 替换，其子串搜索方向不同。SP_NAME_MODERATION=lexicon，SP_NAME_MODERATION_URL 是仅服务端配置的 HTTP(S) 基地址（默认 http://127.0.0.1:8080）；无配置兼容关闭且日志标注 OFF。不再使用 Jev、TypeSafe 密钥、模型或概率阈值。
 - 后端只部署在回环或受控私网，不公开无鉴权的 /reload；浏览器不直连后端。不在日志记录昵称/响应，保持有界短期缓存；更新词库后重启游戏服务清除缓存。词库有误报/漏报，命中属于昵称政策，不等同法律认定。文档 docs/NAME_MODERATION.md，回归 test/name-moderation.test.js。
+
+## 预载语音范围
+
+- 资源管理直接选择中文、日语、两种语言或不预载语音，浏览器持久化 preloadVoiceLang，独立于播放 voiceLang 和干员个人语音覆盖；旧配置以已保存的播放语言迁移，默认中文。可选资源仍需同时预载开关。
+- 按 /voice/cn/ 与 /voice/jp/ 目录识别（兼容 CDN 前缀），不能按 cn_019 等文件名判语言。保留旧未分语言语音组及不预载时的排除。切换中止旧范围、等待已开始操作，只增量下载最新选择，不删除已有缓存；完成与进度只计算所选可缓存资源。
+- ZIP 内未选择但有效的资源仍须校验并保留，导出仍包含全部有效缓存；仅导入后的缺失下载按范围过滤。分类计数增量维护，不在每个进度更新重扫全清单。更新 common.js 等独立 SW 依赖后部署需更新 SW，并同步 CDN 的 UI 语言 JSON。验证 test/ui/preload-voice.test.js 和现有资源/ZIP/构建测试。

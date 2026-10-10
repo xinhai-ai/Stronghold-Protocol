@@ -2,14 +2,21 @@
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Button, MicroLabel, Modal, ProgressBar } from './components.js';
 import { createStore, useStore } from '../store.js';
-import { formatBytes } from '../resources/common.js';
+import { formatBytes, PRELOAD_VOICE_LANGS } from '../resources/common.js';
 import { clearResources, exportResources, importResources, inspectResources, pauseResources,
   resourceState, startResources, subscribeResources } from '../resources/index.js';
-import { t } from '../../../shared/i18n.js';
+import { t, N_ } from '../../../shared/i18n.js';
+
+const PRELOAD_VOICE_LABELS = { cn: N_('中文语音'), jp: N_('日语语音'), all: N_('两种语言'), none: N_('不预载语音') };
 
 const RESOURCE_DOWNLOAD_URL = 'https://t.bilibili.com/1256354225629167619';
 
 export function byteText(st) {
+  if (Number.isFinite(st.selectedWanted)) {
+    if (!st.selectedTotalBytes) return '';
+    return st.selectedUnknownSize ? formatBytes(st.selectedTotalBytes)
+      : `${formatBytes(st.selectedBytes)} / ${formatBytes(st.selectedTotalBytes)}`;
+  }
   const total = Number.isFinite(st.totalBytes) && st.totalBytes > 0 ? st.totalBytes : 0;
   if (!total) return '';
   const done = Number.isFinite(st.bytes) ? st.bytes : 0;
@@ -17,11 +24,18 @@ export function byteText(st) {
 }
 
 export function detailText(st) {
+  if (Number.isFinite(st.selectedWanted)) return [t('所选 {done}/{total}', { done: st.selectedDone, total: st.selectedWanted }), byteText(st)].filter(Boolean).join(' · ');
   if (!st.total) return '';
   return [st.tier1Total ? t('必需 {tier1Done}/{tier1Total}', { tier1Done: st.tier1Done, tier1Total: st.tier1Total }) : '', t('全部 {done}/{total}', { done: st.done, total: st.total }), byteText(st)].filter(Boolean).join(' · ');
 }
 
 export function percent(st) {
+  if (Number.isFinite(st.selectedWanted)) {
+    if (!st.selectedWanted) return 0;
+    const pct = st.selectedUnknownSize === 0 && st.selectedTotalBytes > 0
+      ? st.selectedBytes / st.selectedTotalBytes : st.selectedDone / st.selectedWanted;
+    return Math.max(0, Math.min(100, Math.round(pct * 100)));
+  }
   if (!st.total) return 0;
   const byBytes = st.totalBytes > 0 && st.sizedTotal === st.total;
   const pct = byBytes ? (st.bytes / st.totalBytes) * 100 : (st.done / Math.max(1, st.wanted || st.total)) * 100;
@@ -44,7 +58,7 @@ function stateText(st, enabled) {
   if (st.phase === 'foreign') return t('另一标签页处理中');
   if (busy(st)) return t('处理中');
   if (st.complete) return t('全部已保存');
-  if (st.selectionComplete && st.tier1Total) return t('必备已保存');
+  if (st.selectionComplete && st.tier1Total) return st.optional ? t('所选资源已齐全。') : t('必备已保存');
   return enabled ? t('已暂停') : t('未开启');
 }
 
@@ -70,13 +84,14 @@ export function ResourceLauncher({ enabled }) {
   </div>`;
 }
 
-function ResourceTier({ st, tier, optional, onOptional, disabled }) {
+function ResourceTier({ st, tier, optional, onOptional, voiceLang, onVoiceLang, disabled }) {
   const groups = st.groups.filter((g) => g.tier === tier);
-  const total = groups.reduce((n, g) => n + g.wanted, 0);
-  const done = groups.reduce((n, g) => n + g.present, 0);
-  const bytes = groups.reduce((n, g) => n + g.bytes, 0);
-  const totalBytes = groups.reduce((n, g) => n + g.totalBytes, 0);
-  const unknown = groups.some((g) => g.unknownSize);
+  const chosen = groups.filter((g) => g.selected !== false);
+  const total = chosen.reduce((n, g) => n + g.wanted, 0);
+  const done = chosen.reduce((n, g) => n + g.present, 0);
+  const bytes = chosen.reduce((n, g) => n + g.bytes, 0);
+  const totalBytes = chosen.reduce((n, g) => n + g.totalBytes, 0);
+  const unknown = chosen.some((g) => g.unknownSize);
   return html`<section class="resource-tier">
     <header class="resource-tier__head">
       <div><h3>${tier === 1 ? t('必备资源') : t('可选资源')}</h3>
@@ -84,12 +99,23 @@ function ResourceTier({ st, tier, optional, onOptional, disabled }) {
       ${tier === 2 ? html`<label class="resource-choice"><input type="checkbox" checked=${optional} disabled=${disabled}
         onChange=${(e) => onOptional(e.currentTarget.checked)} />${t('同时预载')}</label>` : html`<${MicroLabel}>REQUIRED<//>`}
     </header>
+    ${tier === 2 ? html`<fieldset class="resource-voice-choice" disabled=${disabled}>
+      <legend>${t('预载语音语言')}</legend>
+      <div class="resource-voice-choice__options" role="radiogroup" aria-label=${t('预载语音语言')} data-testid="preload-voice-lang">
+        ${PRELOAD_VOICE_LANGS.map((lang) => html`<label class="resource-choice" key=${lang}>
+          <input type="radio" name="preload-voice-lang" value=${lang} checked=${voiceLang === lang}
+            onChange=${() => onVoiceLang(lang)} />${t(PRELOAD_VOICE_LABELS[lang])}</label>`)}
+      </div>
+      <p>${t('仅影响预载范围；播放语言仍在设置中选择。切换后保留已有缓存。')}</p>
+      ${!optional ? html`<p>${t('勾选“同时预载”后下载所选语音。')}</p>` : null}
+    </fieldset>` : null}
     <div class="resource-tier__summary"><span class="num">${t('{done} / {total} 个文件', { done, total })}</span>
       <span class="num">${unknown ? t('部分大小未知') : `${formatBytes(bytes)} / ${formatBytes(totalBytes)}`}</span></div>
     <${ProgressBar} value=${done} max=${Math.max(1, total)} size="sm" tone=${tier === 1 ? 'mint' : 'amber'} />
     <ul class="resource-tier__list">
       ${groups.map((group) => html`<li key=${group.id}
-        class=${st.archivePhase === 'import' && st.archiveGroup === group.id ? 'is-importing' : ''}><span>${t(group.name)}
+        class=${st.archivePhase === 'import' && st.archiveGroup === group.id ? 'is-importing' : group.selected === false ? 'is-unselected' : ''}><span>${t(group.name)}
+          ${group.selected === false ? html`<small>${t('未选择')}</small>` : null}
           ${st.archivePhase === 'import' && st.archiveGroup === group.id ? html`<small>${t('正在导入')}</small>` : null}</span>
         <span class="num">${group.present}/${group.wanted}</span>
         <span class="num">${group.unknownSize ? t('大小待确认') : formatBytes(group.totalBytes)}</span></li>`)}
@@ -98,7 +124,7 @@ function ResourceTier({ st, tier, optional, onOptional, disabled }) {
 }
 
 /** Mounted once in main.js, above all screens including the settings modal. */
-export function ResourceHost({ enabled, optional, onChange, onOptional }) {
+export function ResourceHost({ enabled, optional, voiceLang = 'cn', onVoiceLang, onChange, onOptional }) {
   const { open } = useStore((s) => s, Object.is, resourceUi);
   const st = useResources();
   const fileInput = useRef(null);
@@ -133,7 +159,7 @@ export function ResourceHost({ enabled, optional, onChange, onOptional }) {
       <p class="resource-manager__intro">${t('先预载必备资源；可选资源可按需加载。关闭此窗口后，下载会在后台继续。')}</p>
       <div class="resource-manager__tiers">
         <${ResourceTier} st=${st} tier=${1} />
-        <${ResourceTier} st=${st} tier=${2} optional=${optional} onOptional=${onOptional} disabled=${archiveBusy} />
+        <${ResourceTier} st=${st} tier=${2} optional=${optional} onOptional=${onOptional} voiceLang=${voiceLang} onVoiceLang=${onVoiceLang} disabled=${archiveBusy} />
       </div>
       <p class=${`resource-manager__status${st.error ? ' is-error' : ''}`} role="status" aria-live="polite">
         ${st.message || (enabled ? t('预载已开启') : t('选择下载范围，然后开始预载；也可以直接导入资源包。'))}</p>

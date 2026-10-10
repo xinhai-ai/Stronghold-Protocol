@@ -1,3 +1,4 @@
+import { normalizePreloadVoiceLang } from '../../resources/common.js';
 import { normalizeFrameRate } from '../../frameRate.js';
 // ui/gameLogic/settings.js — settings defaults and sanitising. Re-exported from ../gameLogic.js.
 
@@ -24,7 +25,7 @@ export const TEXT_SIZES = Object.freeze(['sm', 'md', 'lg', 'xl']);
 
 /** keys: the in-match shortcuts' key map (ui/gameLogic/shortcuts.js; settings → 快捷键). voiceLang: VOICE_LANGS.
  *  textSize: TEXT_SIZES (css/theme.css `--t`, applied by ui/settings.js applyTextSize). */
-export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, quality: 'high', textSize: 'sm', fpsLimit: 0, preload: false, preloadOptional: false });
+export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, quality: 'high', textSize: 'sm', fpsLimit: 0, preload: false, preloadOptional: false, preloadVoiceLang: 'cn' });
 const QUALITIES = ['high', 'medium', 'low'];
 
 /**
@@ -49,6 +50,7 @@ export function sanitizeSettings(raw) {
     // optional asset preload (docs/ASSETS.md「Preload」): off unless the player turned it on
     preload: typeof r.preload === 'boolean' ? r.preload : DEFAULT_SETTINGS.preload,
     preloadOptional: typeof r.preloadOptional === 'boolean' ? r.preloadOptional : DEFAULT_SETTINGS.preloadOptional,
+    preloadVoiceLang: normalizePreloadVoiceLang(r.preloadVoiceLang, r.voiceLang),
     textSize: TEXT_SIZES.includes(r.textSize) ? r.textSize : DEFAULT_SETTINGS.textSize,
   };
 }

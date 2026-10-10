@@ -9,7 +9,7 @@
 // The settings panel (public/js/ui/resourcePanel.js) renders `resourceState()`; main.js calls `syncResources()` with the
 // persisted setting at boot and on every settings change.
 
-import { CACHE_PREFIX, MANIFEST_URL, SW_URL, TIER_ESSENTIAL, TIER_REST, checkAbort, formatBytes, isQuotaError, resourceGroup, validateManifest } from './common.js';
+import { CACHE_PREFIX, MANIFEST_URL, SW_URL, TIER_ESSENTIAL, TIER_REST, checkAbort, formatBytes, isQuotaError, resourceGroup, normalizePreloadVoiceLang, resourceSelection, selectedResourceGroup, validateManifest } from './common.js';
 import { ResourceStore } from './store.js';
 import { t } from '../../../shared/i18n.js';
 
@@ -42,6 +42,7 @@ const state = {
   archivePercent: 0,
   archiveGroup: '',
   optional: false,
+  voiceLang: 'cn',
   selectionComplete: false,
   groups: [],
 };
@@ -54,6 +55,7 @@ let activeRun = null;
 let transferPromise = null;
 let archiveController = null;
 let optional = false;
+let voiceLang = 'cn';
 let syncRevision = 0;
 
 /** Subscribe to preload state changes (returns the unsubscribe function). */
@@ -96,15 +98,13 @@ const counters = (s) => ({
   sizedTotal: s.sizedTotal,
   skipped: s.skipped,
   complete: s.complete,
-  selectionComplete: selectionComplete(s),
   // migration (kept bytes) vs network (fetched bytes): 0 unless a run is/was in flight
   adopted: s.adopted ?? 0,
   downloaded: s.downloaded ?? 0,
-  groups: s.groups ?? [],
+  ...resourceSelection(s, optional, voiceLang),
 });
 
-const selectionComplete = (s) => (s.tier1Present >= (s.tier1Wanted ?? s.tier1))
-  && (!optional || s.tier2Present >= (s.tier2Wanted ?? s.tier2));
+const selectionComplete = (s) => resourceSelection(s, optional, voiceLang).selectionComplete;
 
 /** Why this browser cannot keep the resources (empty ⇒ it can). */
 export function unsupportedReason() {
@@ -168,14 +168,16 @@ async function dropWorker() {
  * Turn the preload on or off (idempotent: the settings store fires on every volume change).
  * @param {boolean} enabled
  */
-export async function syncResources(enabled, includeOptional = optional) {
+export async function syncResources(enabled, includeOptional = optional, preloadVoiceLang = voiceLang) {
   enabled = !!enabled;
-  const changed = optional !== !!includeOptional;
+  const nextVoiceLang = normalizePreloadVoiceLang(preloadVoiceLang);
+  const changed = optional !== !!includeOptional || voiceLang !== nextVoiceLang;
   if (enabled === current && !changed) { set({ enabled }); return; }
   const revision = ++syncRevision;
   current = enabled;
   optional = !!includeOptional;
-  set({ enabled, optional, error: false, message: '' });
+  voiceLang = nextVoiceLang;
+  set({ enabled, optional, voiceLang, ...resourceSelection(state, optional, voiceLang), error: false, message: '' });
   if (!enabled) {
     controller?.abort();
     archiveController?.abort();
@@ -220,7 +222,7 @@ function watchOtherTab(store) {
   }
   return store.status().then((st) => set({
     ...counters(st), phase: 'foreign', error: false,
-    message: st.complete ? t('资源已全部预载完成。') : t('另一个标签页正在预载⋯回到这个标签页时会自动继续。'),
+    message: selectionComplete(st) ? t('所选资源已齐全。') : t('另一个标签页正在预载⋯回到这个标签页时会自动继续。'),
   }));
 }
 
@@ -258,7 +260,7 @@ async function startDownload(signal) {
     ...before.checkTimings, durationMs: performance.now() - checkStart, cached: before.count, files: before.total });
   if (!current || signal.aborted) { set({ phase: 'paused' }); return; }
   const ready = selectionComplete(before);
-  set({ ...counters(before), phase: ready ? 'ready' : 'download', message: ready ? optional ? t('资源已全部预载完成。') : t('必备资源已预载完成；可选资源按需加载。') : '' });
+  set({ ...counters(before), phase: ready ? 'ready' : 'download', message: ready ? optional ? t('所选资源已齐全。') : t('必备资源已预载完成；可选资源按需加载。') : '' });
   if (ready) { if (before.complete) await withDownloadLock(() => store.prune()); return; }
   const onProgress = (p) => {
     // "整理" instead of "下载" when the files came out of an older cache: nothing is being fetched (store.js 的迁移).
@@ -270,7 +272,8 @@ async function startDownload(signal) {
     const outcome = await withDownloadLock(async () => {
       checkAbort(signal);
       await store.download({ tiers: [TIER_ESSENTIAL], signal, onProgress });
-      if (optional) await store.download({ tiers: [TIER_REST], signal, onProgress });
+      if (optional) await store.download({ tiers: [TIER_REST], signal, onProgress,
+        includeFile: (file) => selectedResourceGroup(resourceGroup(file), true, voiceLang) });
       return { busy: false };
     });
     if (outcome.busy) { await watchOtherTab(store); return; }
@@ -281,7 +284,7 @@ async function startDownload(signal) {
       error: false,
       message: !optional && selectionComplete(after) ? t('必备资源已预载完成；可选资源按需加载。') : after.complete
         ? t('资源已全部预载完成（{0}）。', { 0: formatBytes(after.bytes) })
-        : t('已保存 {count}/{total} 个文件；未完成的会在下次开启时重试。', { count: after.count, total: after.total }),
+        : selectionComplete(after) ? t('所选资源已齐全。') : t('已保存 {count}/{total} 个文件；未完成的会在下次开启时重试。', { count: after.count, total: after.total }),
     });
   } catch (err) {
     if (err?.name === 'AbortError') {
@@ -360,7 +363,7 @@ function transferArchive(kind, file) {
     if (outcome.busy) throw new Error('另一个标签页正在处理资源，请暂停后重试');
     checkAbort(signal);
     const status = await ctx.store.status();
-    const missing = status.tier1Wanted - status.tier1Present + (optional ? status.tier2Wanted - status.tier2Present : 0);
+    const missing = resourceSelection(status, optional, voiceLang).selectedMissing;
     set({ ...counters(status), failed: 0, phase: selectionComplete(status) ? 'ready' : 'paused',
       message: kind === 'export'
         ? t('已导出 {count} 个资源文件。', { count: outcome.count })
@@ -416,7 +419,7 @@ export async function clearResources() {
     phase: current ? 'paused' : 'off',
     message: t('已清理预载资源缓存。'),
     selectionComplete: false,
-    groups: state.groups.map((g) => ({ ...g, present: 0, bytes: 0 })),
+    ...resourceSelection({ groups: state.groups.map((g) => ({ ...g, present: 0, bytes: 0 })) }, optional, voiceLang),
   });
 }
 

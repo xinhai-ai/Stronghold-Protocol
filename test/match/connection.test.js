@@ -353,6 +353,28 @@ test('emotes: relayed as m.emote with a 1 s cooldown; g.watch during prep scouts
   m.dispose();
 });
 
+test('text chat: bounded plain text, authoritative sender, shared emote cooldown and no spectator sends', () => {
+  const h = makeMatch({ mode: 'coop', humans: 2, seed: 67, fake: true }).start();
+  const m = h.m;
+  const ps = m.players.get('p_0');
+  for (const text of ['', ' ', '中'.repeat(21), 'a\nb', '\ud800', 123]) {
+    assert.equal(m.handle('p_0', { t: 'g.chat', text }).error, ERR.BAD_MSG);
+  }
+  assert.equal(h.lastBc('m.chat'), null);
+  assert.deepEqual(m.handle('p_0', { t: 'g.chat', text: '😀'.repeat(20), name: '伪造', playerId: 'p_1' }), { ok: true });
+  assert.deepEqual(h.lastBc('m.chat'), { t: 'm.chat', playerId: 'p_0', name: ps.name, text: '😀'.repeat(20), at: h.sched.now() });
+  assert.equal(m.handle('p_0', { t: 'g.emote', id: 'autochess_battle_happy' }).error, ERR.RATE);
+  assert.equal(m.handle('p_0', { t: 'g.chat', text: '你好' }).error, ERR.RATE);
+  assert.deepEqual(m.handle('p_1', { t: 'g.chat', text: ' 队友你好 ' }), { ok: true });
+  assert.equal(h.lastBc('m.chat').text, '队友你好');
+  h.sched.advance(1000);
+  assert.deepEqual(m.handle('p_0', { t: 'g.emote', id: 'autochess_battle_happy' }), { ok: true });
+  assert.equal(m.handle('p_0', { t: 'g.chat', text: '你好' }).error, ERR.RATE);
+  m.addSpectator('observer');
+  assert.equal(m.handle('observer', { t: 'g.chat', text: '你好' }).error, ERR.SPECTATOR);
+  m.dispose();
+});
+
 test('unknown / wrong-phase intents are rejected without throwing', () => {
   const h = makeMatch({ mode: 'coop', humans: 1, bots: 1, seed: 68 }).start();
   const m = h.m;

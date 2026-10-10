@@ -11,6 +11,7 @@ import { PHASE, ERR, EMOTES, EMOTE_COOLDOWN_MS, GEO } from '../../../shared/cons
 import { deriveSeed } from '../../sim/rng.js';
 import { OK, fail } from './common.js';
 import { onHumanEmote } from '../botEmotes.js';
+import { validChatText } from '../../../shared/chat.js';
 
 export class MatchIntents {
   _handle(ps, msg) {
@@ -42,6 +43,7 @@ export class MatchIntents {
         : this.pickCard(ps, msg.idx);
       case 'g.ready': return ps.setReady(!!msg.ready);
       case 'g.emote': return this.emote(ps, msg.id);
+      case 'g.chat': return this.chat(ps, msg.text);
       // playerId: the player tapped (a shared field names two) — the watch preference (item 56)
       case 'g.watch': return this.watch(ps, msg.fieldId, msg.playerId ?? null);
       case 'g.autoplay': return this.setAutoplay(ps, !!msg.on);
@@ -64,6 +66,15 @@ export class MatchIntents {
     this.broadcast({ t: 'm.emote', playerId: ps.playerId, id });
     // an AI teammate can react to a human's emote (enabled by default: server/match/botEmotes.js, SP_BOT_EMOTES=0 silences it)
     onHumanEmote(this, ps.playerId, id);
+    return OK;
+  }
+
+  chat(ps, text) {
+    if (!validChatText(text)) return fail(ERR.BAD_MSG, 'chat must contain 1–20 characters');
+    const now = this.sched.now();
+    if (now - ps.lastEmoteAt < EMOTE_COOLDOWN_MS) return fail(ERR.RATE);
+    ps.lastEmoteAt = now;
+    this.broadcast({ t: 'm.chat', playerId: ps.playerId, name: ps.name, text: text.trim(), at: now });
     return OK;
   }
 

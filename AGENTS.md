@@ -49,6 +49,14 @@
 
 ## 本分支界面与素材取舍
 
+- 局内“交流”弹出面板左侧提供“表情 / 历史”SVG 图标切换按钮，复用 `GIcon` 图标系统，用 `title` 和 `aria-label` 保留文字提示及无障碍名称；两种内容复用同一显示区，不再并排展示历史。每次打开默认显示六个表情，历史按钮显示条数，历史列表独立纵向滚动。文字输入固定在两种视图的下方，切换不清空草稿；保留动态视口高度和安全区域限制。
+
+- “交流”采用小尺寸组件：桌面面板宽度最多 260px、表情格高 44px；移动端宽度最多 220px、表情格高 32px。表情区与翻页区使用正常网格布局，不用固定小高度或绝对定位叠在一起；图片限制在各格的可用区域，完整显示两行表情，翻页触控范围不能覆盖表情。历史视图使用与表情区相同高度。输入与发送控件保持单行，固定 24px border-box 高度、20px 行高及 1px 纵向内边距，避免继承的大行高撑开组件；输入区纵向内边距为 2px。更窄视口遵循安全区域限制；移动端文字输入字号为 16px，避免输入时自动放大。保留发送冷却期间的输入焦点。
+
+- 文字聊天发送及冷却期间不禁用输入框、不丢失其焦点；点击发送保持输入焦点及移动端键盘，冷却只阻止发送，仍可继续编辑。发送成功只清除仍与本次提交相同的草稿，不能清掉等待回复期间新输入的下一条消息。若启用审核，聊天正文在服务端转发给对局前审核；触发审核只记录不含正文、昵称、令牌和地址的日志标记。
+
+- 局内“交流”保留表情，并提供最多 20 个 Unicode 码点的单行文字聊天（中文或普通 emoji 各计一字，组合 emoji 按码点计数），客户端和服务端均校验，拒绝空白、控制字符及无效 Unicode。文字与表情共用 1 秒冷却，仅当前局玩家可发送，观战席不可发送；服务端广播可信发送者身份。头像旁显示文字气泡，“交流”内可回看当前页面接收到的本局最近 100 条文字消息（姓名、时间、正文）；不上传聊天历史、不持久化，换局或退出清空，页面刷新不恢复，滚动回看时不强制跳到底部。文字仅按纯文本渲染，不解析 HTML。启用名称审核器时，聊天审核使用同一双审核配置，任一明确拒绝会返回“该内容不可用”，服务异常按 fail-open 继续发送。每个玩家最多一个待审核消息；审批绑定原会话、连接及对局，退出、换局、重连或关闭后不转发旧消息。
+
 - 0.1.4 合并时确立的取舍继续适用于后续合并，除非用户明确调整：排除上游快捷键实现，保留本仓库可自定义快捷键、默认按键、提示文字及浏览器持久化设置。当前默认 W 查看怪物、S 冻结、R 刷新、C 准备、X 出售、Q 撤退、G 升级、空格暂停/继续；不要恢复上游固定 R/F/D/Space 方案。
 - 不合并 3D 棋盘贴图改用 WebP 的提取、加载、文档和测试改动，继续使用 PNG。其他棋盘材质、地形提示及渲染修复可正常合并；保留 `boardArt.js` 对裁切表素材路径的 CDN 改写。
 - 标题页保留“关于本服务器”的联系邮箱、反馈入口、本分支仓库链接和纯公益说明。版权与免责声明以对应上游 `NOTICE.md` 为依据，区分自编代码许可证与游戏素材/数据权利，保留非官方、非商业、无担保、不索取游戏账号及权利人联系处理说明；上游声明变化时同步核对文案和链接。
@@ -235,19 +243,13 @@ Browser suites are off by default and need Chrome: `SP_E2E=1` (UI), `SP_REAL_E2E
 `RENDER_E2E=1`, `SIM_E2E=1` — see CONTRIBUTING.md §2. Battle tests are easiest with the helpers described in
 docs/SIM.md (the test harness section) and the patterns in `test/content/op_siege.test.js`.
 
-## Sensitive-lexicon 用户名审核
-
-- 浏览器发送 hello 前经同源 POST /api/name-moderation 预审；服务端对 hello 独立检查，等待审核结束后才创建、接管或重命名会话。词库明确命中拦截，审核超时/错误/审核预算耗尽按用户要求静默放行且不缓存降级结果；名字格式和原有传输限流不变。登录、改名、重连及直接 WS 请求均须覆盖，保留断线及并发昵称竞态隔离。拦截时仅显示“该名称不可用”，标题页不显示审核说明，不显示审核服务不可用提示。
-- 审核后端使用 konsheng/Sensitive-lexicon 的 dev Docker HTTP 接口 POST /contains，请求 {text}，仅布尔 contains 为有效结果；不要用 /detect 替换，其子串搜索方向不同。SP_NAME_MODERATION=lexicon，SP_NAME_MODERATION_URL 是仅服务端配置的 HTTP(S) 基地址（默认 http://127.0.0.1:8080）；无配置兼容关闭且日志标注 OFF。不再使用 Jev、TypeSafe 密钥、模型或概率阈值。
-- 后端只部署在回环或受控私网，不公开无鉴权的 /reload；浏览器不直连后端。不在日志记录昵称/响应，保持有界短期缓存；更新词库后重启游戏服务清除缓存。词库有误报/漏报，命中属于昵称政策，不等同法律认定。文档 docs/NAME_MODERATION.md，回归 test/name-moderation.test.js。
-
 ## 预载语音范围
 
 - 资源管理直接选择中文、日语、两种语言或不预载语音，浏览器持久化 preloadVoiceLang，独立于播放 voiceLang 和干员个人语音覆盖；旧配置以已保存的播放语言迁移，默认中文。可选资源仍需同时预载开关。
 - 按 /voice/cn/ 与 /voice/jp/ 目录识别（兼容 CDN 前缀），不能按 cn_019 等文件名判语言。保留旧未分语言语音组及不预载时的排除。切换中止旧范围、等待已开始操作，只增量下载最新选择，不删除已有缓存；完成与进度只计算所选可缓存资源。
 - ZIP 内未选择但有效的资源仍须校验并保留，导出仍包含全部有效缓存；仅导入后的缺失下载按范围过滤。分类计数增量维护，不在每个进度更新重扫全清单。更新 common.js 等独立 SW 依赖后部署需更新 SW，并同步 CDN 的 UI 语言 JSON。验证 test/ui/preload-voice.test.js 和现有资源/ZIP/构建测试。
-## 双用户名审核后端
+## 双用户名及聊天审核后端
 
 - `server/nameModeration.js` 同时支持 Sensitive-lexicon 与 Jev：`SP_NAME_MODERATION=lexicon|jev|both|off`；仅设置 URL 自动选 lexicon，仅设置 TYPESAFE_API_KEY 自动选 jev。both 并行调用，任一明确 `NAME_REJECTED` 拦截；任一服务故障/超时/限流/非法响应静默放行，不缓存降级结果。both 缺配置必须启动失败，不可假装双审。
-- Sensitive-lexicon 使用 dev Docker 的 POST `/contains` `{text}` 和布尔 `contains`，不使用 `/detect`；Jev 使用服务端 key 和官方 `/v1/systemone` 四类 Noul。浏览器不接触 Jev key，hello 前同源预审与服务端直连 WS hello 双重覆盖。
-- 保持服务端最终校验、同源 HTTP 安全、名字格式、缓存/并发/限流、断线竞态和 fail-open 约定；不在日志记录昵称、响应或 key。词库后端只放受控 Docker 网络。文档 `docs/NAME_MODERATION.md`，回归 `test/name-moderation.test.js`。
+- Sensitive-lexicon 使用 dev Docker 的 POST `/contains` `{text}` 和布尔 `contains`，不使用 `/detect`；Jev 使用服务端 key 和官方 `/v1/systemone` 单个精简 Noul 违规概率，合并类别以尽可能降低输入至 100 tokens 以下；不截断正文或声明未经实测的计费 token 数。浏览器不接触 Jev key；名称审核只在服务端直连 WS hello 触发，并通过同一 WS 返回不可用。
+- 保持服务端最终校验、同源 HTTP 安全、名字格式、缓存/并发/限流、断线竞态和 fail-open 约定。审核触发及拒绝以固定日志标记记录，不包含昵称、聊天正文、地址、令牌、响应或 key；故障不记录敏感后端错误。昵称拒绝提示“该名称不可用”，聊天拒绝提示“该内容不可用”，标题页无审核说明或服务不可用提示。词库后端只放受控 Docker 网络。文档 `docs/NAME_MODERATION.md`，回归 `test/name-moderation.test.js`、`test/chat-moderation-lifecycle.test.js`。

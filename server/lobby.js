@@ -112,6 +112,7 @@ import { restoreMatch as applyMatchCheckpoint } from './match/snapshot.js';
 import { createRngFromState } from './sim/rng.js';
 import { KITTED_CHARS } from './sim/content/kits/index.js';
 import { t } from '../shared/i18n.js';
+import { validChatText } from '../shared/chat.js';
 
 /** Room code alphabet: uppercase letters without I and O (and no digits, so no 0/1). */
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -266,15 +267,19 @@ export class Lobby {
    *   options?: Partial<typeof LOBBY_DEFAULTS>,
    *   workerPool?: object | null,
    *   matchWorkerPool?: object | null,
+   *   nameModeration?: { checkChat?: Function } | null,
    * }} opts
    */
-  constructor({ registry, log = noopLog, MatchClass = DefaultMatch, getData = defaultGetData, now = Date.now, seedFn, options = {}, workerPool = null, matchWorkerPool = null }) {
+  constructor({ registry, log = noopLog, MatchClass = DefaultMatch, getData = defaultGetData, now = Date.now, seedFn, options = {}, workerPool = null, matchWorkerPool = null, nameModeration = null }) {
     this.registry = registry;
     this.log = log;
     this.MatchClass = MatchClass;
     this.getData = getData;
     this.workerPool = workerPool;
     this.matchWorkerPool = matchWorkerPool;
+    this.nameModeration = nameModeration;
+    this.chatReviews = new WeakMap();
+    this.shuttingDown = false;
     this.now = now;
     this.seedFn = seedFn || (() => randomInt(2 ** 32));
     this.opts = { ...LOBBY_DEFAULTS, ...options };
@@ -493,6 +498,7 @@ export class Lobby {
    * @param {string} [reason]
    */
   shutdown(reason = 'shutdown') {
+    this.shuttingDown = true;
     this.stopMatchmaking();
     for (const entry of [...new Set(this.queueByPlayer.values())]) this.cancelMatchQueue(entry, reason);
     for (const room of [...this.rooms.values()]) this.disposeRoom(room, reason);
@@ -1865,6 +1871,38 @@ export class Lobby {
 
   /** Route a 'g.*' intent to the running match. */
   routeGame(session, msg) {
+    if (msg.t === 'g.chat' && this.nameModeration?.checkChat) {
+      if (!validChatText(msg.text)) return fail(ERR.BAD_MSG);
+      const active = this.activeMatchOf(session);
+      const room = this.roomOf(session);
+      const match = active?.match || room?.match;
+      if (!match || (room && room.spectatorOf(session.playerId))) return this.routeGameUnchecked(session, msg);
+      if (this.chatReviews.has(session)) return fail(ERR.RATE);
+      const socket = session.ws;
+      const text = msg.text.trim();
+      // Bind the reviewed bytes to this session, socket and Match generation. A late verdict
+      // must never follow a player into a new game, a replacement tab or a reconnect.
+      const review = Promise.resolve().then(() => this.nameModeration.checkChat(text, session.limitKey || '?'))
+        .catch(() => ({ allowed: true }));
+      this.chatReviews.set(session, review);
+      // Do not log chat content or player identity; this is only an audit marker for moderation activity.
+      this.log.info?.('[chat] moderation triggered for in-match message');
+      return review.then((result) => {
+        const current = this.activeMatchOf(session);
+        if (this.shuttingDown || !session.connected || this.registry.byId(session.playerId) !== session
+          || session.ws !== socket || current?.match !== match || current.disposed || current.ended
+          || match.disposed || match.ended) return fail(ERR.WRONG_PHASE);
+        if (result?.allowed !== true && [ERR.NAME_REJECTED, ERR.BAD_MSG].includes(result?.code)) {
+          this.log.info?.('[chat] moderation rejected in-match message');
+          return fail(result.code === ERR.BAD_MSG ? ERR.BAD_MSG : ERR.CHAT_REJECTED);
+        }
+        return this.routeGameUnchecked(session, { ...msg, text });
+      }).finally(() => { if (this.chatReviews.get(session) === review) this.chatReviews.delete(session); });
+    }
+    return this.routeGameUnchecked(session, msg);
+  }
+
+  routeGameUnchecked(session, msg) {
     const active = this.activeMatchOf(session);
     const room = this.roomOf(session);
     const match = active?.match || room?.match;

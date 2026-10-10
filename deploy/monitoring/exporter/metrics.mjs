@@ -2,7 +2,7 @@
 const numeric = (v) => typeof v === 'number' && Number.isFinite(v);
 const escape = (v) => String(v).replaceAll('\\', '\\\\').replaceAll('\n', '\\n').replaceAll('"', '\\"');
 const pathValue = (obj, path) => path.split('.').reduce((v, key) => v?.[key], obj);
-const messageTypes = new Set(['invalid', 'hello', 'ping', 'g.ready', 'g.rerollVote', 'g.move', 'g.buy', 'g.sell', 'g.equip', 'g.refresh',
+const messageTypes = new Set(['invalid', 'hello', 'ping', 'g.ready', 'g.rerollVote', 'g.chat', 'g.move', 'g.buy', 'g.sell', 'g.equip', 'g.refresh',
   'g.levelUp', 'g.freeze', 'g.choice', 'g.band', 'g.bandSkip', 'g.bandFocus', 'g.infoReady', 'g.reward', 'g.unitStats', 'g.watch',
   'g.leave', 'g.pause', 'g.autoplay', 'g.console', 'g.destroy', 'g.art', 'g.emote', 'b.result', 'b.progress',
   'room.create', 'room.join', 'room.leave', 'room.ready', 'room.start', 'room.setDifficulty', 'room.setAiPicksLast', 'room.rerollSetup', 'room.cancelReroll', 'room.addBot',

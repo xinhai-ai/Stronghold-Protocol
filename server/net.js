@@ -860,11 +860,14 @@ export class Network {
     if (this.nameModeration) {
       const generation = ++conn.helloReview;
       conn.reviewPending = true;
+      // Audit only that a review was triggered; never log the nickname, token, address or provider response.
+      this.log.info?.('[names] moderation triggered for WebSocket hello');
       Promise.resolve().then(() => this.nameModeration.check(name, conn.key || limitKeyOf(conn.ip)))
         .catch(() => ({ allowed: true })).then((result) => {
         if (generation !== conn.helloReview || conn.closing || this.closed || this.draining || conn.ws.readyState !== WS_OPEN) return;
         conn.reviewPending = false;
         if (result?.allowed !== true && [ERR.NAME_REJECTED, ERR.BAD_MSG].includes(result?.code)) {
+          this.log.info?.('[names] moderation rejected WebSocket hello');
           this.reply(conn, errorMsg(result.code, rid));
           return;
         }

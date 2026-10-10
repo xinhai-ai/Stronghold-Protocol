@@ -63,6 +63,7 @@
 import { C2S } from '../../shared/protocol.js';
 import { PHASE, ERR, EMOTE_COOLDOWN_MS, GEO, modeIdFor } from '../../shared/constants.js';
 import { getConfig, getMode } from '../data.js';
+import { validChatText } from '../../shared/chat.js';
 
 const GAME_TYPES = new Set(Object.keys(C2S).filter((t) => Object.hasOwn(C2S, t) && t.startsWith('g.')));
 const DEFAULT_INFO_CHECK_S = 25;
@@ -135,6 +136,12 @@ export class StubMatch {
         this.broadcastFn(this.publicView());
         this.maybeFinish(false);
       }
+    } else if (msg.t === 'g.chat') {
+      if (!validChatText(msg.text)) return { error: ERR.BAD_MSG };
+      const now = this.now();
+      if (now - p.lastEmoteAt < EMOTE_COOLDOWN_MS) return { error: ERR.RATE };
+      p.lastEmoteAt = now;
+      this.broadcastFn({ t: 'm.chat', playerId, name: p.name, text: msg.text.trim(), at: now });
     } else if (msg.t === 'g.emote') {
       const now = this.now();
       if (now - p.lastEmoteAt >= EMOTE_COOLDOWN_MS) {

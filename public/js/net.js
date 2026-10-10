@@ -118,7 +118,6 @@ export class Net {
    * @param {any} [opts.WebSocket] WebSocket constructor (default: globalThis.WebSocket)
    * @param {() => (string|null)} [opts.getToken] reconnect-token provider for `hello`
    * @param {() => ({ noReplace: boolean, claimAt?: number })} [opts.getTokenClaim] local ownership for this hello
-   * @param {(name: string, signal: AbortSignal) => Promise<{allowed: boolean, code?: string}>} [opts.moderateName]
    * @param {() => number} [opts.now]
    * @param {() => number} [opts.random]
    * @param {{setTimeout: Function, clearTimeout: Function, setInterval: Function, clearInterval: Function}} [opts.timers]
@@ -126,8 +125,6 @@ export class Net {
   constructor(opts = {}) {
     this.url = opts.url || null;
     this.WS = opts.WebSocket || null;
-    this.moderateName = opts.moderateName || null;
-    this._nameCheck = null;
     this.getToken = typeof opts.getToken === 'function' ? opts.getToken : () => null;
     this.getTokenClaim = typeof opts.getTokenClaim === 'function' ? opts.getTokenClaim : () => null;
     this.now = opts.now || (() => Date.now());
@@ -350,8 +347,6 @@ export class Net {
   }
 
   _teardownSocket() {
-    this._nameCheck?.controller.abort();
-    this._nameCheck = null;
     this._helloHadSession = false;
     this._states.reset();
     this._clearTimer('_stateResyncTimer', 'clearTimeout');
@@ -378,35 +373,10 @@ export class Net {
 
   _sendHello() {
     if (!this.name || !this.ws || this.ws.readyState !== WS_OPEN) return;
-    if (!this.moderateName) { this._sendApprovedHello(); return; }
-    const ws = this.ws, name = this.name;
-    if (this._nameCheck?.ws === ws && this._nameCheck.name === name) return;
-    this._nameCheck?.controller.abort();
-    const controller = new AbortController();
-    const check = this._nameCheck = { ws, name, controller };
-    if (this.status !== 'online') this._setStatus('handshaking');
-    const timer = this.timers.setTimeout(() => controller.abort(), 7000);
-    const aborted = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true }));
-    Promise.race([Promise.resolve().then(() => this.moderateName(name, controller.signal)), aborted]).then((result) => {
-      if (this._nameCheck !== check || this.ws !== ws || this.name !== name || ws.readyState !== WS_OPEN) return;
-      if (result?.allowed !== true && ['NAME_REJECTED', 'BAD_MSG'].includes(result?.code)) throw new NetError(result.code);
-      this._sendApprovedHello();
-    }).catch((err) => {
-      if (this._nameCheck !== check || this.ws !== ws || this.name !== name || ws.readyState !== WS_OPEN) return;
-      if (!(err instanceof NetError) || !['NAME_REJECTED', 'BAD_MSG'].includes(err.code)) {
-        this._sendApprovedHello(); // Timeout/network/review errors silently use normal hello.
-        return;
-      }
-      this.lastError = err;
-      if (this.status !== 'online') {
-        this.name = null; // Stay on the editable title instead of repeatedly retrying a rejected name.
-        this._setStatus('connected'); this._failPending('OFFLINE', true);
-      } else this.name = this.helloName;
-      this._emit('helloError', this.lastError);
-    }).finally(() => {
-      this.timers.clearTimeout(timer);
-      if (this._nameCheck === check) this._nameCheck = null;
-    });
+    // Name moderation is authoritative on the server's WebSocket hello path.
+    // The server replies with NAME_REJECTED on this same socket; browser HTTP
+    // preflight is intentionally not used to avoid a local-only rejection.
+    this._sendApprovedHello();
   }
 
   _sendApprovedHello() {
@@ -1041,7 +1011,7 @@ export function createIdentity(deps = {}) {
 /** Browser identity singleton (main.js awaits `identity.init()` before connecting). */
 export const identity = createIdentity({ onYield: () => net.reconnectNow(net.helloName || net.name) });
 
-/** Same-origin preflight; the lexicon service URL stays on the server. */
+/** Compatibility helper for older clients/tools; the browser singleton now reviews through WS hello only. */
 export async function checkNameBeforeHello(name, signal, fetchFn = globalThis.fetch) {
   try {
     const response = await fetchFn('/api/name-moderation', { method: 'POST', cache: 'no-store',
@@ -1056,4 +1026,4 @@ export async function checkNameBeforeHello(name, signal, fetchFn = globalThis.fe
 }
 
 /** Browser singleton; no request until connect()/setName(). */
-export const net = new Net({ getToken: () => identity.getToken(), getTokenClaim: () => identity.getTokenClaim(), moderateName: checkNameBeforeHello });
+export const net = new Net({ getToken: () => identity.getToken(), getTokenClaim: () => identity.getTokenClaim() });

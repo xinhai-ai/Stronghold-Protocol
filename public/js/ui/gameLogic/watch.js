@@ -104,7 +104,7 @@ export function fieldLabel(field, pub, myId) {
 
 /**
  * Active emote bubbles: playerId → { id, seq, at } for emotes younger than ttl.
- * @param {Array<{seq:number, playerId:string, id:string, at:number}>} emotes
+ * @param {Array<{seq:number, playerId:string, id?:string, text?:string, at:number}>} emotes
  * @param {number} now
  * @param {number} [ttl]
  */
@@ -113,7 +113,8 @@ export function activeBubbles(emotes, now, ttl = 3000) {
   for (const e of Array.isArray(emotes) ? emotes : []) {
     if (!isObj(e) || !(now - e.at < ttl) || e.at > now + 1000) continue;
     const cur = out.get(e.playerId);
-    if (!cur || cur.seq < e.seq) out.set(e.playerId, { id: e.id, seq: e.seq, at: e.at });
+    if (!cur || cur.seq < e.seq) out.set(e.playerId, { id: e.id, seq: e.seq, at: e.at,
+      ...(typeof e.text === 'string' ? { text: e.text } : {}) });
   }
   return out;
 }

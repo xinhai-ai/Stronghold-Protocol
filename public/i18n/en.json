@@ -1416,5 +1416,12 @@
   "仅影响预载范围；播放语言仍在设置中选择。切换后保留已有缓存。": "Only affects preloading. Choose the playback language in Settings. Switching keeps cached files.",
   "勾选“同时预载”后下载所选语音。": "Enable “Preload together” to download the selected voices.",
   "未选择": "Not selected",
-  "所选 {done}/{total}": "Selected {done}/{total}"
+  "所选 {done}/{total}": "Selected {done}/{total}",
+  "交流内容": "Chat content",
+  "聊天历史": "Chat history",
+  "最多20字": "Up to 20 characters",
+  "局内聊天，最多20字": "In-match chat, up to 20 characters",
+  "发送": "Send",
+  "暂无聊天记录": "No chat messages yet",
+  "该内容不可用": "This content is unavailable."
 }

@@ -23,8 +23,19 @@ function fixture() {
   return root;
 }
 
-test('BUILD_INPUTS: browser runtime plus state decoder, not server/data/shared simulation trees', () => {
-  assert.deepEqual([...BUILD_INPUTS], ['public/index.html', 'public/js', 'public/css', 'shared/stateDelta.js']);
+test('BUILD_INPUTS: browser runtime plus state decoder and chat helpers, not server/data/shared simulation trees', () => {
+  assert.deepEqual([...BUILD_INPUTS], ['public/index.html', 'public/js', 'public/css', 'shared/stateDelta.js', 'shared/chat.js']);
+});
+
+test('source-client detects a chat validation change', () => {
+  const root = fixture();
+  try {
+    const before = computeBuildTag(root, { clientBuild: false });
+    fs.writeFileSync(path.join(root, 'shared/chat.js'), 'updated chat validation');
+    assert.notEqual(computeBuildTag(root, { clientBuild: false }), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('source-client detects a state decoder change without watching the entire shared simulation tree', () => {

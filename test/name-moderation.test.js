@@ -144,8 +144,8 @@ function socket(network) {
   network.handleConnection(ws); return ws;
 }
 const hello = (ws, name, rid = 1, extra = {}) => ws.emit('message', Buffer.from(JSON.stringify({ t: 'hello', name, rid, version: PROTOCOL_VERSION, ...extra })), false);
-const fixture = (t, check) => {
-  const registry = new SessionRegistry(); const n = new Network({ registry, handler: { onMessage() {} }, nameModeration: { check } });
+const fixture = (t, check, log = undefined) => {
+  const registry = new SessionRegistry(); const n = new Network({ registry, log, handler: { onMessage() {} }, nameModeration: { check } });
   t.after(() => n.close()); return { registry, n };
 };
 
@@ -159,6 +159,18 @@ test('raw WS hello cannot bypass review; rejected rename and token takeover leav
   assert.equal(other.frames.at(-1).code, ERR.NAME_REJECTED); assert.equal(ws.readyState, 1); assert.equal(registry.size, 1);
   hello(other, '新博士', 5, { token: welcome.token }); await turn();
   assert.equal(other.frames.at(-1).resumed, true); assert.equal(registry.size, 1); assert.equal(ws.readyState, 3);
+});
+
+test('review trigger is logged without exposing the name, token, address or provider response', async (t) => {
+  const lines = [];
+  const { n } = fixture(t, async () => ({ allowed: false, code: ERR.NAME_REJECTED }), {
+    info: (line) => lines.push(String(line)), warn() {}, error() {}, debug() {},
+  });
+  const ws = socket(n);
+  hello(ws, '秘密名称');
+  await turn();
+  assert.ok(lines.includes('[names] moderation triggered for WebSocket hello'));
+  assert.ok(!lines.some((line) => line.includes('秘密名称') || line.includes('token') || line.includes('127.0.0.1')));
 });
 
 test('latest hello wins; discarded results, closed sockets and shutdown cannot mint sessions', async (t) => {
@@ -192,38 +204,20 @@ function client(t, moderateName) {
   t.after(() => net.close()); net.setName('博士'); sockets[0].open(); return { net, ws: sockets[0], sockets };
 }
 
-test('client sends no hello until approval and coalesces identical names', async (t) => {
-  const d = deferred(); let calls = 0;
-  const { net, ws } = client(t, () => { calls++; return d.promise; });
-  net.setName('博士'); await turn(); assert.equal(calls, 1); assert.ok(!ws.sent.some((m) => m.t === 'hello'));
-  d.resolve({ allowed: true }); await turn(); const msg = ws.sent.find((m) => m.t === 'hello'); assert.equal(msg.name, '博士'); assert.equal(msg.token, 'token');
+test('client sends hello immediately; the server owns the authoritative name review', async (t) => {
+  let calls = 0;
+  const { ws } = client(t, () => { calls++; return Promise.resolve({ allowed: false, code: ERR.NAME_REJECTED }); });
+  await turn();
+  const msg = ws.sent.find((m) => m.t === 'hello');
+  assert.equal(msg.name, '博士'); assert.equal(msg.token, 'token'); assert.equal(calls, 0);
 });
 
-test('client rejects explicit violations but silently sends hello on network failure', async (t) => {
-  const { net, ws } = client(t, async (name) => name === '博士' ? { allowed: false, code: ERR.NAME_REJECTED } : { allowed: true });
-  const errors = []; net.on('helloError', (e) => errors.push(e.code)); await turn();
-  assert.equal(net.status, 'connected'); assert.deepEqual(errors, [ERR.NAME_REJECTED]); assert.ok(!ws.sent.some((m) => m.t === 'hello'));
-  net.setName('新名字'); await turn(); assert.equal(ws.sent.at(-1).name, '新名字');
-  const bad = client(t, () => { throw new Error('fetch failed'); }); await turn();
-  assert.ok(bad.ws.sent.some((m) => m.t === 'hello')); assert.equal(bad.net.lastError, null);
-});
-
-test('client stale checks cannot send old names or use old sockets', async (t) => {
-  const jobs = new Map();
-  const { net, ws, sockets } = client(t, (name, signal) => { const d = deferred(); jobs.set(name, { ...d, signal }); return d.promise; });
-  await turn(); net.setName('新名字'); await turn(); assert.equal(jobs.get('博士').signal.aborted, true);
-  jobs.get('博士').resolve({ allowed: true }); await turn(); assert.ok(!ws.sent.some((m) => m.t === 'hello'));
-  jobs.get('新名字').resolve({ allowed: true }); await turn(); assert.equal(ws.sent.at(-1).name, '新名字');
-  net.reconnectNow(); sockets.at(-1).open(); await turn(); net.close(); jobs.get('新名字').resolve({ allowed: true }); await turn();
-  assert.ok(!sockets.at(-1).sent.some((m) => m.t === 'hello'));
-});
-
-test('client timeout silently sends one normal hello without a warning', async (t) => {
-  const { net, ws } = client(t, () => new Promise(() => {}));
-  // Exercise the same abort timer callback without waiting seven seconds.
-  await turn(); net._nameCheck.controller.abort(); await turn();
-  assert.equal(net.lastError, null); assert.equal(net.status, 'handshaking');
-  assert.equal(ws.sent.filter((m) => m.t === 'hello').length, 1);
+test('client keeps the socket handshake path for server-side name rejection', async (t) => {
+  const { net, ws } = client(t, () => { throw new Error('unused preflight'); });
+  await turn();
+  const helloFrame = ws.sent.find((m) => m.t === 'hello');
+  ws.onmessage({ data: JSON.stringify({ t: 'error', rid: helloFrame.rid, code: ERR.NAME_REJECTED, msg: '该名称不可用' }) });
+  assert.equal(net.lastError.code, ERR.NAME_REJECTED);
 });
 
 test('browser HTTP helper blocks only explicit rejections, silently allows review failures', async () => {
@@ -344,15 +338,32 @@ test('real lexicon HTTP contract feeds preflight and WS; fresh instance clears c
 });
 
 
-test('Jev sends official systemone Noul request and blocks an explicit category', async () => {
+test('Jev sends one compact systemone Noul question and blocks at the threshold', async () => {
   let calls = 0;
-  const answers = Object.fromEntries(['politics', 'violence', 'sexual', 'illegal'].map((key) => [key, { type: 'noul', noul: key === 'politics' ? 0.5 : 0.01 }]));
+  const answers = { unsafe: { type: 'noul', noul: 0.5 } };
   const jev = createJevNameModeration({ apiKey: 'test-key', fetchFn: async (url, init) => {
     calls++; assert.equal(url, JEV_ENDPOINT); assert.equal(init.headers.Authorization, 'Bearer test-key');
     const body = JSON.parse(init.body); assert.deepEqual(body.state, { username: '博士' }); assert.equal(body.model, 'jev-latest');
-    assert.equal(Object.keys(body.questions).length, 4); return response({ answers });
+    assert.deepEqual(Object.keys(body.questions), ['unsafe']);
+    assert.deepEqual(body.questions.unsafe.criteria, { true: 'unsafe', false: 'safe' });
+    assert.ok(body.questions.unsafe.instructions.task.length <= 120, 'fixed policy must stay compact');
+    return response({ answers });
   }});
   assert.deepEqual(await jev.check(' 博​士 '), { allowed: false, code: ERR.NAME_REJECTED }); assert.equal(calls, 1); jev.close();
+});
+
+test('compact Jev replies must be a valid single probability; failed reviews are not cached', async (t) => {
+  for (const answers of [{}, { unsafe: { type: 'noul', noul: '0.9' } },
+    { unsafe: { type: 'noul', noul: 2 } }, { unsafe: { type: 'text', noul: 0.9 } }]) {
+    let calls = 0;
+    const jev = createJevNameModeration({ apiKey: 'test-key', fetchFn: async () => {
+      calls++; return response({ answers });
+    } });
+    t.after(() => jev.close());
+    assert.deepEqual(await jev.check('博士'), { allowed: true });
+    assert.deepEqual(await jev.check('博士'), { allowed: true });
+    assert.equal(calls, 2);
+  }
 });
 
 test('both runs backends independently: one explicit rejection blocks, one failure silently allows', async () => {
@@ -369,4 +380,75 @@ test('both preserves a rejection even when the other backend is slow', async () 
   const both = createCombinedNameModeration([{ check: async () => ({ allowed: false, code: ERR.NAME_REJECTED }) }, { check: () => slow }], 'both');
   const result = await Promise.race([both.check('博士'), new Promise((resolve) => setTimeout(() => resolve('timeout'), 100))]);
   assert.deepEqual(result, { allowed: false, code: ERR.NAME_REJECTED }); both.close();
+});
+
+for (const matchWorkers of [0, 1]) test(`chat moderation precedes broadcast with ${matchWorkers ? 'Worker' : 'local'} Match ownership`, async (t) => {
+  const reviewed = [];
+  const audit = [];
+  const srv = await startServer({ host: '127.0.0.1', port: 0, quiet: true, workers: 0, matchWorkers, announcementsFile: null,
+    log: { info: (text) => audit.push(String(text)), error() {}, warn() {}, debug() {} },
+    nameModeration: {
+      async check() { return { allowed: true }; },
+      async checkChat(text) { reviewed.push(text); return text === 'blocked' ? { allowed: false, code: ERR.NAME_REJECTED } : { allowed: true }; },
+      close() {},
+    } });
+  t.after(() => srv.close());
+  const c = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`);
+  t.after(() => c.close());
+  await c.hello('Chat');
+  await c.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' });
+  await c.waitFor('room.state');
+  await c.request({ t: 'room.start' }, 10000);
+  await c.waitFor('m.public', (m) => m.phase === 'INFO_CHECK');
+  const blocked = await c.request({ t: 'g.chat', text: 'blocked' });
+  assert.equal(blocked.code, ERR.CHAT_REJECTED);
+  assert.equal(blocked.msg, '该内容不可用');
+  assert.ok(!c.log.some((m) => m.t === 'm.chat'));
+  await c.request({ t: 'g.chat', text: 'hello' });
+  const message = await c.waitFor('m.chat');
+  assert.equal(message.text, 'hello');
+  assert.deepEqual(reviewed, ['blocked', 'hello']);
+  assert.ok(audit.includes('[names] moderation triggered for WebSocket hello'));
+  assert.ok(audit.includes('[chat] moderation triggered for in-match message'));
+  assert.ok(audit.includes('[chat] moderation rejected in-match message'));
+  assert.ok(!audit.some((line) => /blocked|private provider|token=/.test(line)));
+});
+
+test('Jev keeps name and chat verdicts separate and reviews all 20 Unicode code points', async (t) => {
+  const requests = [];
+  const text = '😀'.repeat(20);
+  const jev = createJevNameModeration({ apiKey: 'test-key', fetchFn: async (_url, init) => {
+    const body = JSON.parse(init.body);
+    requests.push(body);
+    return response({ answers: Object.fromEntries(Object.keys(body.questions).map((key) => [
+      key, { type: 'noul', noul: body.state.chat ? 0.9 : 0.1 },
+    ])) });
+  } });
+  t.after(() => jev.close());
+  assert.deepEqual(await jev.check('你好'), { allowed: true });
+  assert.equal((await jev.checkChat('你好')).code, ERR.NAME_REJECTED);
+  assert.equal((await jev.checkChat(text)).code, ERR.NAME_REJECTED);
+  assert.equal((await jev.checkChat(text)).code, ERR.NAME_REJECTED, 'repeat uses chat cache');
+  assert.equal((await jev.check('你好')).allowed, true, 'chat rejection cannot poison the name cache');
+  assert.equal(requests.length, 3);
+  assert.deepEqual(requests[2].state, { chat: text });
+  assert.equal((await jev.checkChat('中'.repeat(21))).code, ERR.BAD_MSG);
+  assert.equal(requests.length, 3);
+});
+
+test('both binds each provider and uses chat validation rather than the 12-unit name limit', async (t) => {
+  const bodies = [];
+  const lexicon = createNameModeration({ fetchFn: async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return response({ contains: true });
+  } });
+  const both = createCombinedNameModeration([lexicon, {
+    async checkChat() { throw new Error('private reviewer failure'); }, close() {},
+  }]);
+  t.after(() => both.close());
+  const text = '中'.repeat(20);
+  assert.deepEqual(await both.checkChat(text), { allowed: false, code: ERR.NAME_REJECTED });
+  assert.deepEqual(bodies, [{ text }]);
+  assert.deepEqual(await both.checkChat('😀'.repeat(20)), { allowed: false, code: ERR.NAME_REJECTED });
+  assert.equal(bodies.length, 2, 'both providers execute, not silently fail due to unbound this');
 });

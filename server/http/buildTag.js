@@ -18,9 +18,9 @@ import { ROOT } from './config.js';
  * `server/`, `data/` and `shared/` are deliberately NOT in here: this process read them once at startup, so when they
  * change without a restart the server still runs the old simulation and data — a page that reloaded into the new files
  * would be out of step with the server that validates its battles (and DEPLOY.md restarts the server for every update).
- * Exception: shared/stateDelta.js is the browser's network decoder, not simulation/data; source-client must track it.
+ * Exceptions: shared/stateDelta.js and shared/chat.js are browser protocol helpers; source-client must track them.
  */
-export const BUILD_INPUTS = Object.freeze(['public/index.html', 'public/js', 'public/css', 'shared/stateDelta.js']);
+export const BUILD_INPUTS = Object.freeze(['public/index.html', 'public/js', 'public/css', 'shared/stateDelta.js', 'shared/chat.js']);
 
 /** Names the static server never serves: dot files (`.DS_Store`, `.main.js.swp`) and editor backups (`main.js~`). */
 const isIgnoredBuildName = (name) => name.startsWith('.') || name.endsWith('~');

@@ -107,6 +107,7 @@
 - 高并发延迟优化须保留：全服广播/心跳分批让出事件循环及广播 FIFO 顺序、跨房间共享本地模拟续步预算、私有状态编码复用，以及保持原有组队规则的按队伍大小 FIFO 匹配。`/metrics.websocket.diagnostics` 的事件循环、消息耗时与发送采样仅在服务端聚合，不记录地址或正文；统计为启动以来累计，发送完成不等于客户端 RTT。`/healthz` 不增加详细诊断字段。压缩开关与原有背压阈值继续保持兼容。
 - 房间 Worker 化第一阶段可通过 `SP_ROOM_WORKERS` 或 `startServer({ roomWorkers })` 启用：保留同一 `/ws` 和主线程 Match，仅将每个房间/独立匹配的战斗与 bot 预演任务固定到按活跃房间数选择的独立模拟 Worker lane；`workers` 是全 lane 总线程预算，不能让每个 lane 各自复制完整默认线程数。默认 `0` 保持单一共享池，释放房间时清理 lane 归属；这不是完整 Match 跨线程迁移，仍须继续验证主线程状态生成和发送耗时。
 - 完整 Match Worker 可通过 `SP_MATCH_WORKERS` 或 `startServer({ matchWorkers })` 启用：房间/公共匹配的 Match 实例、计时器、AI、状态视图和对局生命周期在 lane Worker 中运行，主线程保留 `/ws`、身份、房间目录和消息发送；Worker 通过 `captureMatch` 提供与原 Redis 文档相同的检查点，恢复等待异步 Worker 完成后再继续启动。`/metrics.workers` 保留模拟任务池，`/metrics.matchWorkers` 单独报告 Match Worker；默认 `0` 保持旧路径。启用前必须验证多房间公共匹配、观战、重连、退出、连续重启和真实 Redis。
+- 完整 Match Worker 的游戏数据每 lane 首次使用只传一次，安装线程数据源后再导入游戏模块；同 lane 的 Match 共用深冻结快照，不共用玩家库存、池或 RNG，不恢复为每局复制完整数据。Worker 编码的单播/广播 JSON 由主线程发送及回放复用，未提供编码的旧路径仍可用。初始化代理元数据全量，后续只发变化字段，连接/退出、阶段及战斗序号仍同步，IPC 失败不推进元数据基线；每个对局实例基线独立。状态增量仍由主线程管理，可靠入队基线、FIFO 及确认语义不变。验证 `test/match-worker-hotpaths.test.js`、生命周期、状态增量与持久化测试；`tools/match-workerbench.mjs` 仅为 IPC 微基准，不能当作真实对局容量或主线程 CPU 实测。
 
 - 在线人数 `presence` 每 10 秒最低优先级刷新，人数不变仍可更新；`welcome.online` 即时提供。周期任务独立延后、分批处理，只保留最新待发快照，普通广播/心跳优先；连接已有任何发送积压时跳过本轮，下一周期再更新，不排队补发。不改变游戏状态/回复的可靠 FIFO、背压或压缩参数；已进入 WS/TCP 的字节无法抢占。关停时取消周期及待发任务，保留标题页未认证连接的周期在线人数展示。验证 `test/presence.test.js`、`test/ws-latency.test.js`。
 

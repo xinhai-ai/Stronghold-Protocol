@@ -682,7 +682,7 @@ export class Lobby {
         consoleEnabled: false, aiPicksLast: !!checkpoint.aiPicksLast, seed: Number(checkpoint.seed) >>> 0, matchNo: room ? Math.max(1, room.matchCount) : 1,
         data: this.safeData(), workerPool: this.workerPoolFor(room?.code || roomCode), log: this.log, now: this.now,
         send: (playerId, msg, encoded) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg, encoded) : false),
-        broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
+        broadcast: (msg, encoded) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg, encoded); },
         onEnd: (summary) => this.onQueuedMatchEnd(ctx, summary),
       });
       ctx.match = match;
@@ -735,7 +735,7 @@ export class Lobby {
       }, {
         created: (match) => this.attachQueuedWorker(ctx, room, match),
         send: (playerId, msg, encoded) => { if (ctx.live) return this.queueMatchSend(ctx, playerId, msg, encoded); return false; },
-        broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
+        broadcast: (msg, encoded) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg, encoded); },
         end: (summary) => this.onQueuedMatchEnd(ctx, summary),
       }, checkpoint, departedPlayerIds);
       if (ctx.disposed || room?.disposed || (room && room.matchCtx !== ctx)) {
@@ -1430,7 +1430,7 @@ export class Lobby {
           room.matchKey = key;
         },
         send: (playerId, msg, encoded) => { if (ctx.live) return this.matchSend(room, ctx, playerId, msg, encoded); return false; },
-        broadcast: (msg) => { if (ctx.live) this.matchBroadcast(room, ctx, msg); },
+        broadcast: (msg, encoded) => { if (ctx.live) this.matchBroadcast(room, ctx, msg, encoded); },
         end: (summary) => this.onMatchEnd(room, ctx, summary),
       }, checkpoint, departedPlayerIds);
       if (ctx.disposed || room.disposed || room.matchCtx !== ctx) {
@@ -1501,7 +1501,7 @@ export class Lobby {
         log: this.log,
         now: this.now,
         send: (playerId, msg, encoded) => (ctx.live ? this.matchSend(room, ctx, playerId, msg, encoded) : false),
-        broadcast: (msg) => { if (ctx.live) this.matchBroadcast(room, ctx, msg); },
+        broadcast: (msg, encoded) => { if (ctx.live) this.matchBroadcast(room, ctx, msg, encoded); },
         onEnd: (summary) => this.onMatchEnd(room, ctx, summary),
       });
       ctx.match = match;
@@ -1588,7 +1588,7 @@ export class Lobby {
           if (room) room.matchKey = this.registry.byId(room.hostId)?.limitKey || null;
         },
         send: (playerId, msg, encoded) => { if (ctx.live) return this.queueMatchSend(ctx, playerId, msg, encoded); return false; },
-        broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
+        broadcast: (msg, encoded) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg, encoded); },
         end: (summary) => this.onQueuedMatchEnd(ctx, summary),
       });
       if (ctx.disposed || ctx.ended || room?.disposed || (room && room.matchCtx !== ctx)
@@ -1647,7 +1647,7 @@ export class Lobby {
         matchNo: room ? room.matchCount + 1 : 1,
         data: this.safeData(), workerPool: this.workerPoolFor(matchCode), log: this.log, now: this.now,
         send: (playerId, msg, encoded) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg, encoded) : false),
-        broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
+        broadcast: (msg, encoded) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg, encoded); },
         onEnd: (summary) => this.onQueuedMatchEnd(ctx, summary),
       });
       ctx.match = match;
@@ -1692,13 +1692,13 @@ export class Lobby {
     if (!p || p.isBot || p.left) return false;
     const session = this.registry.byId(playerId);
     if (!session || !session.connected || session.activeMatchCtx !== ctx) return false;
-    if (msg?.t === 'm.result') ctx.results.set(playerId, encode(msg));
+    if (msg?.t === 'm.result') ctx.results.set(playerId, encoded ?? encode(msg));
     return sendSession(session, msg, encoded);
   }
 
-  queueMatchBroadcast(ctx, msg) {
+  queueMatchBroadcast(ctx, msg, encoded = null) {
     if (!ctx || ctx.disposed) return null;
-    const data = encode(msg);
+    const data = encoded ?? encode(msg);
     if (data == null) return null;
     if (msg?.t === 'm.public') ctx.lastPublic = data;
     else if (msg?.t === 'm.result') ctx.sharedResult = data;
@@ -1758,15 +1758,15 @@ export class Lobby {
   /** Match unicast; m.result frames are also kept for the replay. */
   matchSend(room, ctx, playerId, msg, encoded = null) {
     if (msg && msg.t === 'm.result') {
-      const data = encode(msg);
+      const data = encoded ?? encode(msg);
       if (data != null) ctx.results.set(playerId, data);
     }
     return this.sendToPlayer(room, playerId, msg, encoded);
   }
 
   /** Match broadcast; the latest m.public and a broadcast m.result are also kept for the replay. */
-  matchBroadcast(room, ctx, msg) {
-    const data = this.broadcastRoom(room, msg);
+  matchBroadcast(room, ctx, msg, encoded = null) {
+    const data = this.broadcastRoom(room, msg, encoded);
     if (data == null) return;
     if (msg.t === 'm.public') ctx.lastPublic = data;
     else if (msg.t === 'm.result') ctx.sharedResult = data;
@@ -2195,9 +2195,9 @@ export class Lobby {
   }
 
   /** Match broadcast: encode once, send to every connected member. @returns {string | null} the encoded frame */
-  broadcastRoom(room, msg) {
+  broadcastRoom(room, msg, encoded = null) {
     if (room.disposed) return null;
-    const data = encode(msg);
+    const data = encoded ?? encode(msg);
     if (data == null) { this.log.error(`[lobby] ${room.code} unserializable broadcast ${msg && msg.t}`); return null; }
     for (const session of this.memberSessions(room)) sendSession(session, msg, data);
     return data;

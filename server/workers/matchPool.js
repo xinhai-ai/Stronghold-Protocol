@@ -62,6 +62,19 @@ class Lane {
     this.closed = false;
     this.failure = null;
     this.exited = false;
+    this.initialization = null;
+  }
+
+  initialize() {
+    // Send the owning server's immutable snapshot once per lane, not once per Match.
+    // Reserving matches still happens synchronously; their commands wait for this shared initialization.
+    if (!this.initialization) this.initialization = this.request({ type: 'configure', data: this.pool.data }).catch((error) => {
+      // A partially imported lane has no usable authoritative data source. Keep other lanes isolated.
+      this.pool.onWorkerError(this, error);
+      this.worker.terminate().catch(() => {});
+      throw error;
+    });
+    return this.initialization;
   }
 
   request(message) {
@@ -136,7 +149,9 @@ export class MatchWorkerPool {
     const match = new RemoteMatch(this, id, hooks, ++this.nextInstance);
     match.lane = lane;
     lane.matches.set(id, match);
-    const ready = lane.request({ type: 'init', key: id, instanceId: match.instanceId, options: { ...options, data: this.data }, checkpoint, departedPlayerIds })
+    const { data: _data, ...matchOptions } = options || {};
+    const ready = lane.initialize()
+      .then(() => lane.request({ type: 'init', key: id, instanceId: match.instanceId, options: matchOptions, checkpoint, departedPlayerIds }))
       .then((meta) => { match.ready = true; match.update(meta); return match; })
       .catch((error) => {
         if (lane.matches.get(id) === match) { lane.matches.delete(id); this.assignments.delete(id); }
@@ -167,10 +182,12 @@ export class MatchWorkerPool {
       if (match) {
         if (message.msg?.t === 'm.public') match.public = message.msg;
         if (message.msg?.t === 'm.result') match.lastResultMsg = message.msg;
-        match.hooks.broadcast?.(message.msg);
+        match.hooks.broadcast?.(message.msg, message.encoded);
       }
     } else if (message.type === 'end') {
       if (match) { match.update(message.meta); match.hooks.end?.(message.summary); }
+    } else if (message.type === 'configured') {
+      lane.settle(message.requestId, null);
     } else if (message.type === 'meta' || message.type === 'ready') {
       if (match) match.update(message.meta);
       if (message.requestId) lane.settle(message.requestId, message.meta);

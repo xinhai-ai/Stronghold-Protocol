@@ -3,12 +3,14 @@
 // The parent owns sockets and the lobby directory. This thread owns timers, Match state, AI, views and the match
 // lifecycle. Messages are serialized per match by the parent pool; callbacks are event messages back to the parent.
 import { parentPort } from 'node:worker_threads';
-import { Match } from '../match/Match.js';
-import { createRngFromState } from '../sim/rng.js';
-import { captureMatch, restoreMatch, snapshotMatch } from '../match/snapshot.js';
+import { getData, setData } from '../data.js';
 
 const matches = new Map();
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
+const sentMetadata = new WeakMap();
+const PLAYER_META_KEYS = ['playerId', 'seat', 'name', 'isBot', 'left', 'connected'];
+let sharedData = null;
+let Match, createRngFromState, captureMatch, restoreMatch, snapshotMatch;
 
 const metaOf = (match) => ({
   roomCode: match.roomCode,
@@ -26,16 +28,40 @@ const metaOf = (match) => ({
 });
 
 const emit = (event) => {
-  try { parentPort.postMessage(event); }
+  try { parentPort.postMessage(event); return true; }
   catch (error) {
     // Never swallow an uncloneable command reply: answer with an error rather than timing out the whole lane.
     if (event.requestId) throw error;
     // Unsolicited callbacks are best effort while the parent is closing.
+    return false;
   }
 };
 
+const sameOrder = (a, b) => Array.isArray(a) && a.length === b.length
+  && a.every((player, i) => PLAYER_META_KEYS.every((key) => player[key] === b[i][key]));
+
+function emitWithMetadata(event, match, full = false) {
+  const previous = sentMetadata.get(match);
+  const next = metaOf(match);
+  const changes = {};
+  for (const [key, value] of Object.entries(next)) {
+    if (!full && previous && (key === 'order' ? sameOrder(previous.order, value) : previous[key] === value)) continue;
+    changes[key] = value;
+  }
+  // Failed structured clones must not advance the metadata baseline.
+  if (emit({ ...event, ...(Object.keys(changes).length ? { meta: changes } : {}) })) sentMetadata.set(match, next);
+}
+
+function encodeMessage(msg) {
+  try {
+    const encoded = JSON.stringify(msg);
+    return typeof encoded === 'string' ? encoded : null;
+  } catch { return null; } // Keep the existing non-throwing send contract for malformed frames.
+}
+
 function makeOptions(key, instanceId, input, isReady) {
   const base = { ...(input || {}) };
+  base.data = sharedData;
   delete base.send;
   delete base.broadcast;
   delete base.onEnd;
@@ -45,9 +71,15 @@ function makeOptions(key, instanceId, input, isReady) {
   base.log = quiet;
   // Restore can legitimately finish a match before the parent has attached its context.
   // Its final public/result travel in ready metadata instead of premature callbacks.
-  base.send = (playerId, msg, encoded) => { if (isReady()) emit({ type: 'send', key, instanceId, playerId, msg, encoded: encoded || null }); };
-  base.broadcast = (msg) => { if (isReady()) emit({ type: 'broadcast', key, instanceId, msg }); };
-  base.onEnd = (summary) => { if (isReady()) emit({ type: 'end', key, instanceId, summary, meta: metaOf(matchFor(key, instanceId)) }); };
+  base.send = (playerId, msg, encoded) => {
+    if (isReady()) emit({ type: 'send', key, instanceId, playerId, msg, encoded: encoded ?? encodeMessage(msg) });
+  };
+  base.broadcast = (msg) => {
+    if (isReady()) emit({ type: 'broadcast', key, instanceId, msg, encoded: encodeMessage(msg) });
+  };
+  base.onEnd = (summary) => {
+    if (isReady()) emitWithMetadata({ type: 'end', key, instanceId, summary }, matchFor(key, instanceId));
+  };
   return base;
 }
 
@@ -72,12 +104,24 @@ async function call(key, instanceId, requestId, method, args = []) {
     value = fn.apply(match, args);
   }
   if (value && typeof value.then === 'function') value = await value;
-  emit({ type: 'result', requestId, value: value && typeof value === 'object' ? value : value ?? null, meta: metaOf(match), key, instanceId });
+  emitWithMetadata({ type: 'result', requestId, value: value && typeof value === 'object' ? value : value ?? null, key, instanceId }, match);
 }
 
 parentPort.on('message', async (message) => {
   try {
+    if (message.type === 'configure') {
+      if (sharedData) throw new Error('match worker already configured');
+      setData(message.data && typeof message.data === 'object' ? message.data : {});
+      sharedData = getData();
+      // Content modules and the Node simulation default must see this snapshot before they are imported.
+      [{ Match }, { createRngFromState }, { captureMatch, restoreMatch, snapshotMatch }] = await Promise.all([
+        import('../match/Match.js'), import('../sim/rng.js'), import('../match/snapshot.js'),
+      ]);
+      emit({ type: 'configured', requestId: message.requestId });
+      return;
+    }
     if (message.type === 'init') {
+      if (!Match) throw new Error('match worker not configured');
       const key = String(message.key);
       const instanceId = message.instanceId;
       if (matches.has(instanceId)) throw new Error('match instance already initialized');
@@ -92,7 +136,7 @@ parentPort.on('message', async (message) => {
           if (!ok) throw new Error('match checkpoint refused');
         }
         ready = true;
-        emit({ type: 'ready', requestId: message.requestId, key, instanceId, meta: metaOf(match) });
+        emitWithMetadata({ type: 'ready', requestId: message.requestId, key, instanceId }, match, true);
       } catch (error) {
         try { match.dispose(); } finally { matches.delete(instanceId); }
         throw error;

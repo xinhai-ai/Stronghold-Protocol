@@ -22,8 +22,8 @@ async function fixture(t, opts = {}) {
   return { srv, connect };
 }
 
-test('real four-player room: mixed clients, exact public delta, private isolation, spectator, full resync/reconnect', async (t) => {
-  const { srv, connect } = await fixture(t);
+for (const matchWorkers of [0, 2]) test(`real four-player room (${matchWorkers ? 'Match Workers' : 'local'}): mixed clients, exact public delta, private isolation, spectator, full resync/reconnect`, async (t) => {
+  const { srv, connect } = await fixture(t, { matchWorkers });
   const modern = await connect(true), legacy = await connect(false), p3 = await connect(true), p4 = await connect(true);
   assert.equal((await modern.request({ t: 'room.create', mode: 'coop', difficulty: 'NORMAL' })).t, 'ok');
   const room = await modern.waitFor('room.state');
@@ -68,8 +68,8 @@ test('real four-player room: mixed clients, exact public delta, private isolatio
   assert.ok((await back.waitFor('m.state', (m) => m.kind === 'm.private')).full);
 });
 
-test('standalone FIFO matchmaking also uses delta transport, without sending a private view to another owner', async (t) => {
-  const { connect } = await fixture(t);
+for (const matchWorkers of [0, 2]) test(`standalone FIFO matchmaking (${matchWorkers ? 'Match Workers' : 'local'}) also uses delta transport, without sending a private view to another owner`, async (t) => {
+  const { connect } = await fixture(t, { matchWorkers });
   const clients = [];
   for (let i = 0; i < 4; i++) {
     const c = await connect(i !== 1);

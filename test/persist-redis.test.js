@@ -144,6 +144,71 @@ test('a restart through Redis keeps rooms and tokens', { skip: !available && `no
   await other.close();
 });
 
+test('Match Workers keep independent rooms, tokens and checkpoints through two real Redis restarts',
+  { skip: !available && `no Redis at ${REDIS_URL}`, timeout: 30000 }, async (t) => {
+    const servers = [], clients = [], identities = [];
+    const boot = async () => {
+      const srv = await startServer({ host: '127.0.0.1', port: 0, quiet: true, workers: 0, matchWorkers: 2,
+        store: store('match-workers'), log: quietLog });
+      servers.push(srv);
+      return srv;
+    };
+    t.after(async () => {
+      await Promise.all(clients.map((c) => c.terminate()));
+      for (const srv of servers) await srv.close().catch(() => {});
+      const cleanup = store('match-workers');
+      try { await cleanup.clear(); } finally { await cleanup.close(); }
+    });
+    let srv = await boot();
+    const connect = async (name, token) => {
+      const client = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`);
+      clients.push(client);
+      const welcome = await client.hello(name, token, { stateDelta: 1 });
+      return { client, welcome };
+    };
+    for (let roomIndex = 0; roomIndex < 2; roomIndex++) {
+      const players = [];
+      for (let seat = 0; seat < 4; seat++) players.push(await connect(`Room${roomIndex}Seat${seat}`));
+      const host = players[0].client;
+      await host.request({ t: 'room.create', mode: 'coop', difficulty: 'NORMAL' });
+      const code = (await host.waitFor('room.state')).code;
+      for (const { client } of players.slice(1)) {
+        await client.request({ t: 'room.join', code });
+        await client.request({ t: 'room.ready', ready: true });
+      }
+      assert.equal((await host.request({ t: 'room.start' }, 10000)).t, 'ok');
+      const seed = srv.lobby.rooms.get(code).match.seed;
+      for (const { client, welcome } of players) {
+        const state = await client.waitFor('m.state', (m) => m.kind === 'm.private' && m.full);
+        assert.equal(state.full.playerId, welcome.playerId);
+        identities.push({ code, seed, token: welcome.token, playerId: welcome.playerId });
+      }
+    }
+    assert.deepEqual(srv.matchWorkerPool.stats().lanes.map((lane) => lane.rooms), [1, 1]);
+    for (let restart = 0; restart < 2; restart++) {
+      await srv.persister.flush('worker-restart-test');
+      await Promise.all(clients.map((c) => c.terminate()));
+      await srv.close();
+      srv = await boot();
+      assert.equal(srv.matchWorkerPool.stats().rooms, 2);
+      for (const identity of identities) {
+        const match = srv.lobby.rooms.get(identity.code).match;
+        assert.equal(match.remote, true);
+        assert.equal(match.seed, identity.seed);
+        const { client, welcome } = await connect('Back', identity.token);
+        assert.equal(welcome.resumed, true);
+        assert.equal(welcome.playerId, identity.playerId);
+        assert.equal((await client.waitFor('m.state', (m) => m.kind === 'm.private' && m.full)).full.playerId, identity.playerId);
+        assert.ok((await client.waitFor('m.state', (m) => m.kind === 'm.public' && m.full)).full);
+        // State callbacks can reach the socket before onReconnect's IPC reply updates the proxy metadata.
+        // A subsequent queued snapshot is a lifecycle barrier, not an assumption about socket/IPC scheduling.
+        const checkpoint = await match.snapshot();
+        assert.equal(match.order.find((p) => p.playerId === identity.playerId).connected, true);
+        assert.equal(checkpoint.players.filter((p) => !p.left).length, 4);
+      }
+    }
+  });
+
 test('unreadable Redis JSON is preserved instead of overwritten by periodic or shutdown writes', { skip: !available && `no Redis at ${REDIS_URL}` }, async () => {
   const probe = store('invalid-json');
   let srv;

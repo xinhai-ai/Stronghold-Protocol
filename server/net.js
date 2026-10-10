@@ -66,7 +66,8 @@ export const NET_DEFAULTS = Object.freeze({
 
 /**
  * Intents that also draw from the per-connection heavy bucket: g.watch (its reply is a large state resend, m.field),
- * room.loadout (a ≤ 160-entry map validated against the game data; the client debounces its edits), room.ownership
+ * room.loadout (a ≤ 160-entry map and ≤ 256 operator settings validated against the game data; the client debounces its
+ * edits), room.ownership
  * (a ≤ 160-id list, the same way), room.diy (≤ 8 自选 picks checked against the data, the same way) and room.spectate
  * (taking a spectator seat in a running match resends its state like a watcher's g.watch — server/lobby.js spectate).
  * state.resync requests a full match recovery; it also uses the lobby's per-session resync coalescing.
@@ -101,6 +102,8 @@ export class Session {
     this.ws = null;
     /** @type {boolean} */
     this.connected = false;
+    /** @type {number | null} local first-welcome stamp of the attached client (optional, not authentication) */
+    this.claimAt = null;
     /** @type {number} ms epoch of the last inbound frame / pong */
     this.lastSeen = now;
     /** @type {number | null} ms epoch when the socket was lost (null while connected) */
@@ -115,6 +118,8 @@ export class Session {
     this.resyncAt = -Infinity;
     /** @type {Record<string, { skill: number, module: string|null }> | null} checked operator loadout (lobby-owned, DESIGN §16) */
     this.loadout = null;
+    /** @type {Readonly<Record<string, { potential: number, cultivate: number }>> | null} checked per-operator 潜能 / 练度 (lobby-owned, 0.2.2; room.loadout `ops`) */
+    this.ops = null;
     /** @type {readonly string[] | null} checked not-owned chess ids (干员持有, lobby-owned, 0.2.0 补位) */
     this.notOwned = null;
     /** @type {Readonly<Record<string, { charId: string, skillIndex: number, uniEquipId: string|null }>> | null} checked 自选 picks (lobby-owned, 0.2.0 自选编队) */
@@ -203,6 +208,7 @@ export class SessionRegistry {
     s.resumeWindowMs = Number.isFinite(doc.resumeWindowMs) && doc.resumeWindowMs > 0 ? Number(doc.resumeWindowMs) : null;
     s.roomCode = typeof doc.roomCode === 'string' && doc.roomCode ? doc.roomCode : null;
     s.loadout = doc.loadout && typeof doc.loadout === 'object' ? doc.loadout : null;
+    s.ops = doc.ops && typeof doc.ops === 'object' ? doc.ops : null;
     s.notOwned = Array.isArray(doc.notOwned) ? doc.notOwned : null;
     s.diy = doc.diy && typeof doc.diy === 'object' ? doc.diy : null;
     s.lang = doc.lang || 'zh-CN';
@@ -857,6 +863,11 @@ export class Network {
     if (!session) {
       session = msg.token ? this.registry.byToken(msg.token) : null;
       if (session) {
+        if (session.connected && session.ws && session.ws !== conn.ws
+          && (msg.noReplace || (Number.isFinite(msg.claimAt) && session.claimAt != null && msg.claimAt > session.claimAt))) {
+          this.reply(conn, errorMsg(ERR.SESSION_IN_USE, rid));
+          return;
+        }
         resumed = true;
         if (session.ws && session.ws !== conn.ws) this.detachReplaced(session.ws);
       } else {
@@ -866,6 +877,7 @@ export class Network {
       conn.session = session;
       session.ws = conn.ws;
       session.connected = true;
+      session.claimAt = Number.isFinite(msg.claimAt) ? msg.claimAt : null;
       session.disconnectedAt = null;
     }
     session.name = name;

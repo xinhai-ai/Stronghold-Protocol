@@ -7,11 +7,73 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PHASE } from '../../shared/constants.js';
-import { botPickCard, bountyKillChance, itemTarget, arrange, botPrepBegin, botPrepEnd, bondPlan, rangeTiles, effDps, rangeRec } from '../../server/match/bot.js';
+import { botPickCard, bountyKillChance, itemTarget, arrange, botPrepBegin, botPrepEnd, bondPlan, rangeTiles, effDps, rangeRec, buyScoreOf } from '../../server/match/bot.js';
 import { parseKey, tileKey } from '../../server/match/board.js';
 import { makeMatch, checkInvariants, give, giveItem, legalTileFor, DATA } from './harness.js';
 
 const soloBot = (o = {}) => makeMatch({ mode: 'solo', difficulty: 'NORMAL', seats: [{ seat: 0, playerId: 'ai_0', name: 'AI', isBot: true, connected: true }], ...o });
+
+test('user: Given a faction strategy teammate, When scoring shared high-tier chess, Then humans and bots receive the same preference even with full stock', () => {
+  const { m } = makeMatch({ humans: 3, seed: 11 }).start().toPrep();
+  const [ps, mate, other] = m.order;
+  try {
+    mate.bandId = other.bandId = null;
+    ps.shop.level = 6;
+    // 贾维 names 叙拉古; 铃兰 (V) and 荒芜拉普兰德 (VI) both belong to it.
+    for (const id of ['chess_char_5_10_a', 'chess_char_6_18_a']) {
+      mate.isBot = false;
+      const ordinary = buyScoreOf(m, ps, id);
+      mate.bandId = 'band_chiave';
+      const cooperative = buyScoreOf(m, ps, id);
+      assert.ok(cooperative < ordinary, `${m.gd.chess(id).name}: leave faction stock for the strategy`);
+      mate.isBot = true;
+      assert.equal(buyScoreOf(m, ps, id), cooperative, 'bot teammates count equally');
+      other.bandId = 'band_chiave';
+      assert.equal(buyScoreOf(m, ps, id), cooperative, 'multiple teammates do not multiply the penalty');
+      mate.alive = other.alive = false;
+      assert.equal(buyScoreOf(m, ps, id), ordinary, 'eliminated players no longer need cards');
+      mate.alive = other.alive = true;
+      other.bandId = null;
+      m.gd.modeInactiveBonds.add('siracusaShip');
+      const inactive = buyScoreOf(m, ps, id);
+      mate.bandId = null;
+      assert.equal(buyScoreOf(m, ps, id), inactive, 'inactive faction does not trigger yielding');
+      m.gd.modeInactiveBonds.delete('siracusaShip');
+    }
+    const unaffected = Object.values(DATA.chess).filter((c) => c.visible && !c.isGolden &&
+      (c.tier < 5 || !c.bonds.includes('siracusaShip')));
+    for (const c of unaffected) {
+      mate.bandId = null;
+      const ordinary = buyScoreOf(m, ps, c.chessId);
+      mate.bandId = 'band_chiave';
+      assert.equal(buyScoreOf(m, ps, c.chessId), ordinary, c.name);
+    }
+  } finally { m.dispose(); }
+});
+
+test('user: Given a teammate faction strategy, When buying or taking a reward, Then prefer an alternative but retain an immediate own merge', () => {
+  const yu = 'chess_char_6_03_a';
+  const nearl = 'chess_char_6_17_a';
+  for (const { reward = false, ownPair = false, band = 'band_duyaoy', expected } of [
+    { expected: nearl },
+    { reward: true, expected: nearl },
+    { ownPair: true, expected: yu },
+    { band: null, expected: yu },
+  ]) {
+    const { m } = makeMatch({ humans: 2, seed: 11 }).start().toPrep();
+    const [ps, mate] = m.order;
+    try {
+      mate.bandId = band;
+      if (ownPair) for (let i = 0; i < 2; i++) give(m, ps, yu, 'hand');
+      ps.shop.level = 6;
+      ps.funds = reward ? 0 : 5;
+      ps.shop.slots = reward ? [] : [yu, nearl].map((id) => ({ kind: 'chess', id, basePrice: 5, sold: false }));
+      if (reward) ps.pushRewardOffer('merge', { tier: 6, ids: [yu, nearl] });
+      botPrepBegin(m, ps);
+      assert.equal(reward ? ps.allChess()[0]?.id : ps.shop.slots.find((s) => s.sold)?.id, expected);
+    } finally { m.dispose(); }
+  }
+});
 
 /** A 悬赏决策 card as the draft builds it (choices.js buildCards), by its enemy's name. */
 function bountyCard(enemyName) {
@@ -38,7 +100,43 @@ test('bounty pick: the card the own board can beat, never one it cannot (even wh
   assert.equal(botPickCard(m, ps, [hard, easy, huge].map((c, idx) => ({ ...c, idx })), [0, 1, 2]), 1);
   ps.lp = 2;
   assert.equal(botPickCard(m, ps, [hard, huge, easy].map((c, idx) => ({ ...c, idx })), [0, 1, 2]), 2, 'low LP: still the beatable one');
+  const raw = [hard, easy].map((c) => DATA.choices.cards.bounty.find((x) => x.effectId === c.id));
+  assert.deepEqual(m.offerBountyChoice(ps, raw, 'chess_item_6_03_m'), { ok: true });
+  assert.deepEqual(m.autoPickPersonalChoice(ps, 'bot'), { ok: true });
+  assert.equal(ps.personalChoice, null);
+  assert.equal(ps.bounties.at(-1).card.enemyKey, easy.enemyKey, 'personal cards use bounty scoring too');
+  const metaState = m.rngMeta.state(), botState = m.rngBots.state();
+  m.autoPickPersonalChoice(ps, 'bot');
+  m.autoPickPersonalChoice(ps, 'random');
+  assert.equal(m.rngMeta.state(), metaState);
+  assert.equal(m.rngBots.state(), botState, 'nothing pending: no RNG draws');
   m.dispose();
+});
+
+test('a bot\'s 教鞭 pick is deterministic: one seed offers the same three cards and picks the same one, drawing only on the bots\' rng', () => {
+  const runs = [];
+  for (let k = 0; k < 2; k++) {
+    const h = soloBot({ seed: 5, difficulty: 'HARD' }).start();
+    const m = h.m;
+    const ps = m.order[0];
+    h.run(() => m.phase === PHASE.PREP && m.round === 1);
+    ps.lp = 999;
+    h.run(() => m.phase === PHASE.PREP && m.round === 5);
+    const art = giveItem(m, ps, 'chess_item_6_03_m');
+    assert.deepEqual(ps.useArt(art.uid, 10, 5), { ok: true });
+    const offered = ps.personalChoice.cards.map((c) => c.effectId);
+    assert.equal(offered.length, 3);
+    assert.equal(new Set(offered).size, 3, 'three different cards');
+    const meta = m.rngMeta.state(), bots = m.rngBots.state();
+    assert.deepEqual(m.autoPickPersonalChoice(ps, 'bot'), { ok: true });
+    assert.equal(m.rngMeta.state(), meta, 'the pick leaves the meta rng alone');
+    assert.notEqual(m.rngBots.state(), bots, 'one scoring draw per card from the bots\' rng');
+    assert.equal(ps.personalChoice, null);
+    runs.push({ offered, picked: ps.bounties.at(-1).card.effectId, bots: m.rngBots.state() });
+    assert.ok(offered.includes(runs[k].picked));
+    m.dispose();
+  }
+  assert.deepEqual(runs[0], runs[1]);
 });
 
 test('bounty pick in real drafts (绝境 R3 悬赏决策): a card the board likely beats (p ≥ 0.5) whenever a near-sure one (p ≥ 0.9) is offered', () => {
@@ -138,9 +236,12 @@ test('bounty Arts (教鞭): kept after a battle with leaks, used after a perfect
     assert.ok(owns(ps, WHIP), 'kept after a battle with leaks (not destroyed)');
     h.run(() => m.phase === PHASE.PREP && m.round === 4);
     m.lastResults.set(ps.playerId, clean);
+    giveItem(m, ps, WHIP);
     const bounties = ps.bounties.length;
     h.run(() => m.phase === PHASE.COMBAT && m.round === 4);
-    assert.ok(!owns(ps, WHIP) && ps.bounties.length > bounties, 'used after a perfect battle');
+    assert.ok(!owns(ps, WHIP) && ps.bounties.length === bounties + 2, 'both Arts used and picked after a perfect battle');
+    assert.equal(ps.personalChoice, null);
+    assert.equal(ps.round.arts, 2);
     assert.equal(m.errorCount, 0);
     m.dispose();
   }

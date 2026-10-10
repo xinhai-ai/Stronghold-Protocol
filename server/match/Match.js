@@ -12,14 +12,21 @@
 //   opts.mode        'solo' | 'coop'
 //   opts.difficulty  'FUNNY'|'NORMAL'|'HARD'|'ABYSS'
 //   opts.modeId      string                     modeIdFor(mode, difficulty), e.g. 'mode_multi_hard'
+//   opts.aiPicksLast boolean (optional)         the co-op room option 「AI 队友最后选择」 (room.setAiPicksLast, GitHub #338):
+//                                              the strategy and 机变 drafts put every human seat before every AI seat
+//                                              (MatchPhases.humansFirst); only `true` turns it on; ignored in solo
 //   opts.seats       Array<{ seat: 0..3, playerId: string, name: string, isBot: boolean, connected: boolean,
 //                            loadout?: { [baseChessId]: { skill: index, module: uniEquipId|'none'|null } } | null,
+//                            ops?: { [charId]: { potential: 1–6, cultivate: 0–3 } } | null,
 //                            notOwned?: string[] | null,
 //                            diy?: { [slotBaseId]: { charId, skillIndex, uniEquipId } } | null }>
 //                    sorted by seat, 1–4 entries, ≥ 1 human; solo ⇒ exactly 1 human and no bots.
 //                    Bot playerIds start with 'ai_'. Seat indexes may have gaps (e.g. seats 0 and 2).
 //                    `loadout` (DESIGN §16, optional): the human's operator loadout, already checked by the lobby
 //                    (shared/protocol.js checkLoadout); PlayerState re-checks it against opts.data and ignores it for bots.
+//                    `ops` (0.2.2, optional): the human's per-operator 潜能 / 练度 (checkLoadoutOps; missing = 潜能 6, 精英2
+//                    Lv.60 — the owner's decision of 2026-10-08), re-checked and changed like the loadout (INFO_CHECK);
+//                    bots fight with the defaults.
 //                    `notOwned` (0.2.0 补位, optional): the base chess ids the human marked as not owned (干员持有) — fixed
 //                    for the match; those chess fight as their stand-ins (PlayerState setNotOwned; bots own everything).
 //                    `diy` (0.2.0 自选编队, optional): the human's 自选 picks (shared/protocol.js checkDiyPicks) — fixed for
@@ -53,9 +60,10 @@
 //                           (a resync request). May be called without a preceding onDisconnect. Resend full
 //                           state: m.public, m.private and, if a battle is on (client-side combat), the
 //                           b.start of the field the player is on / watching (server-run mode: m.field + b.snap).
-// setLoadout(playerId, loadout) → { ok } | { error, detail? }   (DESIGN §16; optional for the platform) a new checked
-//                           operator loadout from room.loadout. Accepted only during INFO_CHECK (the briefing's
-//                           干员调配 entry); afterwards the match's loadout is locked (WRONG_PHASE).
+// setLoadout(playerId, loadout, ops?) → { ok } | { error, detail? }   (DESIGN §16; optional for the platform) a new
+//                           checked operator loadout (and its 潜能 / 练度 `ops`, 0.2.2) from room.loadout. Accepted only
+//                           during INFO_CHECK (the briefing's 干员调配 entry); afterwards the match's loadout is locked
+//                           (WRONG_PHASE).
 // onLeave(playerId)         The human quit permanently (g.leave, room.leave, or the 10-minute reconnect
 //                           window expired). They will never return under this playerId in this match;
 //                           treat as quit (AI takes over / eliminated per DESIGN). No onDisconnect follows.
@@ -106,7 +114,7 @@
 // (g.bandFocus → timeoutBand); g.unitStats answers m.unitStats: the stats the board's units start their next battle with.
 //   opts.clientCombat  default true (env SP_COMBAT=server → false: the legacy server-run + snapshot streaming mode)
 //   opts.verify        'off' | 'sample' | 'all' (env SP_VERIFY, default 'off'): re-simulate accepted client results
-//                      ('sample': ~1 in 8, in a later callback, mismatches logged; 'all': before accepting — the
+//                      ('sample': ~1 in 8, in later slices, mismatches logged; 'all': before accepting — the
 //                      server's result wins on a mismatch)
 //   opts.workerPool    shared process-wide CPU pool (server/workers); production uses it for rehearsal, normal/unite
 //                      headless runs and verification. Virtual schedulers and custom Battle classes stay local.
@@ -125,7 +133,7 @@
 //   opts.botSliceMs    wall-clock ms of rehearsal per scheduler callback (default 8 with a real scheduler, unbounded
 //                      with a virtual one); the rest runs in later callbacks (scheduleBotPrep)
 //   opts.headlessSliceMs  wall-clock ms per callback of a server-run normal / 联防 field (client-side combat: bots,
-//                      takeovers; default 8 with a real scheduler, at once with a virtual one)
+//                      takeovers, result verification; default 8 with a real scheduler, at once with a virtual one)
 // Seats may be all bots (tools/matchrun.mjs); the lobby always has ≥ 1 human.
 //
 // Diagnostics: m.errors / m.errorCount (engine), m.dispatcher.errors / .errorsByKey (meta handlers), m.simErrors
@@ -187,6 +195,7 @@ import { MatchWatch } from './match/watch.js';
 import { MatchIntents } from './match/intents.js';
 import { MatchPause } from './match/pause.js';
 import { MatchPhases } from './match/phases.js';
+import { MatchSetupVote } from './match/setupVote.js';
 import { MatchSpDraft } from './match/spDraft.js';
 import { MatchPrep } from './match/prep.js';
 import { MatchCombat } from './match/combat.js';
@@ -255,6 +264,8 @@ export class Match {
     this.isSolo = this.mode === 'solo' || this.gd.isSolo;
     // Only a room created by the lobby can opt in. Public matchmaking passes false and has no room console.
     this.consoleEnabled = opts.consoleEnabled === true;
+    /** 「AI 队友最后选择」 (opts.aiPicksLast, GitHub #338): humans draft before AI seats (MatchPhases.humansFirst) */
+    this.aiPicksLast = !this.isSolo && opts.aiPicksLast === true;
     this.ownsScheduler = !opts.scheduler;
     this.sched = opts.scheduler || new RealScheduler({ now: opts.now || Date.now, onError: (e) => this.reportError('timer', e) });
     this.registry = opts.registry || getDefaultRegistry();
@@ -362,6 +373,11 @@ export class Match {
     /** @type {Set<any>} */
     this._timers = new Set();
     this._phaseTimer = null;
+    this._infoAdvanceTimer = null;
+    this.setupRevision = 0;
+    this.setupVote = null;
+    this._setupVoteSeq = 0;
+    this._lastSetupVoteAt = -Infinity;
     this._turnTimer = null;
     this._pubDirty = false;
     this._pubTimer = null;
@@ -408,7 +424,7 @@ export class Match {
 }
 
 // the method modules, in this order (a name defined twice is an error, never a silent override)
-for (const part of [MatchPlatform, MatchInfra, MatchMessaging, MatchViews, MatchWatch, MatchIntents, MatchPause, MatchPhases, MatchSpDraft, MatchPrep, MatchCombat, MatchClientCombat, MatchReports, MatchUnite, MatchBoss, MatchSettle]) {
+for (const part of [MatchPlatform, MatchInfra, MatchMessaging, MatchViews, MatchWatch, MatchIntents, MatchPause, MatchPhases, MatchSetupVote, MatchSpDraft, MatchPrep, MatchCombat, MatchClientCombat, MatchReports, MatchUnite, MatchBoss, MatchSettle]) {
   for (const key of Reflect.ownKeys(part.prototype)) {
     if (key === 'constructor') continue;
     if (Object.prototype.hasOwnProperty.call(Match.prototype, key)) throw new Error(`Match.${String(key)} is defined twice`);

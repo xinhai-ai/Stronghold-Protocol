@@ -186,7 +186,7 @@ function ifRangeMatches(req, etag, lastModified) {
 function cacheControlFor(ext, mountName, segments, query) {
   if (ext === '.html' || ext === '.htm') return 'no-cache';
   if (mountName === 'public' && segments.length === 3 && segments[0] === 'build' && segments[1] === 'assets'
-    && /-[A-Za-z0-9_-]{8,}\.(js|css)$/.test(segments[2])) return IMMUTABLE_CACHE;
+    && /-[A-Za-z0-9_-]{8,}\.(js|css|json|webmanifest|svg|png|ico)$/.test(segments[2])) return IMMUTABLE_CACHE;
   if (/(^|&)v=/.test(query)) return IMMUTABLE_CACHE;
   if (mountName === 'public' && segments.length > 1 && LONG_CACHE_DIRS.includes(segments[0])) return LONG_CACHE;
   return 'no-cache';

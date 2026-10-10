@@ -36,7 +36,7 @@ test('spring barrier counter has no source and cannot recurse with Bubble', () =
 
 const NEST = 'enemy_1234_dsubrl';
 
-test('Echo answers Bubble once; reactive pulses do not start another counter chain', () => {
+test('Echo and Bubble resolve hit-count counter pulses FIFO without recursive hook overflow', () => {
   const h = makeBattle({ autoFinish: false, timeLimit: 30,
     units: [{ chessId: 'chess_char_2_08_b', row: 10, col: 4 }],
     enemies: [{ key: 'enemy_9023_acdums', pos: [10, 5] }] });
@@ -48,13 +48,14 @@ test('Echo answers Bubble once; reactive pulses do not start another counter cha
   let counters = 0, pulses = 0;
   h.b.on('damaged', (ctx) => {
     if (ctx.source === bubble && ctx.dmg?.tags?.includes('counter')) counters++;
-    if (ctx.type !== 'element' && ctx.source === echo && ctx.dmg?.tags?.includes('reflect')) pulses++;
+    if (ctx.type !== 'element' && ctx.source === echo) pulses++;
   });
   h.b.dealDamage(echo, bubble, { amount: 800, type: 'arts' });
-  assert.equal(counters, 1);
-  assert.equal(pulses, 1);
+  assert.equal(counters, 10);
+  assert.equal(pulses, 11, 'the triggering hit plus all ten earned pulses');
+  assert.deepEqual(echo.mem.ab.pulses, []);
   assert.equal(h.b.errorCount, 0);
-  assert.ok(echo.alive && bubble.alive);
+  assert.ok(!echo.alive && bubble.alive);
 });
 
 /**

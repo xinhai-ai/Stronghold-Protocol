@@ -2,8 +2,57 @@
 
 Owner: `tools/fetch-assets.mjs` and `tools/assets/*`. Research background: `docs/research/07-assets.md`.
 
-All art, Spine models and audio are **downloaded at install time**. They are never committed; `public/assets/` is git-ignored.
-Everything the client needs is listed in **`data/assets.json`**. The client should only request URLs that appear in that manifest.
+All official game art, Spine models and audio are **downloaded at install time**. They are never committed; `public/assets/` is git-ignored.
+All downloaded game assets the client needs are listed in **`data/assets.json`**. Game-art requests must use that manifest.
+The original project icons below are shipped static files, not downloaded game assets.
+
+## Original project application icons (#413)
+
+By the maintainer's revised decision of 2026-10-10, **沿用 0.2.x 的薄荷绿城堡并精修**.
+`public/icons/app.svg` retains the existing mint rook's three battlements, inset tower and splayed base.
+The selected refinement (B) narrows the tower, balances the battlements, reduces the base thickness and adds breathing
+room. On the 512 px canvas the mark spans x=128–384 and y=88–424; the tower is 176 px wide and the base is 32 px thick.
+The original colours remain mint `#4ed8af` and dark `#0c0f0e`, with no text, gradients, gloss or texture.
+
+**Provenance / originality statement (2026-10-10):** this is a proportion refinement of this project's existing
+`public/icons/app.svg` from before `ba5b998a`, expressed as basic rectangles and polygons.
+No official logo, artwork, icon or font was used, downloaded, embedded, traced or redrawn for this refinement.
+The vector and exports are project-owned work under the repository's GPL-3.0-or-later licence, separate from the
+Hypergryph / Yostar game assets below. The castle mark does not assert official branding.
+
+Rebuild offline with Python 3 and Pillow (the same image library used by local-extract):
+
+```bash
+python3 tools/export-app-icons.py
+# Optional review export without replacing shipped files:
+python3 tools/export-app-icons.py --out /tmp/stronghold-icons
+```
+
+The script reads only the master SVG's flat rectangle / polygon geometry, renders at 8× and downsamples; unsupported
+SVG elements fail rather than silently disappearing. It needs no game art, fonts, browser or network.
+ICO frames use the same native-size renders as the PNG favicons, with explicit 24-bit DIBs and opaque 1-bit masks
+whose rows are padded to 4 bytes. This avoids malformed transparency masks in Pillow's RGB ICO export.
+
+| Files in `public/icons/` | Use |
+|---|---|
+| `app-192.png`, `app-512.png` | Manifest `purpose: any`, 192 / 512 px |
+| `app-maskable-192.png`, `app-maskable-512.png` | Manifest `purpose: maskable`, opaque full-bleed background |
+| `favicon-16.png`, `favicon-32.png`, `favicon-48.png`, `favicon.ico` | Tab / legacy favicon; ICO contains 16 / 32 / 48 px frames |
+| `apple-touch-icon.png` | 180 px home-screen icon |
+| `app.svg` | Scalable favicon and editable source |
+
+The maskable mark is scaled to 87.5% around the canvas centre. Its outermost vertex is about 36.1% of the canvas
+width from that centre; even antialiased edge pixels stay inside the **40%-radius safe circle** specified by
+[Web Application Manifest §2.3](https://www.w3.org/TR/appmanifest/#icon-masks).
+The background remains opaque to every edge; launcher masks may remove the background outside the safe zone.
+Normal icons and favicons retain the larger mark for readability. `public/index.html` links the SVG / ICO / PNG
+favicons and Apple icon; `public/manifest.json` lists all four install icons. All these static files must be tracked
+and included by the full and lite package allowlist; no changes to `data/assets.json` are needed.
+
+`test/ui/pwa-install-023.test.js` checks decoded pixels, mask safety and references; `test/package.test.js` checks
+packaging inclusion. The local handoff `claude-review-023/icon-v2/` holds the original and A/B/C SVGs, light/dark
+256 px and 16/32/48/96 px comparisons, and phone-layout / mask previews with their render script.
+These are offline review renders, not evidence of browser or native OS installation.
 
 ## CDN
 
@@ -181,10 +230,11 @@ npm run assets       # = node tools/vendor.mjs && node tools/fetch-assets.mjs
 | `--offline` | No network. Re-runs post-processing (atlas fixes, skeleton parsing, WOFF2) on what is already on disk, then rebuilds `data/assets.json`. |
 | `--dry-run` | Print the plan (file and model counts, alias notes) and exit. |
 | `--refresh-index` | Re-download the upstream indexes: `audio_data.json`, `charword_table.json` (the 干员战斗语音 slots) and `models_data.json`. |
-| `--voice-lang=cn` | 干员战斗语音 language: `cn` (default) | `jp` | `en` | `kr` — the same file names under `voice_cn/`, `voice/`, `voice_en/`, `voice_kr/`. |
+| `--voice-lang=cn` | The dub of `audio.voice` (the 中文 voice setting): `cn` (default) | `jp` | `en` | `kr` — the same file names under `voice_cn/`, `voice/`, `voice_en/`, `voice_kr/`. `audio.voiceJp` (the 日本語 setting) is always the JP dub: every run plans both trees. |
 | `--voice-all` | Plan every official voice slot, including the prep-only lines no battle plays (干员报到 / 编入队伍 / 任命队长 — 360 files, one per operator and slot). Off by default: nothing requests them, so planning them only makes every run download more. |
 | `--prune` | Delete files under `public/assets/` that the manifest no longer references, for example after a mapping change. Without this flag they are only listed in the report. `public/assets/local/` (written by `tools/local-extract`) is never pruned. Implies `--allow-shrink`. |
 | `--allow-shrink` | Write `data/assets.json` even when it loses entries the current one has (see "The manifest never shrinks by accident" below). |
+| `--strict` | Exit 1 when a leaf was dropped for having no file on disk, instead of only reporting it (see "A dropped leaf is reported" below). The same as the environment variable `SP_ASSETS_STRICT=1` — for CI and packaging builds. |
 | `--add-only` | For a checkout whose `public/assets/` and `public/fonts/` are shared with another one (a git worktree with symlinked asset folders): download only the files missing on disk and never re-download, rewrite or delete an existing file — atlases already on disk are left as they are, the fonts are not rebuilt (the manifest keeps its current `fonts`). Not with `--prune` / `--force`. |
 | `--local-spines` | Rewrite `tools/assets/local-enemy-spines.json` and `tools/assets/local-token-spines.json` (the metadata of the enemy and token models only the local client has, see "Enemy aliases" and "Token models from the local client") from the models `tools/local-extract/extract.py` extracted to `public/assets/local/spine/enemy/` and `public/assets/local/spine/token/`. Run it after a game update changed them; without it the committed files are used and a differing extraction only gets a warning. |
 
@@ -198,6 +248,23 @@ smaller manifest is intended, for example after a mapping change. Build fields (
 `stats`), new entries and a changed value are never a drop (`tools/assets/manifest.mjs droppedEntries`). A run whose
 plan legitimately narrows — like the 干员战斗语音 default, which no longer plans the three prep-only slots (360 entries,
 DESIGN §21.30) — reports exactly those entries and needs `--allow-shrink` once; the list it prints is the check.
+
+**A dropped leaf is reported, never silent.** `resolveTemplate` leaves out every entry none of whose alternative files
+is on disk — for a leaf that is an entry the client loses outright: a unit whose `attack` sound was never downloaded has
+no `audio.sfx.units[charId].attack` at all, so the sound is simply missing (nothing falls back; there is no URL to
+retry). That is a different thing from an entry whose *fallback* was used. The run therefore prints a summary naming at most eight such leaves
+and records the complete list as `droppedLeaves` (a subset of `misses`, which also lists the
+unresolved Spine models):
+
+```
+[assets] 1 leaf dropped: no alternative on disk (audio.sfx.units.some_char.attack)
+```
+
+A run with nothing dropped prints `[assets] no leaf dropped: every planned leaf has a file on disk`. This is only
+observability: which files are planned, downloaded and written does not change. `--strict` (or `SP_ASSETS_STRICT=1`)
+turns those drops into a failure (exit 1, the leaves named) so a CI or packaging run cannot ship a manifest with such
+holes — the committed manifest's shrink guard cannot see them once the entry is already gone. The manifest may
+already have been written before this check returns failure; strict mode does not roll it back.
 
 The script is **idempotent**. A file on disk is kept, not re-downloaded, when any one of these holds:
 - its size matches the ledger entry from a previous download (`.cache/assets-ledger.json`);
@@ -214,16 +281,18 @@ How downloads are fetched:
 - A manifest entry with fallbacks (for example an enemy icon that falls back to its base enemy's icon) only moves on to the next alternative after a **definitive 404**. When the primary fails transiently (network error, 5xx or an invalid payload after all retries), no fallback is fetched. The path is listed under `downloadErrors` in the report, and the next run retries the primary.
 - A skeleton that fails to parse is deleted and removed from the ledger, so the next online run downloads it again.
 
-The first run downloads about **309 MiB in about 5,690 files** (it took 134 s on a ~3 MB/s link before the 55 emote and 玩法说明 files, 21.3 MiB, and the 1,680 干员战斗语音 files, 40.1 MiB, were added). A re-run takes about 1 s. The voice count is the twelve slots a battle plays; the three prep-only slots the official client uses elsewhere (干员报到 / 编入队伍 / 任命队长, 360 more files, 18.4 MiB) are left out unless `--voice-all` is passed.
+The first run downloads about **548 MiB in 10,643 files** (`stats` of `data/assets.json` in 0.2.2: 574,449,900 bytes). The two 干员战斗语音 dubs are 2,674 files each, the twelve slots a battle plays for 191 operators: the Chinese one 65.6 MiB, the Japanese one 85.2 MiB (89,388,041 bytes; adding it took 107 s at about 1 MB/s from raw.githubusercontent.com). A re-run takes about 1 s. The three prep-only slots the official client uses elsewhere (干员报到 / 编入队伍 / 任命队长, 360 more files per dub, 18.4 MiB of them Chinese) are left out unless `--voice-all` is passed.
 
 Outputs:
 - `data/assets.json`: the manifest (committed).
 - `public/assets/**`: art and audio (git-ignored).
 - `public/fonts/*`: fonts and `fonts.css`.
-- `.cache/assets-report.json`: misses, fallbacks and notes from the last run.
+- `.cache/assets-report.json`: misses, fallbacks, `droppedLeaves` (the leaves left out of the manifest for having no file
+  on disk) and notes from the last run.
 - `.cache/spine-info.json`: skeleton parse cache.
 
-The run exits with code 1 if any pool operator is missing its avatar, its portrait or its Front Spine.
+The run exits with code 1 if any pool operator is missing its avatar, its portrait or its Front Spine, and — with
+`--strict` / `SP_ASSETS_STRICT=1` — if any leaf was dropped for having no file on disk.
 
 Upstream indexes are cached under `.cache/`. They are downloaded when missing:
 - `.cache/gamedata/excel/audio_data.json`, from `Kengxxiao/ArknightsGameData` (zh_CN).
@@ -254,14 +323,14 @@ The research JSONs in `docs/research/` (03, 05, 07) define **which** ids are nee
 | Token Spine that no dump carries (39 summons: most 自选 summons, 凯瑟琳's 爬行号·防护单元, 凛御银灰's 风雪之眼) | the local client only (`tools/local-extract/extract.py TOKEN_SPINES`, optional); never downloaded and never required: an overlay (`tokens[id].spineLocal`; without it the avatar diamond) | `local/spine/token/{tokenId}/{stem}.*` (listed in `data/local-assets.json`) |
 | BGM | AA2 `voice` branch `audio/sound_beta_2/music/**` (大厅/休整期 `act1autochess`, 开战 `act13side/m_bat_kazimierz2_{1,2}` — 骑士之日 / 无畏者; the 开战 track follows the round: `_2` 无畏者 rounds 1–7, `_1` 骑士之日 from round 8) | `audio/bgm/{file}.mp3` |
 | SFX (UI, battle, per unit) | AA2 `voice` `audio/sound_beta_2/**`, mapped from `audio_data.json` banks | `audio/sfx/{same sub-path}.mp3` |
-| 干员战斗语音 | AA2 `voice` `audio/sound_beta_2/voice_cn/{charId}/cn_nn.mp3` — the lines `charword_table.json` lists (`placeType` = when the game plays one, `voiceAsset` = the path); `--voice-lang=jp|en|kr` takes the same file names from `voice/`, `voice_en/`, `voice_kr/` | `audio/voice/{lang}/{charId}/{cn_nn}.mp3` |
+| 干员战斗语音 | AA2 `voice` `audio/sound_beta_2/voice_cn/{charId}/cn_nn.mp3` (Chinese, `audio.voice`) and `voice/{charId}/cn_nn.mp3` (Japanese, `audio.voiceJp`: the same file names) — the lines `charword_table.json` lists (`placeType` = when the game plays one, `voiceAsset` = the path); `--voice-lang=jp|en|kr` fills `audio.voice` from `voice/`, `voice_en/`, `voice_kr/` instead | `audio/voice/cn/{charId}/{cn_nn}.mp3`, `audio/voice/jp/{charId}/{cn_nn}.mp3` (`audio/voice/{lang}/…` for another `--voice-lang`) |
 | Fonts: Bender Regular and Light, Novecento Wide | TimWangZi/The-font-of-Arknights | `public/fonts/*.{otf,ttf,woff2}`, `public/fonts/fonts.css` |
 
 The `stem` of a Spine model is the upstream file name. Two examples: `char_107_liskam` has the stem `char_107_liskarm`, and `enemy_9032_aclionk` uses `enemy_1559_vtlionk`. The skel and atlas of a model always share one stem. pixi-spine locates the atlas by swapping the extension, so this matters.
 
 ### Id scope
 
-- **Operators:** all 138 pool charIds from `activity_table` (`charShopChessDatas[*].charId ∪ backupCharId`), including hidden chess and backup operators; plus every unit of `data/backups.json` research 07 does not list — the 71 自选 owned-6★ picks (`diy.ownedPool`, DATA.md §18; the collab operators are not in the data, and 焰狐龙梓兰's entries left the manifest when she left the pool in 0.2.0) — planned from 07's URL patterns (`tools/assets/plan.mjs patternOperator`, `tools/fetch-assets.mjs dataExtras`): avatar and portrait (E0–E1 and E2), the default-skin battle Spine Front / Back, the icon and skill sound of each skill, the sub-profession icon. 209 operators in all (206 with a Back model).
+- **Operators:** all 138 pool charIds from `activity_table` (`charShopChessDatas[*].charId ∪ backupCharId`), including hidden chess and backup operators; plus every unit of `data/backups.json` research 07 does not list — the 72 自选 owned-6★ picks (`diy.ownedPool`, DATA.md §18; the collab operators are not in the data, and 焰狐龙梓兰's entries left the manifest when she left the pool in 0.2.0) — planned from 07's URL patterns (`tools/assets/plan.mjs patternOperator`, `tools/fetch-assets.mjs dataExtras`): avatar and portrait (E0–E1 and E2), the default-skin battle Spine Front / Back, the icon and skill sound of each skill, the sub-profession icon. 209 operators in all (206 with a Back model).
 - **Tokens:** the 20 pool tokens, and the 38 summons of the 自选 picks (`data/backups.json tokens`) as extra tokens (below): their avatars; no dump carries the battle Spine of the 自选 summons (upstream has at most skin variants, which the default locations miss), so the web manifest has no model for them — 35 of them, and 4 pool summons, have the official model as an optional local-client overlay ("Token models from the local client"); 3 have no model in the game at all.
 - **Enemies:** 253 ids planned, 252 in the manifest (心烛 has no assets). The set is the union of:
   - the 07 enemy list;
@@ -309,7 +378,7 @@ All paths are URL paths relative to the site root, for example `/assets/char/ava
   hash: 'a1b2c3d4e5f6',             // content hash (cache busting)
   generator: 'tools/fetch-assets.mjs',
   stats: { files, bytes, chars, charsWithBack, enemies, enemiesWithSpine, tokens, tokensWithSpine,
-           spineModels, bonds, items, bands, skills, modules, ui, sfxUnits, voiceChars },
+           spineModels, bonds, items, bands, skills, modules, ui, sfxUnits, voiceChars, voiceJpChars },
   chars:   { [charId]: { avatar, avatarE2?, portrait, portraitE2?, spine: { front: Spine, back?: Spine } } },
   enemies: { [enemyId]: { icon, spine?: Spine, spineAliasOf?: enemyId,
                           spineLocal?: { group, skel, atlas, textures, …Spine } } },
@@ -347,6 +416,12 @@ All paths are URL paths relative to the site root, for example `/assets/char/ava
                            // prep-only slots 干员报到 / 编入队伍 / 任命队长 are left out of the plan by default —
                            // nothing requests them and they cost 360 files (19.3 MB) per run — and `--voice-all` adds
                            // them (audio.mjs VOICE_PREP_SLOTS) for the complete official set
+    voiceJp: { [charId]: { …the slots of `voice` } },
+                           // the Japanese dub (0.2.2, the owner's request 「全套的日配语音」): the same slots, lines and file
+                           // names as `voice`, under /assets/audio/voice/jp/ (AA2 `voice/`). The client plays it when the
+                           // player picks 日本語 (settings 语音语言, not tied to the interface language) and falls back to
+                           // `voice` for a slot it lacks or a file the host does not have (public/js/audio.js voiceLine);
+                           // the full zip ships it unless tools/package.mjs FULL_ZIP_JP_VOICE is off
     sfx: {
       ui:     { click, back, confirm, tab, pick, drop, error, buy, sell, income, refresh, freeze, levelup,
                 merge, equip, itemMerge, bondUp, artPlace, ready, timer, draft, yourTurn, yourTurnCircle,
@@ -356,7 +431,8 @@ All paths are URL paths relative to the site root, for example `/assets/char/ava
                 disconnect, settlementSucceed, settlementFail, settlementTeam, settlementBossSign,
                 goodEvaluation, load, start, matchSucceed, matchFail, matchCancel, joinRoom },
       battle: { deploy, tokenDeploy, charDie, enemyDie, enemyDieHeavy, enemyHit, heal, leak, win, lose, killCoin },
-      units:  { [charId|tokenId|enemyId]: { attack?, hit?, skill?, skills?: {[skillIndex]: url}, die?, born?,
+      units:  { [charId|tokenId|enemyId]: { attack?, hit?, skill?, skills?: {[skillIndex]: url}, attacks?: {[skillIndex]: url}, hits?: {[skillIndex]: url}, die?, born?,
+                attackMix?: {[skillIndex]: {p?, vol?}}, hitMix?: {[skillIndex]: {p?, vol?}},
                 mix?: { [attack|hit|die|born]: { p?, vol? } } } }
     }
   },
@@ -434,8 +510,12 @@ catch-up frames and hidden tabs (`keepsState`), the game screen's pre-entry buff
 event queue (`render/interp.js isCosmeticEvent`) too — or, for a view built mid-battle, UnitInfo `form`, which `render/app/info.js renderInfo` passes to the view; a
 `change` clip plays once first, an `end` clip is timed from the fx's `dur` to finish as that state ends, keeping the
 current form's death clip until the next form's fx). A blocked or revealed 隐匿 enemy is drawn solid: the sim sends the
-stealth bit only while its 隐匿 is on:
+stealth bit only while its 隐匿 is on — and 假想敌：骨刺 changes model with that bit, not with an fx (`STEALTH_FORMS`, GitHub
+#296, PR #365): the manifest's `*_A` (the three-headed snake) while the bit is on, its `*_B` set (form `revealed`) the
+moment it is blocked or revealed, `*_A` again when its 隐匿 is back; no change clip, a running attack, stun or freeze
+pose carried over (`render/spine.js syncFormPose`). The forms:
 - 掠海漂移体's crawl (`Change`, then `*_02`);
+- 假想敌：骨刺 (`*_A` / `*_B`, above);
 - 转译基底·α's three forms (`A_Die_B` / `_C` / `_D`, 2 s each, then `B_*` 寻仇者, `C_*` 幽灵, `D_*` 特战术师);
 - the 深池逐火 embers (`Die`, then `Idle_2` / `Move_2` / `Die_2`; `Revive` ends as it stands up) and 假想敌：再生's puppet
   (`A_Die`, then `B_*`; `B_Revive`);
@@ -583,3 +663,12 @@ The project's code is GPL-3.0-or-later (`LICENSE`); none of the items below is c
   - **Novecento Wide:** © Jan Tonellato / Synthview. Free licence.
   - Both are mirrored from TimWangZi/The-font-of-Arknights.
   - Noto Sans SC and Noto Serif SC (SIL OFL) are loaded from Google Fonts, not self-hosted.
+
+### Skill attack banks (0.2.3, PR #410)
+
+`pickModeAttacks` / `pickModeHits` select a uniform d/h/s bank from the official audio table (attack/combat abilities
+only). A skill's activation sound supplies its mode letter; without one, d/h/s = slots 1/2/3 is [ASSUMED]. Competing
+banks prefer START over ON, then plain/numeric order; this is a deterministic approximation, not proof of every
+operator's runtime ability graph. Mixed-letter banks are skipped. Preserve `mixOf` for each selected bank separately;
+`attacks`/`hits` and `attackMix`/`hitMix` use matching skill keys. Regenerate the current manifest instead of importing
+an older PR's full JSON, preserving JP voices and current operators. See DESIGN §28.17.

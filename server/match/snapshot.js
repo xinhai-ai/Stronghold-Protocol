@@ -181,6 +181,7 @@ const MATCH_FIELDS = Object.freeze([
   'roomCode', 'mode', 'difficulty', 'modeId', 'seed', 'isSolo', 'consoleEnabled', 'battlePrefix', 'timerScale', 'gameSpeed',
   'botRehearsal', 'clientCombat', 'verifyMode', 'headlessSliceMs', 'verifyStats', '_battleSeq', 'pausedMs',
   'stageId', 'factions', 'bossId', 'hiddenBossId', 'disabledBonds', 'staticInactiveBonds', 'bannedChess',
+  'aiPicksLast', 'setupRevision', '_setupVoteSeq',
   'round', 'uidSeq', 'loneHuman', 'hiddenLayerSum', 'hiddenReached', 'errors', 'errorCount', 'simErrors',
   'simErrorLog', 'draft', 'sp', 'wave', 'bossWaves',
 ]);
@@ -191,7 +192,7 @@ const PLAYER_FIELDS = Object.freeze([
   'pendingFunds', 'ready', 'infoReady', 'lastEmoteAt', 'loadout', 'shop', 'offers', 'hand', 'temp', 'prepsEnded',
   '_tempDue', 'board', 'layers', 'pendingLayerGains', 'bondCountBonus', 'effects', 'bounties', 'counters', 'round',
   'deployCapBonus', 'deployCapMin', 'deviceOverrides', 'tileOverrides', 'stats', 'eliminatedRound', 'lpAtFinal',
-  'lastResult', 'standIns', 'diy', 'diyStock', 'diyBanned',
+  'ops', 'personalChoice', 'lastResult', 'standIns', 'diy', 'diyStock', 'diyBanned',
 ]);
 
 /** The RNG streams the match owns (server/sim/rng.js createRng, state()/setState). */
@@ -235,6 +236,8 @@ export function captureMatch(m) {
   }
   // the phase clock travels as *remaining* time: the match is frozen while the server is down
   doc.deadlineRemainingMs = m.deadline > 0 ? Math.max(0, Math.round(m.deadline - now)) : 0;
+  // Votes are cancelled on restart; retain their paused confirmation budget, not a zero deadline.
+  if (m.setupVote && m.phase === PHASE.INFO_CHECK) doc.deadlineRemainingMs = m.setupVote.remainingMs || 0;
   doc.startedAtAgoMs = Math.max(0, Math.round(now - (Number(m.startedAt) || now)));
   // the shared pool: only the remaining copies live in the checkpoint (cap/tier are data-derived)
   doc.poolLeft = {};

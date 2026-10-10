@@ -10,6 +10,7 @@ import { FieldRunner, timelineAt, uniteBillBounds } from '../fields.js';
 import { uniteLeft } from '../../sim/spec.js';
 import { FLOW_TICKER_PRIORITY, DELAYS } from './common.js';
 import { msg } from '../../../shared/i18n.js';
+import { onStartUnite } from '../botEmotes.js';
 
 export class MatchUnite {
   startUnite(plan) {
@@ -23,6 +24,7 @@ export class MatchUnite {
     this._defaultWatch();
     this.markPublic();
     this.tickerText(msg('联防阶段：{names} 迎战突破防线的敌人', { names: plan.helpers.map((p) => p.name) }), FLOW_TICKER_PRIORITY);
+    onStartUnite(this, plan); // an AI helper says "合作愉快" once on the open of a 联防 (enabled by default; SP_BOT_EMOTES=0 silences it)
     this._uniteLeftKey = null;
     this.runner = new FieldRunner(this, this.fields, {
       onTick: (runner) => this._uniteTick(runner),
@@ -125,8 +127,9 @@ export class MatchUnite {
     let live = null;
     if (f && f.cc) {
       if (f.mode === 'server' && f.timeline) {
+        // the sample is [gt, killed, total, resolved(, left)]: a 联防 sample's `left` is its 5th element
         const sample = timelineAt(f.timeline, this._fieldElapsed(f));
-        live = sample && sample[3] && typeof sample[3] === 'object' ? sample[3] : null;
+        live = sample && sample[4] && typeof sample[4] === 'object' ? sample[4] : null;
       } else live = f.progress && f.progress.left && typeof f.progress.left === 'object' ? f.progress.left : null;
     } else if (f && f.battle) {
       try { live = uniteLeft(f.battle); } catch { live = null; }

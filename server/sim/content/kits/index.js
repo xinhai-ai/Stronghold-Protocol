@@ -150,6 +150,7 @@ export const OPERATOR_KIT_FILES = Object.freeze([
   'op-necras.js',
   'op-kalts2.js',
   'op-monstr.js',
+  'op-clemnt.js',
 ]);
 
 /**
@@ -369,6 +370,7 @@ const KIT_LOADERS = Object.freeze({
   'op-necras.js': () => import('./ops/op-necras.js'),
   'op-kalts2.js': () => import('./ops/op-kalts2.js'),
   'op-monstr.js': () => import('./ops/op-monstr.js'),
+  'op-clemnt.js': () => import('./ops/op-clemnt.js'),
 });
 
 async function loadKitFile(file) {

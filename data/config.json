@@ -3947,7 +3947,7 @@
     "infoCheckHint": 5,
     "bandDraft": 50,
     "bandDraftHint": 15,
-    "bandTurn": 30,
+    "bandTurn": 50,
     "battleCheck": 3,
     "spFirst": 30,
     "spTurn": 16,

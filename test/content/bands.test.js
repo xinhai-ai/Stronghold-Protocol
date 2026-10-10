@@ -302,6 +302,22 @@ test('余 文火慢炖: R8 round start — exactly 1 active bond +36 layers, oth
   cover('band_yu');
 });
 
+test('余 文火慢炖 adds no layers to a bond without layers (noStack: 独行, 绝技 …) — the owner\'s decision of 2026-10-08', () => {
+  assert.deepEqual(Object.values(DATA.bonds).filter((b) => b.noStack).map((b) => b.name).sort(), ['协防干员', '独行', '绝技', '调和'].sort());
+  for (const [bonus, want] of [
+    [{ soloShip: 1 }, {}],                          // the one active bond is 独行: nothing at all
+    [{ suntShip: 5 }, {}],                          // … or 绝技
+    [{ soloShip: 1, yanShip: 20 }, { yanShip: 12 }], // two active (the sentence's count): the layered one +12, 独行 none
+  ]) {
+    const s = setup({ band: 'band_yu' });
+    Object.assign(s.ps.bondCountBonus, bonus); s.ps.recompute();
+    for (const id of Object.keys(bonus)) assert.ok(s.ps.bonds[id]?.active, `${id} active`);
+    s.roundStart(8);
+    const got = Object.fromEntries(Object.entries(s.ps.layers).filter(([, v]) => v > 0));
+    assert.deepEqual(got, want, JSON.stringify(bonus));
+  }
+});
+
 test('凯瑟琳 定向投放: every shop upgrade offers 3 different shop items (any tier — community report of 2026-10-06), 1 free pick', () => {
   const { m, ps } = setup({ band: 'band_cathy', seed: 9 });
   for (const lvl of [2, 3]) {
@@ -556,18 +572,22 @@ test('埃芒加德 命结之秘: the first 3 knock-downs of the battle revive at
   cover('band_ermengard');
 });
 
-test('克莱门莎 崇高牺牲: a <阿戈尔> operator knocked down ⇒ +its tier <阿戈尔> layers (no activation needed; none in 联防/boss)', () => {
+test('克莱门莎 崇高牺牲: a <阿戈尔> operator knocked down ⇒ +its tier <阿戈尔> layers (requires activation; none in 联防/boss)', () => {
   const ops = { t_eg: op('t_eg', { bonds: ['egirShip'], tier: 3 }), t_x: op('t_x', { bonds: ['yanShip'], tier: 5 }) };
-  const h = fight({ band: 'band_clementia', ops, units: [{ chessId: 't_eg', row: 10, col: 4 }, { chessId: 't_x', row: 11, col: 4 }], foes: [[10, 9]] });
+  const h = fight({ band: 'band_clementia', bonds: active('egirShip'), ops, units: [{ chessId: 't_eg', row: 10, col: 4 }, { chessId: 't_x', row: 11, col: 4 }], foes: [[10, 9]] });
   h.step(1);
   h.b.dealDamage(foe(h), h.unit('t_eg'), { amount: 1e6, type: 'true' });
   h.b.dealDamage(foe(h), h.unit('t_x'), { amount: 1e6, type: 'true' });
   h.b.retreat(h.unit('t_eg')); // not knocked down: nothing (already dead anyway)
   assert.deepEqual(h.b.result().perPlayer.p1.layerGains, { egirShip: 3 });
-  const u = fight({ band: 'band_clementia', kind: 'unite', ops, units: [{ chessId: 't_eg', row: 10, col: 4 }], foes: [[10, 9]] });
+  const u = fight({ band: 'band_clementia', bonds: active('egirShip'), kind: 'unite', ops, units: [{ chessId: 't_eg', row: 10, col: 4 }], foes: [[10, 9]] });
   u.step(1);
   u.b.dealDamage(foe(u), u.unit('t_eg'), { amount: 1e6, type: 'true' });
   assert.deepEqual(u.b.result().perPlayer.p1.layerGains, {});
+  const inactive = fight({ band: 'band_clementia', ops, units: [{ chessId: 't_eg', row: 10, col: 4 }], foes: [[10, 9]] });
+  inactive.step();
+  inactive.b.dealDamage(foe(inactive), inactive.unit('t_eg'), { amount: 1e6, type: 'true' });
+  assert.deepEqual(inactive.b.result().perPlayer.p1.layerGains, {}, 'an inactive 阿戈尔 bond gains no layers');
   cover('band_clementia');
 });
 
@@ -585,6 +605,18 @@ test('大帝 加急调派: every deployment halves the operator\'s next redeploy
   plainH.b.kill(plainH.unit('t_op'));
   close(plainH.unit('t_op').respawnAt - plainH.b.time, 20, 'without the band');
   cover('band_emperor');
+});
+
+test('大帝 加急调派 stacks without a cap: the 21st and 22nd deployments still halve the next redeploy (PRTS "※该策略效果可无限叠加"; GitHub #328, PR #329)', () => {
+  const h = fight({ band: 'band_emperor', units: [{ chessId: 't_op', row: 10, col: 4 }] });
+  h.step(1);
+  const u = h.unit('t_op');
+  for (let n = 1; n <= 22; n++) {
+    h.b.retreat(u, { reason: 'raid' });
+    close(u.respawnAt - u.deathAt, 20 / 2 ** n, `after deployment ${n}`);
+    if (n < 22) assert.ok(h.b._deploy(u), `deployment ${n + 1}`);
+  }
+  assert.equal(u.findBuff('band:band_emperor').stacks, 22);
 });
 
 test('桑葚 药枚实验: the units on the right-most column get a 25 % chance per attack of 1 shield layer (max 1)', () => {

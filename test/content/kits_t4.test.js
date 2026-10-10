@@ -121,6 +121,8 @@ test('莫斯提马 S3: ripple hits every enemy in range, ATK +90 %, knock-back; 
   assert.ok(es.every((e) => hits.some((c) => c.target === e)), 'all three enemies hit by one ripple');
   approx(hits[0].amount, u.s.atk, 1e-6, 'full damage (res 0)');
   assert.ok(es.some((e, i) => e.x > x0[i] + 0.2), 'knocked back');
+  assert.ok(h.eventsOf('fx').some((f) => f[1] === 'displace' && f[4]?.keepFacing === true),
+    'Mostima S3 inherits the common push facing rule');
   checkInvariants(h.b);
 });
 
@@ -451,6 +453,27 @@ test('歌蕾蒂娅 S3: binds the farthest target, tornado pulses 85 % ATK arts e
   assert.equal(pulses.length, Math.floor(D(id).skill.duration / bb.interval + 1e-9), 'one pulse every 1.5 s');
   approx(pulses[0].amount, u.s.atk * bb.atk_scale, 1e-6);
   assert.ok(far.x < x0 - 0.3, 'pulled towards her at the end');
+  checkInvariants(h.b);
+});
+
+test('歌蕾蒂娅 S3: the skill-end 捕网 has radius 1, the tornado 1.5 (PRTS 备注; GitHub #324, PR #329)', () => {
+  const id = 'chess_char_4_12_a';
+  const h = makeBattle({ defs: { enemies: { enemy_dummy: dummy() } }, units: [{ chessId: id, row: 10, col: 3 }], timeLimit: 200, autoFinish: false });
+  h.step();
+  const u = h.unit(id);
+  h.spawn('enemy_dummy', { pos: [10, 6] });   // the farthest enemy: bound, the tornado sits on it
+  h.step();
+  assert.ok(u.skill.activate('test', { free: true }));
+  assert.deepEqual([u.mem.tornado.x, u.mem.tornado.y], [6, 10]);
+  const at = (x, y) => { const e = h.spawn('enemy_dummy', { pos: [10, 6] }); e.x = x; e.y = y; return e; };
+  const inner = at(6, 9.1), outer = at(6, 11.25);   // 0.9 and 1.25 from the centre
+  h.step();
+  for (const e of [inner, outer]) assert.ok(e.findBuff(`glady:slow:${u.id}`), 'both inside the tornado (slowed)');
+  const p0 = [inner.x, inner.y, outer.x, outer.y];
+  u.skill.end('test');
+  h.run(0.6);
+  assert.ok(Math.hypot(inner.x - p0[0], inner.y - p0[1]) > 0.3, 'the net pulls the enemy 0.9 from the centre');
+  assert.deepEqual([outer.x, outer.y], [p0[2], p0[3]], 'the one 1.25 from the centre stays: outside the net');
   checkInvariants(h.b);
 });
 

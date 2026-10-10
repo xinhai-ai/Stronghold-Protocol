@@ -8,9 +8,10 @@
 //     Humans and bots take the lowest free seat index; seat indexes never compact.
 //   * ▸ Being in a LOBBY room and sending room.create / room.join implicitly leaves it. While your room is
 //     in a match, create/join of another room fails with ROOM_STARTED (send g.leave or room.leave first).
-//   * Host-only: room.setDifficulty, room.addBot, room.removeBot, room.kick, room.start. ▸ Changing the difficulty
-//     un-readies the other humans. ▸ room.start requires every other human to be connected and ready;
-//     the host's start counts as the host's ready (the host may still toggle room.ready for display).
+//   * Host-only: room.setDifficulty, room.setAiPicksLast, room.addBot, room.removeBot, room.kick, room.start.
+//     ▸ Changing the difficulty or the AI-picks-last option (co-op only) un-readies the other humans.
+//     ▸ room.start requires every other human to be connected and ready; the host's start counts as the host's
+//     ready (the host may still toggle room.ready for display).
 //   * room.kick {seat, playerId} (community report #17, owner approved): before the match only, the host removes another
 //     human like an AI seat (an AI seat stays room.removeBot's; never the host itself). `playerId` names the player the
 //     host confirmed: a seat that changed hands meanwhile (left, someone else joined) is refused with BAD_TARGET. The
@@ -37,10 +38,10 @@
 //     that window coalesce into one deferred resync, so hello spam cannot amplify into ~15 KB per request.
 //   * Result replay: the match's final m.public and each human's m.result are kept after the match ends. A
 //     human who resyncs (resume after a drop, a reloaded tab, a repeated hello) while the room is back in LOBBY
-//     gets room.state followed by those two frames again, until they act in the room (ready, difficulty, AI
-//     seats, start), leave it, or a new match starts. A human removed by the lobby grace gets them right after
-//     `room.closed {timeout}` on their next resume (Match.onReconnect cannot do this: the lobby drops the
-//     match reference at onEnd and disposes it on the next macrotask).
+//     gets room.state followed by those two frames again, until they act in the room (ready, difficulty, the
+//     AI-picks-last option, AI seats, start), leave it, or a new match starts. A human removed by the lobby grace
+//     gets them right after `room.closed {timeout}` on their next resume (Match.onReconnect cannot do this: the
+//     lobby drops the match reference at onEnd and disposes it on the next macrotask).
 //   * Per-network limits (internet clients only, see net.js clientAddress): at most `maxRoomsPerAddr` rooms
 //     created from one network may exist at once and at most `maxMatchesPerAddr` matches started from one
 //     network may run at once (room.create / room.start → ERR.RATE). Without them a socket loop could fill
@@ -67,6 +68,9 @@
 //     (or outside a room) it simply replaces the stored one; while the room's match runs it is also handed to
 //     match.setLoadout(playerId, loadout), which accepts it only during INFO_CHECK (the 干员调配 entry of the briefing)
 //     and refuses it afterwards (WRONG_PHASE: the match's loadout is locked, the stored one applies to the next match).
+//     ▸ Its `ops` (0.2.2: the per-operator 潜能 / 练度, shared/protocol.js checkLoadoutOps — an operator of the 干员调配
+//     roster or the 自选 owned pool, strict like the entries) travel with it: session.ops / seat.ops / seats[].ops and
+//     match.setLoadout(playerId, loadout, ops); a message without `ops` sets none (every operator 潜能 6, 精英2 Lv.60).
 //   * Operator ownership (干员持有, 0.2.0 补位, owner's decision 2026-10-05): room.ownership { notOwned } — the base chess
 //     ids the player marked as not owned — is checked leniently (shared/protocol.js checkNotOwned: anything that is not
 //     a droppable NORMAL chess is dropped, never the whole list; only a malformed list is BAD_MSG) and stored on the
@@ -99,7 +103,7 @@
 
 import { randomBytes, randomInt } from 'node:crypto';
 import { ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, DIFFICULTIES, modeIdFor } from '../shared/constants.js';
-import { checkLoadout, checkNotOwned, checkDiyPicks } from '../shared/protocol.js';
+import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, checkDiyPicks } from '../shared/protocol.js';
 import { encode, isErrCode, sendRaw, sendSession } from './net.js';
 import { resetStateDelta } from './stateTransport.js';
 import { getData as defaultGetData, lookup } from './data.js';
@@ -137,6 +141,7 @@ const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 /**
  * @typedef {{ seat: number, playerId: string, name: string, isBot: boolean, ready: boolean,
  *             connected: boolean, left: boolean, loadout?: Record<string, { skill: number, module: string|null }> | null,
+ *             ops?: Readonly<Record<string, { potential: number, cultivate: number }>> | null,
  *             notOwned?: readonly string[] | null, diy?: Readonly<Record<string, DiyLoadout>> | null }} Seat
  * @typedef {{ charId: string, skillIndex: number, uniEquipId: string|null }} DiyLoadout
  */
@@ -146,6 +151,22 @@ function freezeLoadout(loadout) {
   const out = {};
   for (const [id, e] of Object.entries(loadout || {})) out[id] = Object.freeze({ skill: e.skill, module: e.module ?? null });
   return Object.freeze(out);
+}
+
+/** Deep-frozen copy of checked operator settings (0.2.2 潜能 / 练度; shared by the session, the seat and the match). */
+function freezeOps(ops) {
+  const out = {};
+  for (const [id, e] of Object.entries(ops || {})) out[id] = Object.freeze({ potential: e.potential, cultivate: e.cultivate });
+  return Object.freeze(out);
+}
+
+/** The charIds a player may set a potential / 练度 for, per data object (shared/protocol.js cultivationCharIds). */
+const OPS_IDS = new WeakMap();
+function opsCharIds(data) {
+  if (!data || typeof data !== 'object') return new Set();
+  let ids = OPS_IDS.get(data);
+  if (!ids) { ids = cultivationCharIds(data.chess, data.backups); OPS_IDS.set(data, ids); }
+  return ids;
 }
 
 /** Deep-frozen copy of checked 自选 picks (shared by the session, the seat and the match's PlayerState). */
@@ -162,6 +183,11 @@ export class Room {
     this.code = code;
     this.mode = mode;
     this.difficulty = difficulty;
+    /**
+     * 「AI 队友最后选择」 (room.setAiPicksLast, GitHub #338; co-op only, off by default): the match's strategy and 机变 drafts
+     * put every human seat before every AI seat (Match opts.aiPicksLast). Kept across the room's matches.
+     */
+    this.aiPicksLast = false;
     /** @type {string | null} */
     this.hostId = null;
     /** @type {(Seat | null)[]} */
@@ -215,6 +241,7 @@ export class Room {
       hostId: this.hostId,
       mode: this.mode,
       difficulty: this.difficulty,
+      aiPicksLast: this.aiPicksLast,
       inMatch: !!this.match,
       matching: this.matching ? { ...this.matching } : null,
       consoleEnabled: !!this.consoleEnabled,
@@ -397,12 +424,15 @@ export class Lobby {
       case 'room.leave': return this.leave(session);
       case 'room.ready': return this.ready(session, msg);
       case 'room.setDifficulty': return this.setDifficulty(session, msg);
+      case 'room.setAiPicksLast': return this.setAiPicksLast(session, msg);
       case 'room.addBot': return this.addBot(session);
       case 'room.removeBot': return this.removeBot(session, msg);
       case 'room.kick': return this.kick(session, msg);
       case 'room.start': return this.start(session);
       case 'room.console.enable': return this.enableConsole(session);
       case 'room.console.disable': return this.disableConsole(session);
+      case 'room.rerollSetup': return this.rerollSetup(session, msg);
+      case 'room.cancelReroll': return this.rerollSetup(session, msg, true);
       case 'room.loadout': return this.loadout(session, msg);
       case 'match.join': return this.matchJoin(session, msg);
       case 'match.leave': return this.matchLeave(session);
@@ -500,6 +530,7 @@ export class Lobby {
       room.matchKey = typeof d.matchKey === 'string' ? d.matchKey : null;
       room.matchCount = Number.isInteger(d.matchCount) && d.matchCount >= 0 ? d.matchCount : 0;
       room.consoleEnabled = d.consoleEnabled === true;
+      room.aiPicksLast = mode !== 'solo' && d.aiPicksLast === true;
       for (const s of Array.isArray(d.seats) ? d.seats : []) {
         if (!s || typeof s.playerId !== 'string' || !Number.isInteger(s.seat) || s.seat < 0 || s.seat >= MAX_SEATS || room.seats[s.seat]) continue;
         const isBot = !!s.isBot;
@@ -515,6 +546,7 @@ export class Lobby {
           connected: false,
           left,
           loadout: isBot ? null : (session?.loadout || (s.loadout && typeof s.loadout === 'object' ? s.loadout : null)),
+          ops: isBot ? null : session?.ops || s.ops || null,
           notOwned: isBot ? null : session?.notOwned || s.notOwned || null,
           diy: isBot ? null : session?.diy || s.diy || null,
         };
@@ -631,7 +663,7 @@ export class Lobby {
       isBot: !!p.isBot,
       left: !p.isBot && departed.has(p.playerId),
       connected: false,
-      loadout: p.isBot ? null : (p.loadout || null), notOwned: p.isBot ? null : p.standIns || null, diy: p.isBot ? null : p.diy || null,
+      loadout: p.isBot ? null : (p.loadout || null), ops: p.isBot ? null : p.ops || null, notOwned: p.isBot ? null : p.standIns || null, diy: p.isBot ? null : p.diy || null,
     }));
     const ctx = { live: false, ended: false, disposed: false, queue: true, match: null, room,
       members: seats, lastPublic: null, sharedResult: null, results: new Map() };
@@ -641,7 +673,7 @@ export class Lobby {
     try {
       const match = new this.MatchClass({
         roomCode, mode, difficulty, modeId: modeIdFor(mode, difficulty), seats,
-        consoleEnabled: false, seed: Number(checkpoint.seed) >>> 0, matchNo: room ? Math.max(1, room.matchCount) : 1,
+        consoleEnabled: false, aiPicksLast: !!checkpoint.aiPicksLast, seed: Number(checkpoint.seed) >>> 0, matchNo: room ? Math.max(1, room.matchCount) : 1,
         data: this.safeData(), workerPool: this.workerPoolFor(room?.code || roomCode), log: this.log, now: this.now,
         send: (playerId, msg, encoded) => (ctx.live ? this.queueMatchSend(ctx, playerId, msg, encoded) : false),
         broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
@@ -682,7 +714,7 @@ export class Lobby {
       seat: Number.isInteger(p.seat) && p.seat >= 0 && p.seat < MAX_SEATS ? p.seat : i,
       playerId: p.playerId, name: typeof p.name === 'string' ? p.name : t('博士'), isBot: !!p.isBot,
       left: !p.isBot && departedPlayerIds.includes(p.playerId), connected: false,
-      loadout: p.isBot ? null : (p.loadout || null), notOwned: p.isBot ? null : p.standIns || null, diy: p.isBot ? null : p.diy || null,
+      loadout: p.isBot ? null : (p.loadout || null), ops: p.isBot ? null : p.ops || null, notOwned: p.isBot ? null : p.standIns || null, diy: p.isBot ? null : p.diy || null,
     }));
     const roomCode = typeof checkpoint.roomCode === 'string' && checkpoint.roomCode
       ? checkpoint.roomCode : `M${randomBytes(3).toString('hex').toUpperCase()}`;
@@ -692,7 +724,7 @@ export class Lobby {
       members: seats, lastPublic: null, sharedResult: null, results: new Map() };
     try {
       const match = await this.matchWorkerPool.create(roomCode, {
-        roomCode, mode, difficulty, modeId: modeIdFor(mode, difficulty), seats, consoleEnabled: false,
+        roomCode, mode, difficulty, modeId: modeIdFor(mode, difficulty), seats, consoleEnabled: false, aiPicksLast: !!checkpoint.aiPicksLast,
         seed: Number(checkpoint.seed) >>> 0, matchNo: room ? Math.max(1, room.matchCount) : 1,
       }, {
         send: (playerId, msg, encoded) => { if (ctx.live) return this.queueMatchSend(ctx, playerId, msg, encoded); return false; },
@@ -1134,6 +1166,22 @@ export class Lobby {
     return OK;
   }
 
+  /** 「AI 队友最后选择」 (GitHub #338): host-only, before the match, co-op rooms only (a solo room has no AI seat). */
+  setAiPicksLast(session, { on }) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.mode === 'solo') return fail(ERR.BAD_TARGET, 'solo rooms have no AI teammates');
+    this.dropReplay(room, session.playerId);
+    if (room.aiPicksLast !== on) {
+      room.aiPicksLast = on;
+      for (const s of room.seats) if (s && !s.isBot && s.playerId !== room.hostId) s.ready = false;
+      this.broadcastState(room);
+    }
+    return OK;
+  }
+
   addBot(session) {
     const room = this.roomOf(session);
     if (!room) return fail(ERR.NOT_IN_ROOM);
@@ -1213,25 +1261,42 @@ export class Lobby {
     return this.startMatch(room, key);
   }
 
+  /** Host authorization stays in the lobby; the match owns the vote and setup. */
+  rerollSetup(session, msg, cancel = false) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
+    if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    const method = cancel ? 'cancelSetupReroll' : 'requestSetupReroll';
+    if (!room.match || typeof room.match[method] !== 'function') return fail(ERR.WRONG_PHASE);
+    return this.callMatch(room, method, session.playerId, cancel ? msg.voteId : msg.setupRevision) || fail(ERR.INTERNAL);
+  }
+
   /**
-   * room.loadout (DESIGN §16): check the operator loadout against the game data, store it on the session and the seat,
-   * and — while a match runs — hand it to the match (accepted only during INFO_CHECK, see the header).
+   * room.loadout (DESIGN §16): check the operator loadout — and its per-operator 潜能 / 练度 `ops` (0.2.2) — against the
+   * game data, store both on the session and the seat, and — while a match runs — hand them to the match (accepted only
+   * during INFO_CHECK, see the header). Either part refused: nothing is stored.
    */
-  loadout(session, { entries }) {
+  loadout(session, { entries, ops }) {
     const data = this.safeData();
     const res = checkLoadout(entries, (id) => lookup('chess', id, data));
     if (!res || res.error) return fail(res && isErrCode(res.error) ? res.error : ERR.BAD_MSG, res && res.detail);
+    const ids = opsCharIds(data);
+    const resOps = checkLoadoutOps(ops, (id) => ids.has(id));
+    if (!resOps || resOps.error) return fail(resOps && isErrCode(resOps.error) ? resOps.error : ERR.BAD_MSG, resOps && resOps.detail);
     const loadout = freezeLoadout(res.loadout);
+    const opsSet = freezeOps(resOps.ops);
     session.loadout = loadout;
+    session.ops = opsSet;
     const room = this.roomOf(session);
     if (!room) return OK;
     const seat = room.seatOf(session.playerId);
-    if (seat) seat.loadout = loadout;
+    if (seat) { seat.loadout = loadout; seat.ops = opsSet; }
     if (!room.match || !seat) return OK; // a spectator's loadout stays on its session, never reaching the match
     if (typeof room.match.setLoadout !== 'function') return fail(ERR.ROOM_STARTED, 'stored for the next match');
     let r;
     try {
-      r = room.match.setLoadout(session.playerId, loadout);
+      r = room.match.setLoadout(session.playerId, loadout, opsSet);
     } catch (e) {
       this.log.error(`[lobby] ${room.code} match.setLoadout threw`, e);
       return fail(ERR.INTERNAL);
@@ -1317,11 +1382,11 @@ export class Lobby {
     const seats = checkpoint
       ? checkpoint.players.map((p) => ({
         seat: p.seat, playerId: p.playerId, name: p.name, isBot: !!p.isBot, connected: false,
-        loadout: p.isBot ? null : (p.loadout || null), notOwned: p.isBot ? null : p.standIns || null, diy: p.isBot ? null : p.diy || null,
+        loadout: p.isBot ? null : (p.loadout || null), ops: p.isBot ? null : p.ops || null, notOwned: p.isBot ? null : p.standIns || null, diy: p.isBot ? null : p.diy || null,
       }))
       : room.seats.filter(Boolean).map((s) => ({
         seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, connected: s.connected,
-        loadout: s.isBot ? null : s.loadout || null, notOwned: s.isBot ? null : s.notOwned || null, diy: s.isBot ? null : s.diy || null,
+        loadout: s.isBot ? null : s.loadout || null, ops: s.isBot ? null : s.ops || null, notOwned: s.isBot ? null : s.notOwned || null, diy: s.isBot ? null : s.diy || null,
       }));
     const ctx = { live: false, ended: false, disposed: false, match: null, workerKey: room.code,
       lastPublic: null, sharedResult: null, results: new Map() };
@@ -1333,7 +1398,7 @@ export class Lobby {
       const match = await this.matchWorkerPool.create(room.code, {
         roomCode: room.code, mode: room.mode, difficulty: room.difficulty, modeId: modeIdFor(room.mode, room.difficulty),
         seats, spectators: room.spectators.map((s) => s.playerId), consoleEnabled: !!room.consoleEnabled,
-        seed, matchNo,
+        seed, matchNo, aiPicksLast: !!room.aiPicksLast,
       }, {
         send: (playerId, msg, encoded) => { if (ctx.live) return this.matchSend(room, ctx, playerId, msg, encoded); return false; },
         broadcast: (msg) => { if (ctx.live) this.matchBroadcast(room, ctx, msg); },
@@ -1372,12 +1437,12 @@ export class Lobby {
     const seats = checkpoint
       ? checkpoint.players.map((p) => ({
         seat: p.seat, playerId: p.playerId, name: p.name, isBot: !!p.isBot, connected: false,
-        loadout: p.isBot ? null : (p.loadout || null), notOwned: p.isBot ? null : p.standIns || null, diy: p.isBot ? null : p.diy || null,
+        loadout: p.isBot ? null : (p.loadout || null), ops: p.isBot ? null : p.ops || null, notOwned: p.isBot ? null : p.standIns || null, diy: p.isBot ? null : p.diy || null,
       }))
       : room.seats.filter(Boolean).map((s) => ({
         seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, connected: s.connected,
         // DESIGN §16: the human's checked operator loadout (bots fight with the defaults)
-        loadout: s.isBot ? null : s.loadout || null, notOwned: s.isBot ? null : s.notOwned || null, diy: s.isBot ? null : s.diy || null,
+        loadout: s.isBot ? null : s.loadout || null, ops: s.isBot ? null : s.ops || null, notOwned: s.isBot ? null : s.notOwned || null, diy: s.isBot ? null : s.diy || null,
       }));
     // lastPublic / results: the latest m.public broadcast and the m.result frames (encoded), kept for the replay.
     const ctx = { live: !checkpoint, ended: false, disposed: false, match: null, workerKey: room.code,
@@ -1392,6 +1457,8 @@ export class Lobby {
         mode: room.mode,
         difficulty: room.difficulty,
         modeId: modeIdFor(room.mode, room.difficulty),
+        // 「AI 队友最后选择」 (GitHub #338): fixed for the match
+        aiPicksLast: room.mode !== 'solo' && room.aiPicksLast === true,
         seats,
         // the spectator seats (header): watched like eliminated players, never players
         spectators: room.spectators.map((s) => s.playerId),
@@ -1472,7 +1539,7 @@ export class Lobby {
     try {
       const match = await this.matchWorkerPool.create(matchCode, {
         roomCode: matchCode, mode: owner.mode, difficulty: owner.difficulty, modeId: modeIdFor(owner.mode, owner.difficulty),
-        seats, consoleEnabled: !!room?.consoleEnabled, seed, matchNo: room ? room.matchCount + 1 : 1,
+        seats, consoleEnabled: !!room?.consoleEnabled, aiPicksLast: !!room?.aiPicksLast, seed, matchNo: room ? room.matchCount + 1 : 1,
       }, {
         send: (playerId, msg, encoded) => { if (ctx.live) return this.queueMatchSend(ctx, playerId, msg, encoded); return false; },
         broadcast: (msg) => { if (ctx.live) this.queueMatchBroadcast(ctx, msg); },
@@ -1890,6 +1957,7 @@ export class Lobby {
     return {
       seat: idx, playerId: session.playerId, name: session.name, isBot: false, ready: false, connected: session.connected, left: false,
       loadout: session.loadout || null,
+      ops: session.ops || null,
       notOwned: session.notOwned || null,
       diy: session.diy || null,
     };

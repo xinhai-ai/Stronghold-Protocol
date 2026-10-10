@@ -20,6 +20,8 @@ import { toast, toastError } from '../ui/toasts.js';
 import { copyText } from '../ui/clipboard.js';
 import { GuideButton } from '../ui/guide.js';
 import { AnnouncementButton } from '../ui/announcement.js';
+import { openStats } from './stats.js';
+import { SettingsButton } from '../ui/settings.js';
 import { LoadoutButton } from './loadout.js';
 import { net } from '../net.js';
 import { store, useStore, shallowEqual, emptyMatch, isSpectating, serverNow } from '../store.js';
@@ -68,6 +70,19 @@ export function roomFacts(room, myId) {
     spectators: Array.isArray(room?.spectators) ? room.spectators.filter((s) => s && typeof s === 'object') : [],
     spectating: isSpectating(room, myId),
   };
+}
+
+/**
+ * The co-op room option 「AI 队友最后选择」 (GitHub #338; room.setAiPicksLast, room.state.aiPicksLast): in the strategy and
+ * 机变 drafts every human picks before the AI teammates. null in a solo room (no AI teammates); otherwise its state (off
+ * when the server sends none) and whether this player may switch it — the host only, the others see it read-only.
+ * @param {any} room room.state payload
+ * @param {any} myId
+ * @returns {{ on: boolean, editable: boolean } | null}
+ */
+export function aiLastOption(room, myId) {
+  if (!room || room.mode === 'solo') return null;
+  return { on: room.aiPicksLast === true, editable: room.hostId != null && room.hostId === myId };
 }
 
 /** Invite link for a room code (current page URL with ?room=CODE). */
@@ -204,6 +219,21 @@ function ConsoleWarning({ open, remaining, busy, onCancel, onConfirm }) {
   <//>`;
 }
 
+/** The 「AI 队友最后选择」 switch (co-op): the host toggles it, everybody else sees its state. */
+function AiLastToggle({ option, busy, onToggle }) {
+  if (!option) return null;
+  return html`<div class="ailast">
+    <${Tooltip} text=${t('策略与机变轮选时，所有博士先于 AI 队友选择')}>
+      <button type="button" role="switch" aria-checked=${option.on ? 'true' : 'false'}
+          class=${`dpick__opt ailast__opt${option.on ? ' is-active' : ''}`} disabled=${!option.editable || !!busy}
+          onClick=${() => option.editable && onToggle(!option.on)}>
+        <${Icon} name="check" class=${option.on ? 'is-on' : ''} />${t('AI 队友最后选择')}
+      </button>
+    <//>
+    ${option.editable ? null : html`<span class="t-dim">${t('由创建者设置')}</span>`}
+  </div>`;
+}
+
 /** Room screen component. */
 export function RoomScreen() {
   const room = useStore((s) => s.room);
@@ -279,6 +309,7 @@ export function RoomScreen() {
     setConsoleOpen(false);
   });
   const cancelConsole = () => setConsoleOpen(false);
+  const setAiLast = (on) => run('ailast', () => net.request('room.setAiPicksLast', { on }));
   // spectator seats: the host frees one; a spectator takes a free player seat with room.join of this room
   const removeSpectator = (playerId) => run(`rs${playerId}`, () => net.request('room.removeSpectator', { playerId }));
   const sit = () => run('sit', () => net.request('room.join', { code: room.code }));
@@ -330,6 +361,8 @@ export function RoomScreen() {
           </div>
           <${MicroLabel}>${t('连接状态')}<//>
         </div>
+        <${Button} variant="secondary" size="sm" icon="chart" class="stats-entry" onClick=${openStats} title=${t('统计数据')} aria-label=${t('统计数据')}>${t('统计')}<//>
+        <${SettingsButton} class="room-settings" variant="secondary" label=${t('设置')} />
         <${GuideButton} class="room-guide" variant="secondary" label=${t('玩法说明')} />
       </div>
       <div class="topbar__center">
@@ -366,6 +399,7 @@ export function RoomScreen() {
           class="room-console-btn" disabled=${(!room.consoleEnabled && !!room.matching) || !online} onClick=${room.consoleEnabled ? disableConsole : openConsole}
           title=${room.consoleEnabled ? t('关闭控制台') : t('启用控制台')}>${room.consoleEnabled ? t('关闭控制台') : t('启用控制台')}<//>`
           : room.consoleEnabled ? html`<span class="room-console-status"><${Icon} name="terminal" />${t('控制台已启用')}</span>` : null}
+          <${AiLastToggle} option=${aiLastOption(room, me.playerId)} busy=${busy} onToggle=${setAiLast} />
       </div>
       <div class="room-bar__center">
         <div class="ready-count" hidden=${!coop}>

@@ -101,6 +101,8 @@ function norm(state, { seqGap = 0 } = {}) {
   const out = JSON.parse(JSON.stringify(state));
   out.match._battleSeq = (Number(out.match._battleSeq) || 0) - seqGap;
   for (const p of Object.values(out.players)) {
+    // Cosmetic bot emotes use the local clock, which differs between the restored and original timelines.
+    if (p.isBot) p.lastEmoteAt = 0;
     p.connected = true;
     p.ready = true;
   }

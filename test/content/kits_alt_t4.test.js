@@ -113,6 +113,30 @@ test('信仰搅拌机 S1 铳骑主考官 (自动触发 ⇒ DEFAULT: hurt SP, fir
   }
 });
 
+test('信仰搅拌机 S1 reloads the latest-deployed 拉特兰 ammo user around him, not the nearest (PRTS 备注; GitHub #325, PR #329)', () => {
+  for (const redeploy of [false, true]) {
+    // 隐现 ×2: the orthogonal neighbour deployed first, the diagonal one after it (both on his 8 surrounding tiles)
+    const h = battle([U('chess_char_4_01_a', 10, 5, 0), U('chess_char_1_01_a', 10, 4, null, null, { uid: 2 }), U('chess_char_1_01_a', 9, 4, null, null, { uid: 3 })]);
+    h.step();
+    const u = h.unit('chess_char_4_01_a'), near = h.unit(2), far = h.unit(3);
+    if (redeploy) { // a redeploy is the latest deployment
+      h.b.retreat(near, { reason: 'raid' });
+      assert.ok(h.b._deploy(near));
+    }
+    const latest = redeploy ? near : far, other = redeploy ? far : near;
+    assert.ok(latest.deploySeq > other.deploySeq);
+    for (const a of [near, far]) { assert.ok(a.skill.activate('test', { free: true })); a.skill.ammoLeft = 5; }
+    const e = h.spawn('enemy_dummy', { pos: [10, 6] });
+    assert.ok(u.skill.activate('test', { free: true }));
+    h.b.forceAttack(u, [e]);
+    h.run(0.5);
+    const reloads = h.eventsOf('fx').filter((x) => x[1] === 'reload');
+    assert.ok(reloads.length > 0, 'a reload happened');
+    assert.ok(reloads.every((x) => x[4].id === latest.id), `${redeploy ? 'after a redeploy, the redeployed one' : 'the later-deployed diagonal one'} is reloaded`);
+    checkInvariants(h.b);
+  }
+});
+
 test('信仰搅拌机 S2 八臂电锯侠: ammo skill, ATK/DEF up; a lethal hit is negated for ammo_cost bullets; with fewer it is still negated, every bullet goes and the skill ends (PRTS 备注)', () => {
   for (const id of pair('chess_char_4_01_a')) {
     const bb = D(id, 1).skill.bb;
@@ -509,6 +533,8 @@ test('歌蕾蒂娅 S1 缺水的大洋裂断: charges; next attack atk_scale (×1
     assert.equal(sk.length, 1);
     approx(sk[0].amount, u.s.atk * bb.atk_scale * t1.atk_scale, 1e-6, `${id} hit`);
     assert.ok(e.x < x0 - 0.5, `${id}: pulled towards her (${x0} → ${e.x})`);
+    assert.ok(h.eventsOf('fx').some((f) => f[1] === 'displace' && f[4]?.keepFacing === true),
+      `${id}: S1 pull carries the common facing metadata`);
     // 中力 vs weight 1 (受力等级 0): "必定拉至身前" — to the 急停 radius 0.6708 around her centre (PRTS 推与拉), never past it
     approx(e.x, u.x + 0.6708, 1e-6, `${id}: stops at her front`);
   }
@@ -531,6 +557,8 @@ test('歌蕾蒂娅 S2 缺水的掌握怒海: BAT +0.5 s, wider range, 2 targets 
     assert.equal(hits.length, bb['attack@max_target']);
     for (const c of hits) approx(c.amount, u.s.atk * bb['attack@atk_scale'] * t1.atk_scale, 1e-6);
     for (const e of atk.targets) assert.ok(e.x < 6 - 0.4, `pulled (${e.x})`);
+    assert.ok(h.eventsOf('fx').some((f) => f[1] === 'displace' && f[4]?.keepFacing === true),
+      `${id}: S2 pull carries the common facing metadata`);
   }
 });
 

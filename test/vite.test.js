@@ -7,7 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'vite';
-import { createStaticHandler, computeBuildTag } from '../server/index.js';
+import { createStaticHandler, computeBuildTag, COMPRESSIBLE } from '../server/index.js';
 import { getData } from '../server/data.js';
 import * as nativeSpec from '../server/sim/spec.js';
 import { DataSource } from '../server/sim/simdata.js';
@@ -51,7 +51,9 @@ test('built HTML, hashed assets, runtime CDN and data routes preserve the produc
       const asset = await fetch(origin + url);
       assert.equal(asset.status, 200, url);
       assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable', url);
-      assert.equal(asset.headers.get('content-encoding'), 'gzip', url);
+      const stat = await fs.stat(path.join(outDir, url.slice('/build/'.length)));
+      const compressed = COMPRESSIBLE.has(path.extname(url)) && stat.size >= 512;
+      assert.equal(asset.headers.get('content-encoding'), compressed ? 'gzip' : null, url);
       assert.equal((await fetch(origin + url, { headers: { 'If-None-Match': asset.headers.get('etag') } })).status, 304);
       await asset.arrayBuffer();
     }
@@ -133,9 +135,9 @@ test('built simulation matches Node for sleep, Egir, 0.2.0 stand-ins and self-se
     ...scenariosOf('roster').filter((sc) => ['roster-039', 'roster-042'].includes(sc.id)),
     ...scenariosOf('bonds').filter((sc) => sc.id === 'bond-egirShip-high'),
     ...scenariosOf('standins').filter((sc) => ['standin-01', 'standin-09'].includes(sc.id)),
-    ...scenariosOf('diy').filter((sc) => ['diy-001', 'diy-019', 'diy-048', 'diy-100'].includes(sc.id)),
+    ...scenariosOf('diy').filter((sc) => ['diy-001', 'diy-019', 'diy-048', 'diy-100', 'diy-135', 'diy-136'].includes(sc.id)),
   ];
-  assert.equal(selected.length, 9, 'representative upstream scenarios exist');
+  assert.equal(selected.length, 11, 'includes the new 0.2.3 Clementia kits in both forms');
   for (const sc of selected) {
     const input = nativeSpec.buildBattleSpec({ ...sc, battleId: sc.id, fieldId: sc.fieldId ?? 'g', content: 'full' });
     const options = { quiet: true, recordEvents: true };

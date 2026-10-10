@@ -25,6 +25,7 @@ import { i18nUrl } from '../../../shared/cdn.js';
 import { ASSETS_CDN } from '../asset-cdn.js';
 import { loadPref, savePref } from '../store.js';
 import { data } from '../data.js';
+import { updateRotateHintPwaI18n } from './device.js';
 import { html } from './components.js';
 
 /** The switch's own label, in both languages (whoever opens it may not read the current one). */
@@ -41,6 +42,8 @@ const uiLoads = new Map();
 let indexLoad = null;
 /** Whether the pack index arrived (without it the chain of a pack is taken from its own `_meta` as it loads). */
 let indexOk = false;
+/** Only the latest boot or explicit selection may apply its loaded language. */
+let langRequest = 0;
 const INDEX_URL = `${PACKS_URL}${PACK_INDEX_FILE}`;
 
 const defaultFetch = (...a) => globalThis.fetch(...a);
@@ -161,6 +164,7 @@ function applyDocument(lang) {
   doc.documentElement.dataset.lang = lang;
   doc.documentElement.dataset.script = scriptOf(t('卫戍协议'));
   doc.title = t('卫戍协议：盟约 · STRONGHOLD PROTOCOL');
+  updateRotateHintPwaI18n(doc);
 }
 
 // `{ dn }` params and tName(): Chinese game-data names → the current language (data/i18n/<lang>.json names)
@@ -197,20 +201,23 @@ function applyLang(lang) {
  * @returns {Promise<string>} the language in effect
  */
 export async function initLang() {
+  const request = ++langRequest;
   wire();
   applyDocument(getLang());
   const TIMEOUT = Symbol('timeout');
   const boot = (async () => {
     const listed = await loadLangIndex();
     const { lang, fromUrl } = initialLang(undefined, undefined, { tentative: !listed });
-    if (fromUrl) { savePref(PREF_KEY, lang); stripLangParam(); }
+    if (fromUrl) stripLangParam();
+    if (request !== langRequest) return null;
+    if (fromUrl) savePref(PREF_KEY, lang);
     if (lang === DEFAULT_LANG) return null;
     return (await loadLangChain(lang)) ? lang : null;
   })();
   const got = await Promise.race([boot, new Promise((r) => setTimeout(() => r(TIMEOUT), BOOT_WAIT_MS))]);
   if (got === TIMEOUT) {
-    boot.then((lang) => { if (lang && normalizeLang(loadPref(PREF_KEY, null)) === lang) applyLang(lang); });
-  } else if (got) applyLang(got);
+    boot.then((lang) => { if (request === langRequest && lang && normalizeLang(loadPref(PREF_KEY, null)) === lang) applyLang(lang); });
+  } else if (request === langRequest && got) applyLang(got);
   return getLang();
 }
 
@@ -221,10 +228,12 @@ export async function initLang() {
  * @returns {Promise<string>} the language in effect
  */
 export async function switchLang(lang) {
+  const request = ++langRequest;
   wire();
   const want = normalizeLang(lang) || DEFAULT_LANG;
   savePref(PREF_KEY, want);
   if (want !== DEFAULT_LANG && !(await loadLangChain(want))) return getLang();
+  if (request !== langRequest) return getLang();
   applyLang(want);
   return getLang();
 }
@@ -293,10 +302,17 @@ export function machineTranslationNote() {
 export function LangToggle({ class: cls }) {
   const lang = useLang();
   const menu = langMenuModel(useLangs(), lang);
-  const pick = (code) => { if (code && code !== getLang()) switchLang(code); };
+  const pick = async (code, select = null) => {
+    if (!code) return;
+    const switched = switchLang(code);
+    const request = langRequest;
+    await switched;
+    // A failed current request keeps the displayed language; stale requests must not reset a newer pending pick.
+    if (select && request === langRequest) select.value = getLang();
+  };
   if (menu.kind === 'select') {
     return html`<label class=${`set-seg lang-toggle lang-select${cls ? ` ${cls}` : ''}`} data-testid="lang-toggle">
-      <select aria-label=${SWITCH_LABEL} value=${lang} onChange=${(e) => pick(e.currentTarget.value)}>
+      <select aria-label=${SWITCH_LABEL} value=${lang} onChange=${(e) => pick(e.currentTarget.value, e.currentTarget)}>
         ${menu.items.map((it) => html`<option key=${it.code} value=${it.code} lang=${it.htmlLang} title=${it.title || undefined} selected=${it.on}>${it.label}</option>`)}
       </select>
     </label>`;

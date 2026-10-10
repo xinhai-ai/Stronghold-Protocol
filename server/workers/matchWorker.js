@@ -12,9 +12,11 @@ const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 
 const metaOf = (match) => ({
   roomCode: match.roomCode,
+  seed: match.seed,
+  battlePrefix: match.battlePrefix,
   phase: match.phase,
   round: match.round,
-  battleSeq: match._battleSeq,
+  _battleSeq: match._battleSeq,
   ended: !!match.ended,
   lastResultMsg: match.lastResultMsg || null,
   order: Array.isArray(match.order) ? match.order.map((p) => ({

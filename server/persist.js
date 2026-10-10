@@ -52,7 +52,7 @@ export function sessionDoc(s, now, activeMatchKey = null) {
     token: s.token,
     name: s.name,
     roomCode: s.roomCode || null,
-    loadout: s.loadout || null, notOwned: s.notOwned || null, diy: s.diy || null, lang: s.lang || 'zh-CN',
+    loadout: s.loadout || null, ops: s.ops || null, notOwned: s.notOwned || null, diy: s.diy || null, lang: s.lang || 'zh-CN',
     resumeWindowMs: typeof s.resumeWindowMs === 'number' && s.resumeWindowMs > 0 ? s.resumeWindowMs : null,
     connected: !!s.connected,
     disconnectedAt: s.connected || s.disconnectedAt == null ? now : s.disconnectedAt,
@@ -67,7 +67,7 @@ function seatDoc(seat) {
   return {
     seat: seat.seat, playerId: seat.playerId, name: seat.name, isBot: !!seat.isBot,
     ready: !!seat.ready, left: !!seat.left, connected: !!seat.connected && !seat.left,
-    loadout: seat.loadout || null, notOwned: seat.notOwned || null, diy: seat.diy || null,
+    loadout: seat.loadout || null, ops: seat.ops || null, notOwned: seat.notOwned || null, diy: seat.diy || null,
   };
 }
 
@@ -77,7 +77,7 @@ export function roomDoc(room) {
     code: room.code,
     mode: room.mode,
     difficulty: room.difficulty,
-    consoleEnabled: !!room.consoleEnabled,
+    consoleEnabled: !!room.consoleEnabled, aiPicksLast: !!room.aiPicksLast,
     hostId: room.hostId || null,
     ownerKey: room.ownerKey || null,
     matchKey: room.matchKey || null,
@@ -180,7 +180,7 @@ export function restoreServer({ doc, registry, lobby, now = Date.now(), log = no
         disconnectedAt: since,
         resumeWindowMs: windowMs,
         roomCode: s.roomCode,
-        loadout: s.loadout, notOwned: s.notOwned, diy: s.diy, lang: s.lang,
+        loadout: s.loadout, ops: s.ops, notOwned: s.notOwned, diy: s.diy, lang: s.lang,
         addr: s.addr,
         notice: s.notice, pendingResult: s.pendingResult,
       }, { allowOverCapacity: activeIds.has(s.playerId) });

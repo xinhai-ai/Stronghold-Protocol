@@ -2,6 +2,13 @@
 
 本文件适用于整个仓库，记录本分支相对上游增加的行为及合并验证要求。合并时保留上游的功能更新，同时维护以下约定；不要用整文件覆盖的方式解决冲突。用户明确调整需求时，以用户指示为准，并同步更新本文。
 
+## 上游合并优先级
+
+- 本仓库是上游的服务端优化分支。后端、网络、WebSocket、房间/匹配、持久化、监控、Worker、部署、CDN 服务端和高并发优化以本仓库为准；上游删除或重写这些能力时不接受直接删除。
+- 游戏逻辑以上游为准：干员、敌人、技能、特性、数值、战斗规则、模拟实现及对应客户端玩法更新应合入 `v0.2.3` 指定版本，不因后端分支差异而回退。
+- 本仓库特色功能必须保留并逐段适配，包括局内聊天、房间 Worker、状态增量、监控接口、持久化恢复、公告、CDN、资源预载、作战统计、自定义快捷键及其他本文件记录的分支行为。
+- 共享文件按职责逐段处理：游戏规则片段以上游为准，协议/服务端/状态所有权片段以本仓库为准；禁止用整文件 `ours`/`theirs` 解决冲突。上游删除的测试、文档或工具若对应本仓库后端能力，也保留本仓库版本并补做上游玩法适配。
+
 ## 开始合并前
 
 - 检查 `git status`、暂存区和上游差异，保留已有的本机修改。`config/announcements.json` 可能包含正在使用的公告排期，不要覆盖或顺手提交。
@@ -168,3 +175,62 @@ git diff --check
 - 2026-10-06 曾在修改前源码复现三个全量测试失败：`test/match/fuzz.test.js` 的两个用例生成缺少字段的 `g.console` 消息，以及 `test/ui/playtest3.test.js` 直接调用组件导致 Preact Hook 错误。这是历史记录；以后遇到失败需重新核实基线，不能永久忽略或默认归为已有问题。
 - 全量测试出现额外失败时逐项检查：素材缺失先核对清单与磁盘并补齐；静态断言与合并后的 import/标签不同先核对实际功能；Windows 临时目录清理和短计时测试先独立复测并判断是否依赖平台或负载，再做有依据的修复，不直接跳过测试。
 - 提交只纳入合并/修复范围，沿用仓库 Conventional Commit 与已有签名配置；报告实际验证结果及尚未验证的部分。
+
+## 上游开发指导（合并优先级以本文前部为准）
+
+# AGENTS.md
+
+Entry point for AI coding assistants (Codex, Claude Code, Cursor, Copilot …) working on this repository. It only
+indexes the existing documents and their hard rules; when this file and a linked document disagree, the document wins.
+Human contributors: [CONTRIBUTING.md](CONTRIBUTING.md) is the same material in full.
+
+## What this is
+
+A non-commercial fan remake of Arknights「卫戍协议：盟约」 that runs in the browser: a Node.js server (economy, rounds,
+rooms) and a deterministic battle sim shared by the server and the browser. It aims to be faithful to the official mode.
+
+## Read first
+
+1. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the code map: where things live, data flow, golden results,
+   import boundaries, where common changes start.
+2. [docs/DESIGN.md](docs/DESIGN.md) — the index of the rules: current rules in `docs/design/`, each release's
+   revisions and their evidence in `docs/history/`.
+3. The reference for the part you touch: [docs/SIM.md](docs/SIM.md) (battle engine API, hooks, test harness),
+   [docs/META.md](docs/META.md) (match flow, shop, protocol), [docs/DATA.md](docs/DATA.md) (generated data),
+   [docs/I18N.md](docs/I18N.md) (interface strings), `server/sim/content/kits/README.md` (operator kits).
+
+## Hard rules
+
+- **Official first.** Rules come from the official data tables (`.cache/gamedata/excel/` after setup) and
+  [PRTS](https://prts.wiki/). A detail no source settles is implemented the simplest way and marked `[ASSUMED]` in the
+  code and the PR. Deliberate deviations from the official mode are the maintainer's decision only.
+- **Determinism.** `server/sim/` is plain ESM that runs in Node and in browsers: no Node APIs, no `Math.random`, no
+  clocks, and no engine-approximated Math functions (use `server/sim/detmath.js`; ESLint and
+  `test/sim/detmath.test.js` enforce it).
+- **Golden results.** A refactor must not change `test/golden/*.json`. An intended gameplay change runs
+  `npm run golden:update` in the same commit, and the commit / PR names every moved scenario and why
+  ([test/golden/README.md](test/golden/README.md)).
+- **Generated data.** Never hand-edit `data/*.json`: change `tools/build-data.mjs` and regenerate.
+- **No game art in git.** `public/assets/` is ignored; never commit extracted or downloaded game files.
+- **Interface strings** go through `t('…')`, with entries in every pack under `public/i18n/`
+  (`node tools/i18n.mjs check --all --strict`).
+- **Docs follow the code.** A rule change updates `docs/design/`, the current `docs/history/` file and the reference
+  docs; run `node --test test/docs-consistency.test.js test/docs-paths.test.js`.
+- **Commits and PRs**: one topic per PR; a one-line message of what changed (Chinese or English) with the issue number;
+  no attribution trailers (`Co-Authored-By:`, `Generated with …`). The PR description states what, why, the sources,
+  the `[ASSUMED]` points, the tests you ran (paste the summary lines) and the golden moves. No ads, payments or other
+  monetisation — the project stays non-commercial.
+
+## Verify
+
+Run the tests of what you touched first, then everything before opening the PR:
+
+```bash
+node --test test/<area>/<file>.test.js      # targeted
+npm run ci                                  # the CI checks locally (tools/ci.mjs): node --test, smoke, lint, imports, types
+npm run golden                              # golden results
+```
+
+Browser suites are off by default and need Chrome: `SP_E2E=1` (UI), `SP_REAL_E2E=1` (real match, needs assets),
+`RENDER_E2E=1`, `SIM_E2E=1` — see CONTRIBUTING.md §2. Battle tests are easiest with the helpers described in
+docs/SIM.md (the test harness section) and the patterns in `test/content/op_siege.test.js`.

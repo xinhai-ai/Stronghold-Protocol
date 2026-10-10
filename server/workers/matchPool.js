@@ -36,6 +36,8 @@ class RemoteMatch {
   onLeave(...args) { return this.invoke('onLeave', ...args); }
   addSpectator(...args) { return this.invoke('addSpectator', ...args); }
   removeSpectator(...args) { return this.invoke('removeSpectator', ...args); }
+  requestSetupReroll(...args) { return this.invoke('requestSetupReroll', ...args); }
+  cancelSetupReroll(...args) { return this.invoke('cancelSetupReroll', ...args); }
   snapshot() { return this.invoke('snapshot'); }
   captureSnapshot() { return this.invoke('capture'); }
   publicView() { return this.public || null; }

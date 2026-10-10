@@ -132,7 +132,6 @@ export const ERR = Object.freeze({
   BAD_MSG: 'BAD_MSG',             // malformed / unknown message
   SESSION_IN_USE: 'SESSION_IN_USE', // a local recovery candidate cannot replace the connected holder
   NAME_REJECTED: 'NAME_REJECTED',
-  NAME_REVIEW_UNAVAILABLE: 'NAME_REVIEW_UNAVAILABLE',
   RATE: 'RATE',                   // rate limited
   NOT_IN_ROOM: 'NOT_IN_ROOM',
   ROOM_NOT_FOUND: 'ROOM_NOT_FOUND',
@@ -160,8 +159,7 @@ export const ERR = Object.freeze({
 
 export const ERR_TEXT = {
   SESSION_IN_USE: N_('此对局仍在其他窗口中，或当前浏览器无法安全恢复。请关闭原窗口后重试。'),
-  NAME_REJECTED: N_('用户名不符合本服务器命名规则，请更换名字'),
-  NAME_REVIEW_UNAVAILABLE: N_('用户名审核暂不可用，请稍后重试'),
+  NAME_REJECTED: N_('该名称不可用'),
   BAD_MSG: N_('无效的请求'), RATE: N_('操作过于频繁'), NOT_IN_ROOM: N_('你不在房间中'), ROOM_NOT_FOUND: N_('未找到该同盟密钥对应的房间'),
   ROOM_FULL: N_('房间已满'), ROOM_STARTED: N_('模拟已开始'), NOT_HOST: N_('只有房主可以操作'), NOT_READY: N_('仍有玩家未就绪'),
   WRONG_PHASE: N_('当前阶段无法进行该操作'), NO_FUNDS: N_('资金不足'), HAND_FULL: N_('整备区已满'), BOARD_FULL: N_('已达到部署上限'),

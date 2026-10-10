@@ -386,7 +386,7 @@ export class Net {
     const check = this._nameCheck = { ws, name, controller };
     if (this.status !== 'online') this._setStatus('handshaking');
     const timer = this.timers.setTimeout(() => controller.abort(), 7000);
-    const aborted = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(new NetError('NAME_REVIEW_UNAVAILABLE')), { once: true }));
+    const aborted = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true }));
     Promise.race([Promise.resolve().then(() => this.moderateName(name, controller.signal)), aborted]).then((result) => {
       if (this._nameCheck !== check || this.ws !== ws || this.name !== name || ws.readyState !== WS_OPEN) return;
       if (result?.allowed !== true && ['NAME_REJECTED', 'BAD_MSG'].includes(result?.code)) throw new NetError(result.code);

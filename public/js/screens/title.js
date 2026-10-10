@@ -284,8 +284,7 @@ export function TitleScreen() {
         </div>` : null}
         <${TextField} label=${t('博士代号')} micro="CALLSIGN" size="lg" icon="user" value=${name} maxLength=${NAME_MAX_LEN}
           placeholder=${t('输入你的代号（最多 {NAME_MAX_LEN} 字）', { NAME_MAX_LEN })} autoFocus=${!touchUi}
-          onInput=${setName} onEnter=${start}
-          hint=${t('启用用户名审核时，代号会由敏感词服务检测；请勿填写个人信息。')} />
+          onInput=${setName} onEnter=${start} />
         <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" disabled=${!valid} onClick=${start}>${t('开始')}<//>
         <div class="title-conn">
           <span class=${`status-dot ${dotClass}`}></span>

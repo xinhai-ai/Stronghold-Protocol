@@ -3,18 +3,33 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { setImmediate as turn } from 'node:timers/promises';
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
 import { createNameModeration, nameModerationFromEnv, DEFAULT_LEXICON_URL, lexiconEndpoint } from '../server/nameModeration.js';
 import { Network, SessionRegistry } from '../server/net.js';
 import { startServer } from '../server/index.js';
-import { Net, checkNameBeforeHello } from '../public/js/net.js';
-import { ERR, NAME_MAX_LEN, PROTOCOL_VERSION } from '../shared/constants.js';
+import { Net, NetError, checkNameBeforeHello } from '../public/js/net.js';
+import { ERR, ERR_TEXT, NAME_MAX_LEN, PROTOCOL_VERSION } from '../shared/constants.js';
 import { TestClient } from './helpers/wsClient.js';
 
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const answer = (contains = false) => ({ contains });
 const response = (data = answer(), status = 200) => new Response(JSON.stringify(data), { status });
 const service = (fetchFn, extra = {}) => createNameModeration({ fetchFn, ...extra });
+
+test('rejection uses generic name feedback without review disclosure or unavailable-service hints', () => {
+  assert.equal(ERR_TEXT.NAME_REJECTED, '该名称不可用');
+  assert.equal(new NetError(ERR.NAME_REJECTED).message, '该名称不可用');
+  assert.equal(ERR.NAME_REVIEW_UNAVAILABLE, undefined);
+  assert.equal(ERR_TEXT.NAME_REVIEW_UNAVAILABLE, undefined);
+  const title = readFileSync(new URL('../public/js/screens/title.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(title, /启用用户名审核时|敏感词服务检测|用户名审核暂不可用/);
+  for (const language of ['en', 'ja', 'ko', 'zh-TW']) {
+    const messages = JSON.parse(readFileSync(new URL(`../public/i18n/${language}.json`, import.meta.url), 'utf8'));
+    assert.ok(messages['该名称不可用']);
+    assert.ok(!Object.keys(messages).some((key) => /用户名不符合本服务器|启用用户名审核时|用户名审核暂不可用/.test(key)));
+  }
+});
 
 test('approved hello retains token ownership, state-delta negotiation and complete Match Worker routing', async (t) => {
   const srv = await startServer({ host: '127.0.0.1', port: 0, quiet: true, workers: 0, matchWorkers: 1, store: null,
@@ -132,6 +147,7 @@ const fixture = (t, check) => {
 test('raw WS hello cannot bypass review; rejected rename and token takeover leave original identity intact', async (t) => {
   const { n, registry } = fixture(t, async (name) => name === '禁止' ? { allowed: false, code: ERR.NAME_REJECTED } : { allowed: true });
   const ws = socket(n); hello(ws, '禁止'); await turn(); assert.equal(registry.size, 0); assert.equal(ws.frames.at(-1).code, ERR.NAME_REJECTED);
+  assert.equal(ws.frames.at(-1).msg, '该名称不可用');
   hello(ws, '博士', 2); await turn(); const welcome = ws.frames.at(-1); assert.equal(welcome.t, 'welcome');
   hello(ws, '禁止', 3); await turn(); assert.equal(registry.byToken(welcome.token).name, '博士');
   const other = socket(n); hello(other, '禁止', 4, { token: welcome.token }); await turn();
@@ -289,7 +305,7 @@ test('HTTP unexpected reviewer exception and client unavailable result also sile
   t.after(() => srv.close());
   const res = await fetch(srv.url + '/api/name-moderation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '博士' }) });
   assert.equal(res.status, 200); assert.deepEqual(await res.json(), { allowed: true });
-  const { net, ws } = client(t, async () => ({ allowed: false, code: ERR.NAME_REVIEW_UNAVAILABLE }));
+  const { net, ws } = client(t, async () => ({ allowed: false, code: 'NAME_REVIEW_UNAVAILABLE' }));
   const errors = []; net.on('helloError', (e) => errors.push(e)); await turn();
   assert.equal(ws.sent.filter((msg) => msg.t === 'hello').length, 1); assert.deepEqual(errors, []); assert.equal(net.lastError, null);
 });

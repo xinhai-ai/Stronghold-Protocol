@@ -541,6 +541,8 @@ class Connection {
     this.alive = true;
     /** @type {Session | null} */
     this.session = null;
+    this.helloReview = 0;
+    this.reviewPending = false;
     this.bucket = new TokenBucket(opts.ratePerSec, opts.rateBurst, now);
     this.heavy = new TokenBucket(opts.heavyPerSec, opts.heavyBurst, now);
     this.dropWindowAt = now;
@@ -563,6 +565,7 @@ const PEEK_RID_MAX_BYTES = 2048;
 export class Network {
   /**
    * @param {{
+   *   nameModeration?: { check: Function },
    *   registry: SessionRegistry,
    *   handler: { onHello?: Function, onMessage: Function, onDisconnect?: Function, onExpire?: Function, welcomeInfo?: Function },
    *   log?: { info: Function, warn: Function, error: Function, debug?: Function },
@@ -570,7 +573,8 @@ export class Network {
    *   options?: Partial<typeof NET_DEFAULTS>,
    * }} opts
    */
-  constructor({ registry, handler, log = noopLog, now = Date.now, options = {} }) {
+  constructor({ registry, handler, log = noopLog, now = Date.now, options = {}, nameModeration = null }) {
+    this.nameModeration = nameModeration;
     this.registry = registry;
     this.handler = handler;
     this.log = log;
@@ -807,6 +811,7 @@ export class Network {
     }
     if (this.draining) { this.reply(conn, errorMsg(ERR.INTERNAL, rid, 'server shutting down')); return; }
     if (msg.t === 'hello') { this.onHelloMsg(conn, msg, now); return; }
+    if (conn.reviewPending) { this.reply(conn, errorMsg(ERR.RATE, rid, 'hello review pending')); return; }
     if (!conn.session) { this.reply(conn, errorMsg(ERR.BAD_MSG, rid, 'hello required')); return; }
     if (HEAVY_TYPES.has(msg.t) && !conn.heavy.take(now)) { this.reply(conn, errorMsg(ERR.RATE, rid, `${msg.t} too often`)); return; }
 
@@ -852,6 +857,32 @@ export class Network {
     }
     const name = sanitizeName(msg.name);
     if (!name) { this.reply(conn, errorMsg(ERR.BAD_MSG, rid, 'bad field name')); return; }
+    if (this.nameModeration) {
+      const generation = ++conn.helloReview;
+      conn.reviewPending = true;
+      Promise.resolve().then(() => this.nameModeration.check(name, conn.key || limitKeyOf(conn.ip)))
+        .catch(() => ({ allowed: true })).then((result) => {
+        if (generation !== conn.helloReview || conn.closing || this.closed || this.draining || conn.ws.readyState !== WS_OPEN) return;
+        conn.reviewPending = false;
+        if (result?.allowed !== true && [ERR.NAME_REJECTED, ERR.BAD_MSG].includes(result?.code)) {
+          this.reply(conn, errorMsg(result.code, rid));
+          return;
+        }
+        this.acceptHello(conn, msg, name, this.now());
+      }).catch(() => {
+        if (generation !== conn.helloReview || conn.closing || this.closed || this.draining) return;
+        conn.reviewPending = false;
+        // An error binding the game session is not a review failure; never retry binding.
+        this.reply(conn, errorMsg(ERR.INTERNAL, rid));
+      });
+      return;
+    }
+    this.acceptHello(conn, msg, name, now);
+  }
+
+  // Only bind/create/rename after approval. Re-resolve tokens after the async boundary.
+  acceptHello(conn, msg, name, now) {
+    const rid = msg.rid;
     if (!conn.session && msg.token && this.registry.recoveryPending && !this.registry.byToken(msg.token)) {
       conn.close(1013, 'saved session recovery pending');
       return;

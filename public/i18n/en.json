@@ -1405,5 +1405,8 @@
   "同意重刷": "Agree to reroll",
   "拒绝重刷": "Reject reroll",
   "取消投票": "Cancel vote",
-  "正在准备导入资源包…": "Preparing resource package import…"
+  "正在准备导入资源包…": "Preparing resource package import…",
+  "用户名不符合本服务器命名规则，请更换名字": "This username does not meet this server's naming rules. Please choose another name.",
+  "用户名审核暂不可用，请稍后重试": "Username review is temporarily unavailable. Please try again later.",
+  "启用用户名审核时，代号会由敏感词服务检测；请勿填写个人信息。": "When username review is enabled, your callsign is checked by a sensitive-word service. Do not include personal information."
 }

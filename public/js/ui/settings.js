@@ -32,7 +32,7 @@ import { copyText } from './clipboard.js';
 import { AnnouncementButton } from './announcement.js';
 const cx = (...parts) => parts.filter(Boolean).join(' ');
 
-/** Settings store: { bgm, sfx, voice, muted, damageNumbers, quality, fpsLimit, preload, preloadOptional }. */
+/** Settings store: { bgm, sfx, voice, muted, damageNumbers, quality, fpsLimit, preload, preloadOptional, preloadVoiceLang }. */
 /** Settings store: { bgm, sfx, voice, voiceLang, voiceOverrides, muted, damageNumbers, quality, textSize, keys }. */
 export const settingsStore = createStore(sanitizeSettings(loadPref('settings', null)));
 export const shortcutsStore = createStore(sanitizeShortcuts(loadPref('shortcuts', DEFAULT_SHORTCUTS)));

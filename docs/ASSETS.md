@@ -134,6 +134,22 @@ running; 暂停下载 stops them and 关闭预载 disables automatic downloading
   management during an active run uses that run's counters rather than starting another scan. Later checks still
   inspect the real cache so browser eviction is detected. The client logs `[resources] preload check timings` with
   manifestMs, cacheKeysMs, indexReadMs and total duration to distinguish network waiting from cache metadata access.
+- **Voice preload scope.** The resource manager splits Chinese and Japanese voice categories and offers
+  中文语音 / 日语语音 / 两种语言 / 不预载语音. `settings.preloadVoiceLang` (`cn`, `jp`, `all`, `none`) is
+  persisted independently of playback `voiceLang` and per-operator overrides. Old profiles without a valid scope
+  use their saved playback dub once (Chinese by default). The 同时预载 checkbox must still be enabled for any
+  optional downloads; SFX, music and guide images retain their existing behaviour. Language detection uses
+  `/voice/cn/` or `/voice/jp/` directory names, including CDN prefixes, not filenames (Japanese files may be
+  named `cn_019.mp3`). Legacy/shared voice paths without a dub directory are shown separately and selected
+  unless voice preload is disabled entirely. A language switch cancels the previous download scope, waits for
+  in-flight work, and incrementally fills the latest selection; cached voices are never deleted by a switch.
+  Category counts/bytes, progress and completion reflect only selected eligible files; unselected groups remain
+  visible with cache counts and a 未选择 label. They cannot keep a selected preload incomplete. Category updates
+  reuse short counters rather than re-tallying the full manifest on each download/UI progress event.
+  ZIP validation/import/export remains unchanged: valid unselected voices in a package are retained and exported
+  with other cached files; only missing network downloads after import are filtered by the selected dub.
+  This touches standalone Service Worker dependencies: rebuild/restart and update SW on deployment. If UI language
+  JSON is served from the assets CDN, sync `public/i18n/` and refresh the corresponding cache; `data/` is unchanged.
 - The client (`public/js/resources/*`) downloads tier 1 first, then tier 2 only when selected: four lanes for small files
   and one for files above 4 MiB, skipping whatever is already cached. Two tabs of the same browser never download the
   same file twice: a Web Lock (`stronghold-resources-preload`, `ifAvailable`) makes one tab do the work while the others

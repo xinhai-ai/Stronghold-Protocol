@@ -1405,5 +1405,15 @@
   "同意重刷": "Agree to reroll",
   "拒绝重刷": "Reject reroll",
   "取消投票": "Cancel vote",
-  "正在准备导入资源包…": "Preparing resource package import…"
+  "正在准备导入资源包…": "Preparing resource package import…",
+  "中文语音": "Chinese voices",
+  "日语语音": "Japanese voices",
+  "其他角色语音": "Other character voices",
+  "预载语音语言": "Preload voice language",
+  "两种语言": "Both languages",
+  "不预载语音": "Do not preload voices",
+  "仅影响预载范围；播放语言仍在设置中选择。切换后保留已有缓存。": "Only affects preloading. Choose the playback language in Settings. Switching keeps cached files.",
+  "勾选“同时预载”后下载所选语音。": "Enable “Preload together” to download the selected voices.",
+  "未选择": "Not selected",
+  "所选 {done}/{total}": "Selected {done}/{total}"
 }

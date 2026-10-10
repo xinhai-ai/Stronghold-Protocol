@@ -283,7 +283,7 @@ function stubEnv({ manifest = MANIFEST, fail = false, secure = true } = {}) {
         if (fail) return new Response('nope', { status: 503 });
         return new Response(JSON.stringify(manifest), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      const file = FILES.find((f) => url.endsWith(f.url));
+      const file = manifest.files.find((f) => url.endsWith(f.url));
       if (!file) return new Response('missing', { status: 404 });
       if (opts?.signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
       return new Response('b'.repeat(file.size), { status: 200, headers: { 'Content-Type': 'image/png' } });
@@ -424,5 +424,98 @@ test('a browser without Cache Storage is reported instead of downloading', async
   assert.equal(st.phase, 'error');
   assert.match(st.message, /HTTPS|Cache Storage|Service Worker/);
   assert.deepEqual(env.calls.fetch, [], 'nothing is downloaded');
+  await mod.syncResources(false);
+});
+
+
+const VOICE_FILES = [
+  { url: '/assets/ui/voice-scope.png', tier: 1, size: 4 },
+  { url: '/assets/audio/voice/cn/char_test/cn_019.mp3', tier: 2, size: 3 },
+  // JP uses cn_019 filenames too: language comes from the directory, not the filename.
+  { url: 'https://cdn.example/prefix/assets/audio/voice/jp/char_test/cn_019.mp3', tier: 2, size: 5 },
+  { url: '/assets/audio/sfx/click.mp3', tier: 2, size: 2 },
+];
+const VOICE_MANIFEST = { format: 1, version: 'voice-scope', files: VOICE_FILES, totalBytes: 14, sized: 4 };
+const cacheKey = (f) => new URL(f.url, ORIGIN).href;
+
+test('Chinese/Japanese scope downloads incrementally, counts selected files and keeps both cached dubs', async (t) => {
+  const env = stubEnv({ manifest: VOICE_MANIFEST }); t.after(env.restore);
+  const mod = await import('../../public/js/resources/index.js?voice-dub-scope');
+  const snapshots = []; const unsubscribe = mod.subscribeResources((s) => snapshots.push(s)); t.after(unsubscribe);
+  await mod.syncResources(true, true, 'cn');
+  assert.deepEqual(env.calls.fetch, [MANIFEST_URL, ...VOICE_FILES.filter((_, i) => i !== 2).map(cacheKey)]);
+  let st = mod.resourceState(); assert.equal(st.selectionComplete, true); assert.equal(st.complete, false);
+  assert.equal(st.selectedDone, 3); assert.equal(st.selectedWanted, 3); assert.equal(st.selectedBytes, 9);
+  assert.equal(st.groups.find((g) => g.id === 'voice_jp').selected, false);
+  assert.match(st.message, /所选资源已齐全/);
+  const first = snapshots.find((s) => s.groups.length > 0 && s.selectedDone === 0);
+  const before = env.calls.fetch.length;
+  await mod.syncResources(true, true, 'jp');
+  assert.deepEqual(env.calls.fetch.slice(before), [cacheKey(VOICE_FILES[2])]);
+  st = mod.resourceState(); assert.equal(st.selectedDone, 3); assert.equal(st.selectedBytes, 11);
+  assert.equal(st.groups.find((g) => g.id === 'voice_cn').present, 1);
+  assert.equal(st.groups.find((g) => g.id === 'voice_cn').selected, false);
+  assert.equal(first.groups.every((g) => g.present === 0), true, 'progress snapshots are independent');
+  const end = env.calls.fetch.length;
+  await mod.syncResources(true, true, 'cn'); await mod.syncResources(true, true, 'all');
+  assert.equal(env.calls.fetch.length, end, 'switching to cached dubs never re-downloads');
+  await mod.syncResources(true, true, 'none');
+  assert.equal(mod.resourceState().selectedWanted, 2); assert.equal(mod.resourceState().selectionComplete, true);
+  await mod.syncResources(true, false, 'jp');
+  assert.equal(mod.resourceState().selectedWanted, 1); assert.equal(mod.resourceState().selectionComplete, true);
+  const keys = await (await env.caches.open(CACHE_NAME)).keys();
+  assert.equal(keys.filter((key) => key.url.includes('/assets/')).length, 4, 'selection changes do not delete cached audio');
+  await mod.syncResources(false);
+});
+
+test('voice selection during active downloads aborts old scope; rapid changes use the latest language', async (t) => {
+  const env = stubEnv({ manifest: VOICE_MANIFEST }); t.after(env.restore);
+  const fetcher = globalThis.fetch; const started = Promise.withResolvers();
+  globalThis.fetch = async (url, options) => {
+    if (url === cacheKey(VOICE_FILES[1])) {
+      started.resolve();
+      await new Promise((resolve) => options.signal.addEventListener('abort', resolve, { once: true }));
+    }
+    return fetcher(url, options);
+  };
+  const mod = await import('../../public/js/resources/index.js?voice-scope-race');
+  const original = mod.syncResources(true, true, 'cn'); await started.promise;
+  const next = mod.syncResources(true, true, 'jp'); const old = mod.syncResources(true, true, 'cn');
+  const latest = mod.syncResources(true, true, 'jp'); await Promise.all([original, next, old, latest]);
+  assert.equal(mod.resourceState().voiceLang, 'jp'); assert.equal(mod.resourceState().selectionComplete, true);
+  const cache = await env.caches.open(CACHE_NAME);
+  assert.equal(await cache.match(cacheKey(VOICE_FILES[1])), undefined);
+  assert.ok(await cache.match(cacheKey(VOICE_FILES[2])));
+  await mod.syncResources(false);
+});
+
+test('ZIP import keeps valid unselected voices but incremental completion fetches only the selected dub', async (t) => {
+  const files = VOICE_FILES.map((f) => ({ ...f, hash: createHash('sha1').update('b'.repeat(f.size)).digest('hex').slice(0, 12) }));
+  const source = new ResourceStore({ ...VOICE_MANIFEST, files: files.slice(2, 3) }, {
+    caches: new MemoryCaches(), origin: ORIGIN, fetcher: async () => new Response('b'.repeat(5)),
+  });
+  await source.download(); const { blob } = await exportResourceZip(source);
+  const env = stubEnv({ manifest: { ...VOICE_MANIFEST, files } }); t.after(env.restore);
+  const mod = await import('../../public/js/resources/index.js?voice-zip-scope');
+  await mod.syncResources(false, true, 'cn'); await mod.importResources(blob); await mod.startResources();
+  assert.deepEqual(env.calls.fetch, [MANIFEST_URL, ...files.filter((_, i) => i !== 2).map(cacheKey)]);
+  assert.equal(mod.resourceState().voiceLang, 'cn'); assert.equal(mod.resourceState().selectionComplete, true);
+  assert.equal(mod.resourceState().selectedWanted, 3);
+  assert.equal(mod.resourceState().groups.find((g) => g.id === 'voice_jp').present, 1);
+  assert.equal((await mod.exportResources()).count, 4, 'ZIP export still includes every cached valid resource');
+  await mod.syncResources(false);
+});
+
+test('changing language while preload is disabled updates selected progress without fetching assets', async (t) => {
+  const env = stubEnv({ manifest: VOICE_MANIFEST }); t.after(env.restore);
+  const mod = await import('../../public/js/resources/index.js?voice-disabled');
+  await mod.syncResources(false, true, 'jp'); assert.deepEqual(env.calls.fetch, []);
+  await mod.inspectResources(); const calls = env.calls.fetch.length;
+  assert.equal(mod.resourceState().selectedWanted, 3);
+  await mod.syncResources(false, true, 'none');
+  assert.equal(mod.resourceState().selectedWanted, 2); assert.equal(env.calls.fetch.length, calls);
+  await mod.syncResources(true, true, 'none');
+  assert.ok(!env.calls.fetch.some((url) => url.includes('/voice/')));
+  assert.equal(mod.resourceState().selectionComplete, true);
   await mod.syncResources(false);
 });

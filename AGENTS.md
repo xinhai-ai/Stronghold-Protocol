@@ -234,3 +234,9 @@ npm run golden                              # golden results
 Browser suites are off by default and need Chrome: `SP_E2E=1` (UI), `SP_REAL_E2E=1` (real match, needs assets),
 `RENDER_E2E=1`, `SIM_E2E=1` — see CONTRIBUTING.md §2. Battle tests are easiest with the helpers described in
 docs/SIM.md (the test harness section) and the patterns in `test/content/op_siege.test.js`.
+
+## 预载语音范围
+
+- 资源管理直接选择中文、日语、两种语言或不预载语音，浏览器持久化 preloadVoiceLang，独立于播放 voiceLang 和干员个人语音覆盖；旧配置以已保存的播放语言迁移，默认中文。可选资源仍需同时预载开关。
+- 按 /voice/cn/ 与 /voice/jp/ 目录识别（兼容 CDN 前缀），不能按 cn_019 等文件名判语言。保留旧未分语言语音组及不预载时的排除。切换中止旧范围、等待已开始操作，只增量下载最新选择，不删除已有缓存；完成与进度只计算所选可缓存资源。
+- ZIP 内未选择但有效的资源仍须校验并保留，导出仍包含全部有效缓存；仅导入后的缺失下载按范围过滤。分类计数增量维护，不在每个进度更新重扫全清单。更新 common.js 等独立 SW 依赖后部署需更新 SW，并同步 CDN 的 UI 语言 JSON。验证 test/ui/preload-voice.test.js 和现有资源/ZIP/构建测试。

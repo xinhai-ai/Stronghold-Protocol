@@ -31,7 +31,9 @@ export const RESOURCE_GROUPS = Object.freeze({
   character: { name: N_('干员与敌人图片'), tier: TIER_ESSENTIAL },
   spine: { name: N_('Spine 模型与特效'), tier: TIER_ESSENTIAL },
   ui: { name: N_('界面、图标与字体'), tier: TIER_ESSENTIAL },
-  voice: { name: N_('角色语音'), tier: TIER_REST },
+  voice_cn: { name: N_('中文语音'), tier: TIER_REST },
+  voice_jp: { name: N_('日语语音'), tier: TIER_REST },
+  voice: { name: N_('其他角色语音'), tier: TIER_REST },
   sfx: { name: N_('音效'), tier: TIER_REST },
   music: { name: N_('背景音乐'), tier: TIER_REST },
   other: { name: N_('玩法说明与其他资源'), tier: TIER_REST },
@@ -40,6 +42,8 @@ export const RESOURCE_GROUPS = Object.freeze({
 export function resourceGroup(file) {
   const path = new URL(file.url, 'https://resources.invalid').pathname;
   if (file.tier === TIER_REST) {
+    if (/\/voice\/cn\//.test(path)) return 'voice_cn';
+    if (/\/voice\/jp\//.test(path)) return 'voice_jp';
     if (/\/voice\//.test(path)) return 'voice';
     if (/\/sfx\//.test(path)) return 'sfx';
     if (/\/bgm\//.test(path)) return 'music';
@@ -49,6 +53,39 @@ export function resourceGroup(file) {
   if (/\/(?:map|maps|mesh|board)\/|\.obj$/.test(path)) return 'map';
   if (/\/(?:char|chars|enemy|enemies|token|tokens)\//.test(path)) return 'character';
   return 'ui';
+}
+
+/** Preload scope is independent of playback's global/individual operator dub settings. */
+export const PRELOAD_VOICE_LANGS = Object.freeze(['cn', 'jp', 'all', 'none']);
+export function normalizePreloadVoiceLang(value, fallback = 'cn') {
+  return PRELOAD_VOICE_LANGS.includes(value) ? value : PRELOAD_VOICE_LANGS.includes(fallback) ? fallback : 'cn';
+}
+
+export function selectedResourceGroup(id, includeOptional, voiceLang = 'cn') {
+  const group = RESOURCE_GROUPS[id];
+  if (!group) return false;
+  if (group.tier === TIER_ESSENTIAL) return true;
+  if (!includeOptional) return false;
+  const lang = normalizePreloadVoiceLang(voiceLang);
+  if (id === 'voice_cn') return lang === 'cn' || lang === 'all';
+  if (id === 'voice_jp') return lang === 'jp' || lang === 'all';
+  if (id === 'voice') return lang !== 'none'; // legacy/shared voice URLs without a known dub
+  return true;
+}
+
+/** UI/download completion uses the short, incrementally maintained category list, not manifest rescans. */
+export function resourceSelection(status, includeOptional, voiceLang) {
+  const groups = (status.groups || []).map((group) => ({ ...group,
+    selected: selectedResourceGroup(group.id, includeOptional, voiceLang) }));
+  const chosen = groups.filter((g) => g.selected);
+  const selectedWanted = chosen.reduce((n, g) => n + g.wanted, 0);
+  const selectedDone = chosen.reduce((n, g) => n + g.present, 0);
+  return { groups, selectedWanted, selectedDone,
+    selectedBytes: chosen.reduce((n, g) => n + g.bytes, 0),
+    selectedTotalBytes: chosen.reduce((n, g) => n + g.totalBytes, 0),
+    selectedUnknownSize: chosen.reduce((n, g) => n + g.unknownSize, 0),
+    selectedMissing: Math.max(0, selectedWanted - selectedDone),
+    selectionComplete: selectedDone >= selectedWanted };
 }
 
 /** The extension-less audio route the game asks audio through (`shared/media.js`; a test keeps the two lists identical).

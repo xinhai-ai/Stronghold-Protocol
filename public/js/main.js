@@ -312,7 +312,8 @@ function ScreenCrashed({ error, reset }) {
 
 function ResourceManagerHost() {
   const settings = useSettings();
-  return html`<${ResourceHost} enabled=${settings.preload} optional=${settings.preloadOptional}
+  return html`<${ResourceHost} enabled=${settings.preload} optional=${settings.preloadOptional} voiceLang=${settings.preloadVoiceLang}
+    onVoiceLang=${(preloadVoiceLang) => updateSettings({ preloadVoiceLang })}
     onChange=${(preload) => updateSettings({ preload })} onOptional=${(preloadOptional) => updateSettings({ preloadOptional })} />`;
 }
 
@@ -439,7 +440,7 @@ async function boot() {
 function installResourcePreload() {
   import('./resources/index.js')
     .then((r) => {
-      const apply = (s) => { r.syncResources(!!s.preload, !!s.preloadOptional).catch((err) => console.warn('[resources] sync failed', err)); };
+      const apply = (s) => { r.syncResources(!!s.preload, !!s.preloadOptional, s.preloadVoiceLang).catch((err) => console.warn('[resources] sync failed', err)); };
       apply(settingsStore.get());
       settingsStore.subscribe(apply);
     })

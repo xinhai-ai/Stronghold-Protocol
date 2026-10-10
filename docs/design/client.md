@@ -143,3 +143,11 @@ or per-phase animation schedule is added by this change.
 The simplified-view notice describes a renderer load failure, rather than declaring the device incapable of 3D.
 The same fallback covers import failure, timeout and WebGL initialization errors; a reload can retry.
 It does not diagnose a particular user's GPU or persist a disabled renderer preference (§28.25).
+
+### Branch resource-management extension: voice preload language
+
+The shared resource manager persists `preloadVoiceLang` separately from playback settings. It selects Chinese,
+Japanese, both, or no operator voice downloads within the optional tier. Files are classified by dub directories,
+including CDN-prefixed URLs. Switching aborts/waits for the previous run and fills only the latest selection; cached
+files and ZIP import/export integrity rules remain unchanged. Completion and progress use selected category counters,
+not all optional files. Details: [ASSETS.md](../ASSETS.md#preload-optional-asset-preloading).

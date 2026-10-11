@@ -1885,15 +1885,14 @@ export class Lobby {
       const review = Promise.resolve().then(() => this.nameModeration.checkChat(text, session.limitKey || '?'))
         .catch(() => ({ allowed: true }));
       this.chatReviews.set(session, review);
-      // Do not log chat content or player identity; this is only an audit marker for moderation activity.
-      this.log.info?.('[chat] moderation triggered for in-match message');
       return review.then((result) => {
         const current = this.activeMatchOf(session);
         if (this.shuttingDown || !session.connected || this.registry.byId(session.playerId) !== session
           || session.ws !== socket || current?.match !== match || current.disposed || current.ended
           || match.disposed || match.ended) return fail(ERR.WRONG_PHASE);
         if (result?.allowed !== true && [ERR.NAME_REJECTED, ERR.BAD_MSG].includes(result?.code)) {
-          this.log.info?.('[chat] moderation rejected in-match message');
+          // Never log message content/identity, attempts, approvals, format errors or fail-open results.
+          if (result.code === ERR.NAME_REJECTED) this.log.info?.('[chat] moderation rejected in-match message');
           return fail(result.code === ERR.BAD_MSG ? ERR.BAD_MSG : ERR.CHAT_REJECTED);
         }
         return this.routeGameUnchecked(session, { ...msg, text });

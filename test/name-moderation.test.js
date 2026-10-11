@@ -161,7 +161,7 @@ test('raw WS hello cannot bypass review; rejected rename and token takeover leav
   assert.equal(other.frames.at(-1).resumed, true); assert.equal(registry.size, 1); assert.equal(ws.readyState, 3);
 });
 
-test('review trigger is logged without exposing the name, token, address or provider response', async (t) => {
+test('only explicit name rejection is logged without exposing the name, token, address or provider response', async (t) => {
   const lines = [];
   const { n } = fixture(t, async () => ({ allowed: false, code: ERR.NAME_REJECTED }), {
     info: (line) => lines.push(String(line)), warn() {}, error() {}, debug() {},
@@ -169,8 +169,23 @@ test('review trigger is logged without exposing the name, token, address or prov
   const ws = socket(n);
   hello(ws, '秘密名称');
   await turn();
-  assert.ok(lines.includes('[names] moderation triggered for WebSocket hello'));
+  assert.deepEqual(lines.filter((line) => line.startsWith('[names] moderation')), ['[names] moderation rejected WebSocket hello']);
   assert.ok(!lines.some((line) => line.includes('秘密名称') || line.includes('token') || line.includes('127.0.0.1')));
+});
+
+for (const [label, check, expectedCode] of [
+  ['approval', async () => ({ allowed: true }), null],
+  ['format error', async () => ({ allowed: false, code: ERR.BAD_MSG }), ERR.BAD_MSG],
+  ['unknown verdict', async () => ({ allowed: false }), null],
+  ['provider failure', async () => { throw new Error('private upstream response'); }, null],
+]) test(`name review ${label} emits no moderation audit log`, async (t) => {
+  const lines = [];
+  const { n } = fixture(t, check, { info: (line) => lines.push(String(line)), warn() {}, error() {}, debug() {} });
+  const ws = socket(n);
+  hello(ws, '秘密名称');
+  await turn();
+  assert.equal(expectedCode ? ws.frames.at(-1).code : ws.frames.at(-1).t, expectedCode || 'welcome');
+  assert.deepEqual(lines.filter((line) => line.startsWith('[names] moderation')), []);
 });
 
 test('latest hello wins; discarded results, closed sockets and shutdown cannot mint sessions', async (t) => {
@@ -455,9 +470,9 @@ for (const matchWorkers of [0, 1]) test(`chat moderation precedes broadcast with
   const message = await c.waitFor('m.chat');
   assert.equal(message.text, 'hello');
   assert.deepEqual(reviewed, ['blocked', 'hello']);
-  assert.ok(audit.includes('[names] moderation triggered for WebSocket hello'));
-  assert.ok(audit.includes('[chat] moderation triggered for in-match message'));
-  assert.ok(audit.includes('[chat] moderation rejected in-match message'));
+  assert.deepEqual(audit.filter((line) => /^\[(?:names|chat)\] moderation/.test(line)), [
+    '[chat] moderation rejected in-match message',
+  ], 'startup, name approval and chat approval/trigger emit no moderation log');
   assert.ok(!audit.some((line) => /blocked|private provider|token=/.test(line)));
 });
 

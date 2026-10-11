@@ -6,9 +6,9 @@ import { Lobby } from '../server/lobby.js';
 import { ERR } from '../shared/constants.js';
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
-function fixture(t, checkChat) {
+function fixture(t, checkChat, log = quiet) {
   const registry = new SessionRegistry();
-  const lobby = new Lobby({ registry, nameModeration: { checkChat }, log: quiet });
+  const lobby = new Lobby({ registry, nameModeration: { checkChat }, log });
   t.after(() => lobby.shutdown());
   const session = registry.create('Chat');
   session.connected = true;
@@ -74,4 +74,21 @@ test('synchronous reviewer failure fails open exactly once; dispatch exceptions 
   match.handle = () => { dispatches++; throw new Error('mutation failed'); };
   assert.equal((await lobby.routeGame(session, { t: 'g.chat', text: 'later' })).error, ERR.INTERNAL);
   assert.equal(dispatches, 1);
+});
+
+for (const [label, check, expectedError] of [
+  ['approval', () => ({ allowed: true }), null],
+  ['rejection', () => ({ allowed: false, code: ERR.NAME_REJECTED }), ERR.CHAT_REJECTED],
+  ['format error', () => ({ allowed: false, code: ERR.BAD_MSG }), ERR.BAD_MSG],
+  ['unknown verdict', () => ({ allowed: false }), null],
+  ['provider failure', () => { throw new Error('private reviewer failure'); }, null],
+]) test(`chat review ${label} logs only an explicit rejection`, async (t) => {
+  const lines = [];
+  const { lobby, session } = fixture(t, check, { ...quiet, info: (line) => lines.push(String(line)) });
+  lines.length = 0; // Room creation is outside this moderation audit.
+  const result = await lobby.routeGame(session, { t: 'g.chat', text: '秘密正文' });
+  assert.deepEqual(result, expectedError ? { error: expectedError } : { ok: true });
+  assert.deepEqual(lines.filter((line) => line.startsWith('[chat] moderation')),
+    expectedError === ERR.CHAT_REJECTED ? ['[chat] moderation rejected in-match message'] : []);
+  assert.ok(!lines.some((line) => /秘密正文|Chat|private reviewer/.test(line)));
 });

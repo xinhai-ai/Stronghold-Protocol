@@ -11,6 +11,9 @@ import { StateStore, parseRedisConfig, openStoreFromEnv } from '../server/redis.
 import { startServer } from '../server/index.js';
 import { StubMatch } from '../server/match/StubMatch.js';
 import { TestClient } from './helpers/wsClient.js';
+import { DATA, makeMatch } from './match/harness.js';
+import { snapshotMatch } from '../server/match/snapshot.js';
+import { MatchWorkerPool } from '../server/workers/matchPool.js';
 
 const quietLog = { info() {}, warn() {}, error() {}, debug() {} };
 const REDIS_URL = process.env.SP_TEST_REDIS_URL || 'redis://127.0.0.1:6379/15';
@@ -275,5 +278,44 @@ test('complete Worker matches preserve tokens and checkpoint state through three
       }
       assert.ok(restored._battleSeq > sequence);
       sequence = restored._battleSeq;
+    }
+  });
+
+test('0.2.4 signed shared/private stock and equipment ownership survive two Worker restarts through real Redis',
+  { skip: !available && `no Redis at ${REDIS_URL}`, timeout: 30000 }, async (t) => {
+    const slot = 'chess_char_6_diy1_a', item = 'chess_item_5_07_e_a';
+    const seats = [{ seat: 0, playerId: 'p_0', name: 'Stock', isBot: false, connected: true,
+      diy: { [slot]: { charId: 'char_112_siege', skillIndex: 1, uniEquipId: null } } }];
+    const h = makeMatch({ mode: 'solo', seats, seed: 11, fake: true }).start();
+    const ps = h.ps('p_0'), id = [...h.m.pool.entries.keys()].find(id => h.m.gd.tierOf(id) === 6);
+    for (const base of [id, slot]) {
+      const stock = ps.poolOf(base);
+      for (let i = 0, count = stock.cap(base) + 1; i < count; i++) assert.ok(ps.acquireChess(base, { silent: true }));
+      assert.equal(stock.entries.get(base).left, -1);
+    }
+    assert.ok(ps.acquireItem(item, { silent: true }));
+    const before = snapshotMatch(h.m);
+    h.m.dispose();
+    const probe = store('signed-stock-024'), pools = [];
+    t.after(async () => {
+      for (const pool of pools) await pool.close();
+      try { await probe.clear(); } finally { await probe.close(); }
+    });
+    assert.equal(await probe.save({ checkpoint: before }), true);
+    for (let restart = 0; restart < 2; restart++) {
+      const saved = await probe.load();
+      assert.ok(saved?.checkpoint);
+      const pool = new MatchWorkerPool({ data: DATA, lanes: 1 });
+      pools.push(pool);
+      const match = await pool.create(`signed-stock-${restart}`, {
+        roomCode: 'STCK', mode: 'solo', difficulty: 'NORMAL', seed: 11, matchNo: 1, seats,
+      }, {}, saved.checkpoint);
+      const restored = await match.snapshot();
+      assert.equal(restored.poolLeft[id], -1);
+      assert.deepEqual(restored.players[0].diyStock, before.players[0].diyStock);
+      assert.deepEqual(restored.players[0].hand, before.players[0].hand);
+      assert.deepEqual(restored.players[0].temp, before.players[0].temp);
+      assert.equal(await probe.save({ checkpoint: restored }), true);
+      await pool.close();
     }
   });

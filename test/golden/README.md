@@ -26,6 +26,17 @@ through.
 
 ## The corpus
 
+2026-10-11 合并 v0.2.4（`bc50cac0`）：完整 287 场景通过。相对本分支合并前，仅原有 18 个 matches
+及 `diy-135`、`diy-136` 变化，新增 `coop2-NORMAL-1-coverage-standins` 和
+`coop2-NORMAL-5-coverage-diy`；roster、bonds、fields、standins 记录不变。
+matches 的变化来自共享干员/装备库存、库存过滤及拟态物质规则影响阵容和随机抽取，
+两个 DIY 场景来自克莱门莎 S2 溅射与飞行目标触发修正（上游 §29.12）。没有移除原场景。
+
+在独立副本中，只还原本分支 Boss 配置/人数倍率、模式盟约激活及相关 AI 规则、两处既有反伤差异，
+全部 287 场景与目标标签一致。主合并副本未临时覆盖这些规则。
+本分支相对该标签仍有 8 个 roster、3 个 matches、2 个 standins 不同；
+这些模式盟约/AI 差异已经在独立副本验证，bonds、fields、diy 与标签一致。
+
 2026-10-07 合并 v0.2.1（`c2a2ef7`）：在独立副本只还原本分支 Boss 配置、盟约激活及相关 AI 策略，并还原“余音”反伤防递归与“碎铳之簧”无来源反伤修复后，完整 283 场景与标签一致。当前工作树没有临时还原这些规则。
 
 相对本次上游基线，仅更新 7 个 roster（`roster-005`、`roster-011`、`roster-017`、`roster-023`、`roster-029`、`roster-041`、`roster-047`）、3 个 matches（`solo-FUNNY-1`、`solo-FUNNY-2`、`coop4-FUNNY-6`）和 1 个 fields（`hidden-boss_10-solo`）。前两族差异来自模式名单不限制盟约激活及 AI 策略；fields 差异已在独立副本验证来自保留的“余音”反伤修复。bonds、diy 及本分支已有的 standins 基线不变；standins 相对上游仍保留此前 2 个规则差异场景。满潜能、敌人缩放、突袭和联防的新上游结果均保留。
@@ -35,7 +46,7 @@ through.
 | `roster` | 49 battles: every visible chess record (normal and elite) with every selectable skill and module (DESIGN §16), 12 operators per battle on a real stage (all 11 in turn) against the round's real wave three times over, every non-leader enemy kind of `data/enemies.json` as extra spawns (half of them bounties), placeable summons on the board, every equipment item, band, battle-side 机变 card and stage map card in turn, bonds from the board |
 | `bonds` | 46 battles: every bond at its activation threshold (1 layer) and at its top tier (999 layers) |
 | `fields` | 22 battles: every Final Assault / Hidden Core leader on a pair and a solo template (shared pool, 200 s cap) and the 联防 field with 1 and 2 helpers on the round's stage, both halves (carried HP / SP, a knocked-out operator, two leakers' enemies) |
-| `matches` | 18 matches to the end in virtual time: 16 bot-only (solo 标准 / 险境 / 绝境 / 终极 × 2 seeds, co-op 2 / 3 / 4, one server-run combat match, two runs boosted to the Hidden Core), one co-op match whose human seat (AI 托管, offline) does not own 9 NORMAL chess — they fight as their 补位 stand-ins (its digest lists them per round, `standIns`) — and one whose human seat slots 自选 picks (推进之王 and prototypes) with its 调度中心 at level 5 from the first prep: its own shop draws them and its AI fields 推进之王 (its digest lists per round the 自选 shop draws and the fielded pieces, `diy`) |
+| `matches` | 20 matches to the end in virtual time: 16 bot-only (solo 标准 / 险境 / 绝境 / 终极 × 2 seeds, co-op 2 / 3 / 4, one server-run combat match, two runs boosted to the Hidden Core), one co-op match whose human seat (AI 托管, offline) does not own 9 NORMAL chess — they fight as their 补位 stand-ins (its digest lists them per round, `standIns`) — and one whose human seat slots 自选 picks (推进之王 and prototypes) with its 调度中心 at level 5 from the first prep: its own shop draws them and its AI fields 推进之王 (its digest lists per round the 自选 shop draws and the fielded pieces, `diy`) |
 | `standins` | 10 battles: every NORMAL chess record (normal and elite, 110) fielded as its 补位 stand-in (`standIn: true`: the stand-in's body, backup skill / module and kit — all 17 stand-ins, every skill a chess names for them), 12 per battle by strength band, laid out by the stand-in's position on a real stage, against the round's real wave three times over plus 8 ground enemy kinds (melee stand-ins always meet an enemy), an item each, bonds from the board |
 | `diy` | battles of 自选 pieces (a DIY slot with its `diy` pick, `shared/diy.js`): every owned 6★ with an operator kit (`kits/index.js OPERATOR_KITS`) in each form of tiers 5 and 6 (normal; elite with no module and with each module) under each skill, then every prototype pick with a kit at its locked selection, normal and elite, 12 per battle against the round's real wave; a new operator kit adds its scenarios (the battle count grows with the kits) |
 
@@ -76,3 +87,5 @@ node tools/golden.mjs --twice                   # determinism: the corpus twice 
 - A new engine hook, event or chess record does not change the digests of the existing scenarios by itself — the
   hook list is frozen in the tool and the corpus is regenerated only on `golden:update` — but new data records do join
   the corpus there (the roster family enumerates `data/chess.json`).
+
+After the measured shared-stock update (DESIGN §29.8), the original stand-in / DIY seeds remain as outcome regressions even when they field no such operator. Companion seeds `coop2-NORMAL-1-coverage-standins` and `coop2-NORMAL-5-coverage-diy` exercise those full paths; the corpus now contains 287 scenarios.

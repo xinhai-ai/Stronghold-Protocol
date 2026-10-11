@@ -6,8 +6,8 @@ import { validChatText } from '../shared/chat.js';
 
 export const JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 // One compact binary question instead of repeating instructions for four categories.
-// English keeps the fixed policy short; input stays in its original language and is never truncated for billing.
-const REVIEW_TASK = '涉及中国现实政治、政治人物、政党、政治事件、政治口号、分裂或颠覆的名字。普通地名、历史文化、游戏虚构阵营不因单个模糊字词被判定为现实政治。以及其他色情暴力有害内容。';
+// The fixed backend policy is not UI text; input stays in its original language and is never truncated for billing.
+const REVIEW_TASK = '涉及中国现实政治、政治人物、政党、政治事件、政治口号、分裂或颠覆的名字。普通地名、历史文化、游戏虚构阵营不因单个模糊字词被判定为现实政治。以及其他色情暴力有害内容。'; // i18n-ignore: server-only moderation instructions, never translated or sent to the browser
 const failOpen = () => ({ allowed: true });
 
 export function createJevNameModeration({ apiKey, model = 'jev-latest', threshold = 0.5,

@@ -1113,6 +1113,12 @@
 .topbar__center { display: flex; flex-direction: column; align-items: center; gap: .03rem; text-align: center; }
 .topbar__title { display: flex; align-items: center; gap: .18rem; font-size: calc(.3 * var(--t)); font-weight: 700; letter-spacing: .1em; line-height: 1.2; }
 .topbar__sep { width: 1px; height: .28rem; background: var(--line-2); }
+/* the lobby's ⚙ / 📖 / install squares: a size up from `sm` and spaced apart; on touch screens at least 40 px each with
+   a 10 px gap, so their 44 px hit areas (css/devices.css) never overlap and a tap lands on the intended one */
+.topbar__tools { display: flex; align-items: center; gap: .14rem; }
+.topbar__tools .btn--square.btn--sm { --sq: .46rem; height: var(--sq); min-width: var(--sq); }
+.sp-coarse .topbar__tools { gap: max(.16rem, 10px); }
+.sp-coarse .topbar__tools .btn--square.btn--sm { --sq: max(.56rem, 40px); }
 .topbar__right { justify-self: end; display: flex; align-items: center; gap: .16rem; min-width: 0; }
 .connection-status { display: flex; align-items: center; gap: .1rem; flex: none; }
 .connection-status .ping { flex: none; white-space: nowrap; }
@@ -1129,12 +1135,35 @@
 .announcement-content__link .icon { flex: none; width: .18rem; height: .18rem; }
 .announcement-content__url { flex-basis: 100%; font-size: calc(.14 * var(--t)); color: var(--text-lo); }
 
+/* Optional resume/install controls and translated XL titles must share actual space instead of overlapping the
+   centered 1fr/auto/1fr title. On narrow displays the title has its own row; the controls stay in their two groups. */
+.lobby-screen .topbar { grid-template-columns: auto minmax(0, 1fr) auto; height: auto; min-height: 1.1rem; padding-block: .12rem; }
+.lobby-screen .topbar__center { min-width: 0; }
+.lobby-screen .topbar__center .micro { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.lobby-screen .topbar__title { justify-content: center; overflow-wrap: anywhere; }
+@media (max-width: 1000px) {
+  .lobby-screen .topbar { grid-template-columns: minmax(0, 1fr) auto; gap: .1rem .2rem; }
+  .lobby-screen .topbar__center { grid-column: 1 / -1; grid-row: 2; }
+  .lobby-screen .topbar__center .micro { display: none; }
+  .lobby-screen .topbar__right { grid-column: 2; grid-row: 1; }
+  .lobby-screen .me-chip__name { max-width: 1.5rem; }
+}
+
 .section-label { display: flex; align-items: baseline; gap: .12rem; margin: 0 0 .14rem; font-size: calc(.2 * var(--t)); font-weight: 700; letter-spacing: .08em; }
 .section-label__idx { font-size: calc(.15 * var(--t)); color: var(--mint-500); padding: 0 .06rem; border: 1px solid var(--mint-800); line-height: 1.35; letter-spacing: .06em; }
 
 .me-chip { display: flex; align-items: center; gap: .12rem; padding: .06rem .18rem .06rem .06rem; border: 1px solid var(--line); background: rgba(0, 0, 0, .35); }
 .me-chip__text { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
 .me-chip__name { font-weight: 700; font-size: calc(.18 * var(--t)); max-width: 2.4rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the lobby's chip doubles as the 统计数据 entry */
+.me-chip--btn {
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease-out), background-color var(--t-fast) var(--ease-out);
+}
+.me-chip--btn:hover { border-color: var(--mint-700); background: rgba(34, 42, 38, .6); }
+.me-chip--btn:active { transform: translateY(1px); }
+.me-chip__stats { flex: none; width: .2rem; height: .2rem; margin-left: .04rem; color: var(--mint-500); opacity: .7; }
+.me-chip--btn:hover .me-chip__stats { opacity: 1; }
 
 /* The lobby/room chrome has several actions. On phones keep the connection cluster readable,
    let the centre title use its own row, and make secondary actions icon-only instead of

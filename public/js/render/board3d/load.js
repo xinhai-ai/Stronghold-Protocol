@@ -16,11 +16,23 @@ import { parseObj } from './obj.js';
 export const THREE_URL = '/vendor/three.module.js';
 
 let threePromise = null;
+let threeFailures = 0;
 /** Dynamic import of the vendored three.js ESM build (browser only); null when unavailable. */
 export function loadThree(url = THREE_URL) {
   if (!threePromise) {
-    const loading = url === THREE_URL ? import('/vendor/three.module.js') : import(/* @vite-ignore */ url);
-    threePromise = loading.then((m) => (m && m.WebGLRenderer ? m : null), () => null);
+    // Browsers also cache failed module imports. Two bounded retry URLs permit a transient download failure to
+    // recover; clearing only our promise would keep receiving that same cached rejection without another request.
+    if (threeFailures >= 3) return Promise.resolve(null);
+    const source = new URL(url, import.meta.url);
+    if (threeFailures) source.searchParams.set('sp-retry', String(threeFailures));
+    // Keep the first/default import visible to Vite. Only recovery URLs and custom test/tool URLs use native imports.
+    const loading = url === THREE_URL && !threeFailures
+      ? import('/vendor/three.module.js') : import(/* @vite-ignore */ source.href);
+    const pending = loading.then((m) => (m && m.WebGLRenderer ? m : null), () => null).then((m) => {
+      if (!m && threePromise === pending) { threePromise = null; threeFailures++; }
+      return m;
+    });
+    threePromise = pending;
   }
   return threePromise;
 }
@@ -96,7 +108,7 @@ async function fetchJson(url) {
  */
 export function loadBoardPack(assets) {
   if (cached) return cached;
-  cached = (async () => {
+  const pending = (async () => {
     if (!assets || typeof assets.local !== 'function' || typeof assets.localUrl !== 'function' || typeof assets.image !== 'function') return null;
     const manifest = await assets.local().catch(() => null);
     if (!isObj(manifest)) return null;
@@ -107,7 +119,7 @@ export function loadBoardPack(assets) {
     await Promise.all(Object.entries(PACK_IMAGES).map(async ([k, [g, n]]) => {
       const u = url(g, n);
       if (!u) return;
-      const img = await assets.image(u).catch(() => null);
+      const img = await assets.image(u, { retry: true }).catch(() => null);
       if (img && (img.width || img.naturalWidth) > 0) images[k] = img;
     }));
     if (!images.D) return null;
@@ -139,9 +151,15 @@ export function loadBoardPack(assets) {
       images, meshes, tiles: isObj(tiles) ? tiles : null, uv: resolveUvTable(isObj(tiles) ? tiles : null),
       materials: { theme: isObj(theme) ? theme : null, fx: isObj(fxMats) ? fxMats : null },
     };
-  })().catch((err) => { console.warn('[board3d] art load failed', err); return null; });
-  return cached;
+  })().catch((err) => { console.warn('[board3d] art load failed', err); return null; }).then((pack) => {
+    // A timeout / failed atlas is not proof the host lacks 3D art. A later mount or visibility change may retry.
+    // An older attempt finishing after reset must not discard a newer cached request.
+    if (!pack && cached === pending) cached = null;
+    return pack;
+  });
+  cached = pending;
+  return pending;
 }
 
-/** Forget the cached pack (tests / hot reload). */
-export function resetBoardPack() { cached = null; threePromise = null; }
+/** Forget the cached pack and the three.js import attempt (tests / hot reload). */
+export function resetBoardPack() { cached = null; threePromise = null; threeFailures = 0; }

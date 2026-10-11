@@ -347,7 +347,9 @@ export function restoreMatch(m, doc, { createRngFromState, log = console, bestEf
   if (doc.poolLeft && typeof doc.poolLeft === 'object') {
     for (const [id, left] of Object.entries(doc.poolLeft)) {
       const e = m.pool.entries.get(id);
-      if (e) e.left = Math.max(0, Math.min(e.cap, Math.trunc(Number(left) || 0)));
+      // 0.2.4 Mimic grants may overdraw stock. A deficit must survive restart or returns expose free copies too early.
+      const balance = Number(left);
+      if (e) e.left = Math.min(e.cap, Math.trunc(Number.isFinite(balance) ? balance : 0));
     }
   }
   for (const name of RNG_NAMES) {
@@ -399,7 +401,8 @@ export function restoreMatch(m, doc, { createRngFromState, log = console, bestEf
     ps.initDiyStock(new Set([...(m.disabledBonds || []), ...(m.staticInactiveBonds || [])]));
     if (stockEntries instanceof Map) for (const [id, saved] of stockEntries) {
       const entry = ps.diyStock.entries.get(id);
-      if (entry) entry.left = Math.max(0, Math.min(entry.cap, Math.trunc(Number(saved.left) || 0)));
+      const balance = Number(saved.left);
+      if (entry) entry.left = Math.min(entry.cap, Math.trunc(Number.isFinite(balance) ? balance : 0));
     }
     ps.connected = ps.isBot ? true : false;   // every socket is gone: the lobby rebinds on hello
     ps._deployMap = null;

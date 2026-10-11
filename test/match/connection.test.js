@@ -70,7 +70,8 @@ test('developer console enforces 5-per-round / 50-per-match quotas and resets on
   const h = makeMatch({ mode: 'coop', humans: 1, bots: 1, seed: 611, fake: true, consoleEnabled: true }).start();
   const id = Object.keys(DATA.bonds).find((k) => DATA.bonds[k] && !DATA.bonds[k].isHidden);
   const chessId = Object.keys(DATA.chess).find((k) => DATA.chess[k]?.visible && !DATA.chess[k].isGolden && !DATA.chess[k].isHidden && !DATA.chess[k].isDiy);
-  const itemId = Object.keys(DATA.items).find((k) => !DATA.items[k]?.isHidden && !DATA.items[k]?.isDiy);
+  // This tests quotas, not 0.2.4 shared equipment capacity. Use an uncapped effect item for five successive grants.
+  const itemId = Object.keys(DATA.items).find((k) => !DATA.items[k]?.isHidden && !DATA.items[k]?.isDiy && h.m.itemPool.cap(k) == null);
   assert.ok(id && chessId && itemId);
   const grant = () => h.m.handle('p_0', { t: 'g.console', kind: 'bond', id, amount: 1 });
   for (let round = 1; round <= 10; round++) {

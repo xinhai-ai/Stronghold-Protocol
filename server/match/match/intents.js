@@ -177,6 +177,7 @@ export class MatchIntents {
     } else if (kind === 'item') {
       const rec = this.gd.item(id);
       if (!rec || rec.isDiy || rec.isHidden) return fail(ERR.BAD_TARGET, 'unknown equipment');
+      if (!this.itemPool.canGain(id)) return fail(ERR.SOLD_OUT, 'equipment stock exhausted');
       grantedName = rec.name || id;
       piece = ps.acquireItem(id, { source: 'console' });
       granted = !!piece;

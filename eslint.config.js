@@ -66,6 +66,8 @@ export default [
       'public/dev/**',
       '.cache/**',
       'coverage/**',
+      'deploy/shutdown/dist/**',
+      'deploy/shutdown/.wrangler/**',
     ],
   },
   {
@@ -78,7 +80,7 @@ export default [
     rules,
   },
   {
-    files: ['public/js/**/*.js', 'public/studio/**/*.js'],
+    files: ['public/js/**/*.js', 'public/studio/**/*.js', 'deploy/shutdown/site/**/*.js', 'deploy/shutdown/worker.js'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',

@@ -1,0 +1,14 @@
+{
+  "name": "stronghold-farewell",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./dist", "binding": "ASSETS", "run_worker_first": ["/api/*", "/ws"] },
+  "vars": {
+    "SITE_ORIGIN": "https://wei.linxia.dev",
+    "TURNSTILE_SITE_KEY": "REPLACE_WITH_SITE_KEY"
+  },
+  "d1_databases": [{
+    "binding": "DB", "database_name": "stronghold-farewell",
+    "database_id": "REPLACE_WITH_DATABASE_ID", "migrations_dir": "migrations"
+  }]
+}
